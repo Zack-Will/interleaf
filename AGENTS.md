@@ -21,7 +21,7 @@ in the commit message. Modules are registered in `moduleImportSequence` in
 
 - ESM `.mjs`, one statement per line, named helpers instead of dense inline expressions. Match the
   style of `services/web/modules/launchpad/` and `services/web/app/src/Features/History/`.
-- Format with Prettier and lint with ESLint before every commit. From `services/web`:
+- Format with Prettier and lint with ESLint before every commit. The source of truth is `services/web/.prettierrc`, with `semi: false`, `singleQuote: true`, `arrowParens: "avoid"`, and `trailingComma: "es5"`. From `services/web`:
 
   ```bash
   npx prettier --write "modules/<name>/**/*.mjs"

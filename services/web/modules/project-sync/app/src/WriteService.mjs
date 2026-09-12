@@ -1,92 +1,92 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import crypto from "node:crypto";
-import Settings from "@overleaf/settings";
-import LockManager from "../../../../app/src/infrastructure/LockManager.mjs";
-import UpdateMerger from "../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs";
-import ProjectEntityHandler from "../../../../app/src/Features/Project/ProjectEntityHandler.mjs";
-import VersionService from "./VersionService.mjs";
-import LabelService from "./LabelService.mjs";
-import { VersionConflictError } from "./Errors.mjs";
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import crypto from 'node:crypto'
+import Settings from '@overleaf/settings'
+import LockManager from '../../../../app/src/infrastructure/LockManager.mjs'
+import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
+import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
+import VersionService from './VersionService.mjs'
+import LabelService from './LabelService.mjs'
+import { VersionConflictError } from './Errors.mjs'
 
 async function writeFiles(
   projectId,
   userId,
-  { baseVersion, message, agent, files = [], originExtra = {} },
+  { baseVersion, message, agent, files = [], originExtra = {} }
 ) {
   return LockManager.promises.runWithLock(
-    "project-sync",
+    'project-sync',
     projectId,
     async () => {
-      const current = await VersionService.promises.getLatestVersion(projectId);
+      const current = await VersionService.promises.getLatestVersion(projectId)
       if (
         baseVersion != null &&
         String(current.version) !== String(baseVersion)
       )
-        throw new VersionConflictError("project version conflict", {
+        throw new VersionConflictError('project version conflict', {
           expectedVersion: baseVersion,
           actualVersion: current.version,
-        });
-      const origin = { ...originExtra, kind: "mcp", agent, message };
-      const applied = [];
-      const failed = [];
-      const tempPaths = [];
+        })
+      const origin = { ...originExtra, kind: 'mcp', agent, message }
+      const applied = []
+      const failed = []
+      const tempPaths = []
       try {
         for (const item of files) {
-          const target = String(item.path || "").replace(/^\/+/, "");
+          const target = String(item.path || '').replace(/^\/+/, '')
           try {
             if (item.delete) {
               await UpdateMerger.promises.deleteUpdate(
                 userId,
                 projectId,
-                "/" + target,
-                origin,
-              );
+                '/' + target,
+                origin
+              )
               const ents =
-                await ProjectEntityHandler.promises.getAllEntities(projectId);
+                await ProjectEntityHandler.promises.getAllEntities(projectId)
               if (
                 [...(ents.docs || []), ...(ents.files || [])].some(
-                  (e) => String(e.path).replace(/^\/+/, "") === target,
+                  e => String(e.path).replace(/^\/+/, '') === target
                 )
               )
-                throw new Error("delete failed: path still exists");
+                throw new Error('delete failed: path still exists')
             } else {
               const content =
                 item.contentBase64 != null
-                  ? Buffer.from(item.contentBase64, "base64")
-                  : Buffer.from(String(item.content ?? ""), "utf8");
+                  ? Buffer.from(item.contentBase64, 'base64')
+                  : Buffer.from(String(item.content ?? ''), 'utf8')
               const fsPath = path.join(
                 Settings.path.dumpFolder,
-                `${projectId}_${crypto.randomUUID()}_project-sync`,
-              );
-              tempPaths.push(fsPath);
-              await fs.writeFile(fsPath, content);
+                `${projectId}_${crypto.randomUUID()}_project-sync`
+              )
+              tempPaths.push(fsPath)
+              await fs.writeFile(fsPath, content)
               await UpdateMerger.promises._mergeUpdate(
                 userId,
                 projectId,
-                "/" + target,
+                '/' + target,
                 fsPath,
-                origin,
-              );
+                origin
+              )
             }
-            applied.push(target);
+            applied.push(target)
           } catch (error) {
-            failed.push({ path: target, error: error.message });
+            failed.push({ path: target, error: error.message })
           }
         }
-        const after = await VersionService.promises.getLatestVersion(projectId);
+        const after = await VersionService.promises.getLatestVersion(projectId)
         if (applied.length === 0) {
-          return { version: after.version, label: null, applied, failed };
+          return { version: after.version, label: null, applied, failed }
         }
         const labelComment = originExtra.revert
           ? `${message} (reverted from ${originExtra.revert.from} to ${originExtra.revert.to})`
-          : message;
+          : message
         const label = await LabelService.promises.createLabel(
           projectId,
           userId,
           after.version,
-          labelComment,
-        );
+          labelComment
+        )
         return {
           version: after.version,
           label: {
@@ -95,11 +95,11 @@ async function writeFiles(
           },
           applied,
           failed,
-        };
+        }
       } finally {
-        await Promise.all(tempPaths.map((p) => fs.unlink(p).catch(() => {})));
+        await Promise.all(tempPaths.map(p => fs.unlink(p).catch(() => {})))
       }
-    },
-  );
+    }
+  )
 }
-export default { writeFiles, promises: { writeFiles } };
+export default { writeFiles, promises: { writeFiles } }

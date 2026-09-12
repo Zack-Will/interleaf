@@ -1,5 +1,5 @@
-import ProjectSyncRouter from "./app/src/ProjectSyncRouter.mjs";
-import TokenService from "./app/src/TokenService.mjs";
+import ProjectSyncRouter from './app/src/ProjectSyncRouter.mjs'
+import TokenService from './app/src/TokenService.mjs'
 
 /** @import { WebModule } from '../../types/web-module' */
 
@@ -14,13 +14,13 @@ const ProjectSyncModule = {
   hooks: {
     promises: {
       listPersonalAccessTokens(userId) {
-        return TokenService.promises.listTokens(userId);
+        return TokenService.promises.listTokens(userId)
       },
       cleanupPersonalAccessTokens(userId) {
-        return TokenService.promises.revokeAllForUser(userId);
+        return TokenService.promises.revokeAllForUser(userId)
       },
     },
   },
-};
+}
 
-export default ProjectSyncModule;
+export default ProjectSyncModule

@@ -3,12 +3,12 @@
 
 // A dependency-light smoke check for the MCP wiring.  It uses the SDK's
 // in-memory transport, so no web process (or Docker services) are required.
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { createMcpServer } from "../../app/src/McpTools.mjs";
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
+import { createMcpServer } from '../../app/src/McpTools.mjs'
 
-const projectId = "0123456789abcdef01234567";
+const projectId = '0123456789abcdef01234567'
 
 const services = {
   ProjectRef: {
@@ -17,84 +17,84 @@ const services = {
         value === projectId ||
         value === `https://example.test/project/${projectId}`
       ) {
-        return { projectId };
+        return { projectId }
       }
-      throw new Error(`invalid project: ${value}`);
+      throw new Error(`invalid project: ${value}`)
     },
     urlFor(id) {
-      return `https://example.test/project/${id}`;
+      return `https://example.test/project/${id}`
     },
     async requireAccess() {},
   },
   VersionService: {
     async getLatestVersion() {
-      return { version: 3, timestamp: new Date().toISOString() };
+      return { version: 3, timestamp: new Date().toISOString() }
     },
   },
   RevertService: {
     async revertTo() {
-      return { version: 4, project_version: 4, label: null };
+      return { version: 4, project_version: 4, label: null }
     },
   },
   WriteService: {
     async writeFiles() {
-      return { version: 4, label: null };
+      return { version: 4, label: null }
     },
   },
   settings: { max_doc_length: 2000000 },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = [
-        "\\section{Introduction}",
-        "Hello from the smoke test.",
-        "Done.",
-      ];
-      const first = Math.max(1, startLine);
-      const last = Math.min(lines.length, endLine ?? lines.length);
+        '\\section{Introduction}',
+        'Hello from the smoke test.',
+        'Done.',
+      ]
+      const first = Math.max(1, startLine)
+      const last = Math.min(lines.length, endLine ?? lines.length)
       return {
         path,
         lines: lines.slice(first - 1, last),
         totalLines: lines.length,
-        sha256: "smoke-sha256",
+        sha256: 'smoke-sha256',
         docVersion: 3,
-      };
+      }
     },
   },
-};
+}
 
 const server = createMcpServer({
   services,
-  req: { syncUser: { userId: "smoke-user" } },
-  clientName: "smoke-client",
-});
+  req: { syncUser: { userId: 'smoke-user' } },
+  clientName: 'smoke-client',
+})
 
-const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-const client = new Client({ name: "smoke-client", version: "1.0.0" });
+const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+const client = new Client({ name: 'smoke-client', version: '1.0.0' })
 
-await server.connect(serverTransport);
-await client.connect(clientTransport);
+await server.connect(serverTransport)
+await client.connect(clientTransport)
 
-const listed = await client.listTools();
+const listed = await client.listTools()
 const read = await client.callTool(
   {
-    name: "read_file",
+    name: 'read_file',
     arguments: {
       project: projectId,
-      path: "main.tex",
+      path: 'main.tex',
       start_line: 2,
       end_line: 2,
     },
   },
-  CallToolResultSchema,
-);
+  CallToolResultSchema
+)
 
-const requiredTools = ["edit_file", "revert_to"];
+const requiredTools = ['edit_file', 'revert_to']
 for (const name of requiredTools) {
-  if (!listed.tools.some((tool) => tool.name === name))
-    throw new Error(`missing tool: ${name}`);
+  if (!listed.tools.some(tool => tool.name === name))
+    throw new Error(`missing tool: ${name}`)
 }
-console.log(`tools/list: ${listed.tools.map((tool) => tool.name).join(", ")}`);
-console.log(`read_file: ${JSON.stringify(read)}`);
+console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
+console.log(`read_file: ${JSON.stringify(read)}`)
 
-await client.close();
-await server.close();
+await client.close()
+await server.close()
