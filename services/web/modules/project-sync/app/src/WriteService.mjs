@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
+import logger from '@overleaf/logger'
 import LockManager from '../../../../app/src/infrastructure/LockManager.mjs'
 import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
@@ -34,17 +35,30 @@ async function writeFiles(
       const unchanged = []
       const tempPaths = []
       try {
+        let docs
+        const hasDocCandidates = files.some(
+          item => !item.delete && item.contentBase64 == null
+        )
+        if (hasDocCandidates) {
+          try {
+            ;[, docs] = await Promise.all([
+              ProjectEntityHandler.promises.getAllEntities(projectId),
+              ProjectEntityHandler.promises.getAllDocPathsFromProjectById(
+                projectId
+              ),
+            ])
+          } catch (error) {
+            logger.warn(
+              { err: error, projectId },
+              'failed to load project entities for unchanged detection'
+            )
+          }
+        }
         for (const item of files) {
           const target = String(item.path || '').replace(/^\/+/, '')
           try {
             if (!item.delete && item.contentBase64 == null) {
               try {
-                const entities =
-                  await ProjectEntityHandler.promises.getAllEntities(projectId)
-                const docs =
-                  await ProjectEntityHandler.promises.getAllDocPathsFromProjectById(
-                    projectId
-                  )
                 const docEntry = Object.entries(docs || {}).find(
                   ([, pathname]) =>
                     String(pathname).replace(/^\/+/, '') === target
@@ -63,15 +77,13 @@ async function writeFiles(
                     unchanged.push(target)
                     continue
                   }
-                } else if (
-                  (entities?.docs || []).some(
-                    doc => String(doc.path).replace(/^\/+/, '') === target
-                  )
-                ) {
-                  unchanged.push(target)
-                  continue
                 }
-              } catch {}
+              } catch (error) {
+                logger.warn(
+                  { err: error, projectId, path: target },
+                  'failed to compare project document for unchanged detection'
+                )
+              }
             }
             if (item.delete) {
               const entities =
