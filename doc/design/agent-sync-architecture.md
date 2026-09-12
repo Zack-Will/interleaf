@@ -416,7 +416,7 @@ agent: archive_branch D
 | **M5 可视化** | 设置页令牌区块、编辑器 Git & agents 卡片与模态框、历史面板来源后缀（"You (via Claude Code)"，`McpOrigin` 让 agent 名进历史）、Storybook 固件 | ✅ `feat/ui`（Opus），已合入；浏览器验收待做 |
 | **R1 评论面板** | 模块 `review`：`REVIEW_PANEL_ENABLED`、11 条路由、实时事件、新项目默认 `rangesSupportEnabled` | ✅ codex，已合入，`joinProject` 返回 `trackChangesVisible: true` |
 | **R2 MCP 评论工具** | `ReviewService`、Agent 服务用户、`list_comments` / `get_review_queue` / `reply_comment` / `resolve_comment` / `reopen_comment`、`comments_affected` | ✅ Opus，已合入，136 个单元测试；实机待验 |
-| **R3 新增评论与重锚** | document-updater `POST …/comment` 端点、`add_comment` / `reanchor_comment`、写入后自动重锚 | ✅ Opus，分支 `feat/review-add`，document-updater 521 个单元测试 + web 126 个；实机待验 |
+| **R3 新增评论与重锚** | document-updater `POST …/comment` 端点、`add_comment` / `reanchor_comment`、写入后自动重锚 | ✅ Opus，已合入，165 个 web 单元测试 + 521 个 document-updater 测试；实机：agent 用 `add_comment` 建评论，`edit_file` 改写被评论句子后评论跟随新文本（`shrunk`，未游离） |
 | **R4 修订建议** | agent 以 `meta.tc` 提交，人接受/拒绝 | ⏳ |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
 
