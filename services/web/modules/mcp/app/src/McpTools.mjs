@@ -676,13 +676,15 @@ export function registerTools(
       branch: z.string(),
       dry_run: z.boolean().optional(),
       message: z.string().optional(),
+      agent: z.string().optional(),
     },
-    async ({ branch, dry_run = true, message }) => {
+    async ({ branch, dry_run = true, message, agent }) => {
       try {
         const id = projectId(branch, services)
         const result = await services.BranchService.mergeBranch(id, userId, {
           dryRun: dry_run,
           message,
+          agent: agent || clientName || 'mcp',
         })
         return { isError: false, ...textResult(result) }
       } catch (error) {
