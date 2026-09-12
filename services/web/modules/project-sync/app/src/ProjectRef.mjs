@@ -3,9 +3,12 @@ import { InvalidProjectRefError, ProjectAccessError, ProjectNotFoundError } from
 
 function parse(input) {
   if (typeof input !== 'string') throw new InvalidProjectRefError()
-  const idMatch = input.match(/^[0-9a-fA-F]{24}$/) || input.match(/\/project\/([0-9a-fA-F]{24})(?:[/?#]|$)/)
+  if (/^[0-9a-fA-F]{24}$/.test(input)) return { projectId: input.toLowerCase() }
+  let pathname
+  try { pathname = new URL(input).pathname } catch { throw new InvalidProjectRefError() }
+  const idMatch = pathname.match(/\/project\/([0-9a-fA-F]{24})(?:[/?#]|$)/)
   if (!idMatch) throw new InvalidProjectRefError()
-  return { projectId: (idMatch[1] || idMatch[0]).toLowerCase() }
+  return { projectId: idMatch[1].toLowerCase() }
 }
 function urlFor(projectId) { return `${Settings.siteUrl}/project/${projectId}` }
 async function requireAccess(userId, projectId, level) {
