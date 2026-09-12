@@ -287,6 +287,12 @@ history-root {
     }
   }
 
+  // Badge for machine-written versions (agent over MCP, push over git-bridge).
+  // Sits alongside the label badges, but without the label icon.
+  .history-version-origin-badge {
+    margin-right: var(--spacing-00);
+  }
+
   .history-version-label {
     margin-bottom: var(--spacing-02);
 

@@ -17,6 +17,7 @@ import { isFileRenamed } from '../utils/file-diff'
 import { loadLabels } from '../utils/label'
 import { autoSelectFile } from '../utils/auto-select-file'
 import usePersistedState from '../../../shared/hooks/use-persisted-state'
+import localStorage from '../../../infrastructure/local-storage'
 import moment from 'moment'
 import { cloneDeep } from 'lodash'
 import {
@@ -59,6 +60,26 @@ function limitUpdates(
   })
 }
 
+// The labels-only preference outlives the history panel, which is mounted
+// lazily and only while the history view is open. Exported so that components
+// outside the history feature can preselect the labels-only view before
+// switching to it, without reaching into the storage key themselves.
+function labelsOnlyStorageKey(projectId: string) {
+  return `history.userPrefs.showOnlyLabels.${projectId}`
+}
+
+export function setLabelsOnlyPreference(
+  projectId: string,
+  labelsOnly: boolean
+) {
+  const key = labelsOnlyStorageKey(projectId)
+  if (labelsOnly) {
+    localStorage.setItem(key, labelsOnly)
+  } else {
+    localStorage.removeItem(key)
+  }
+}
+
 const selectionInitialState: Selection = {
   updateRange: null,
   comparing: false,
@@ -91,7 +112,7 @@ function useHistory() {
   >(updatesInfoInitialState)
   const [labels, setLabels] = useState<HistoryContextValue['labels']>(null)
   const [labelsOnly, setLabelsOnly] = usePersistedState(
-    `history.userPrefs.showOnlyLabels.${projectId}`,
+    labelsOnlyStorageKey(projectId),
     false
   )
 
