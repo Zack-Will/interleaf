@@ -416,7 +416,7 @@ agent: archive_branch D
 | **M5 可视化** | 设置页令牌区块、编辑器 Git & agents 卡片与模态框、历史面板来源后缀（"You (via Claude Code)"，`McpOrigin` 让 agent 名进历史）、Storybook 固件 | ✅ `feat/ui`（Opus），已合入；浏览器验收待做 |
 | **R1 评论面板** | 模块 `review`：`REVIEW_PANEL_ENABLED`、11 条路由、实时事件、新项目默认 `rangesSupportEnabled` | ✅ codex，已合入，`joinProject` 返回 `trackChangesVisible: true` |
 | **R2 MCP 评论工具** | `ReviewService`、Agent 服务用户、`list_comments` / `get_review_queue` / `reply_comment` / `resolve_comment` / `reopen_comment`、`comments_affected` | ✅ Opus，已合入，136 个单元测试；实机待验 |
-| **R3 新增评论与重锚** | document-updater `POST …/comment` 端点、`add_comment` / `reanchor_comment`、写入后自动重锚 | ⏳ |
+| **R3 新增评论与重锚** | document-updater `POST …/comment` 端点、`add_comment` / `reanchor_comment`、写入后自动重锚 | ✅ Opus，分支 `feat/review-add`，document-updater 521 个单元测试 + web 126 个；实机待验 |
 | **R4 修订建议** | agent 以 `meta.tc` 提交，人接受/拒绝 | ⏳ |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
 
@@ -479,6 +479,24 @@ M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent
 | **R2** | MCP 读、回复、解决、评论队列；服务用户机制；`comments_affected` |
 | **R3** | document-updater add-comment 端点；`add_comment` / `reanchor_comment`；写入后自动重锚 |
 | **R4** | 修订建议：agent 以 `meta.tc` 提交，人接受/拒绝；补 accept/reject 与 `track_changes` 路由 |
+
+### 10.5 add-comment 端点契约（R3 落地）
+
+`POST /project/:project_id/doc/:doc_id/comment`（document-updater，内部服务，无鉴权层）
+
+请求体 `{ user_id, thread_id, position, text }`：`thread_id` 为 24 位十六进制；`position` 是
+`lines.join('\n')` 上的 0 基字符偏移；`text` 必须与该位置的文档原文逐字相同。
+
+- `200 { comment: { id, op: { c, p, t }, metadata }, version }` —— `comment` 从应用后的 ranges 读回，
+  因此带的是 OT 变换之后的真实位置。`thread_id` 已存在时是「移动」，即重锚原语。
+- `400 { code: 'invalid_request', message }` —— 参数不合法。
+- `400 { code: 'text_mismatch', message, position, actual_text }` —— 文档已变，`actual_text` 是该位置
+  现在的内容，调用方据此重试。
+- `422 { code: 'ot_type_unsupported', message }` —— history-ot 文档，R3 只支持 sharejs 文档。
+- `404` —— 文档不存在（沿用 document-updater 的统一错误处理）。
+
+实现走 `UpdateManager.lockUpdatesAndDo` → `applyUpdate`，与 `setDoc` 同一条路径，因此会与排队中的
+更新做 OT 变换，并经 `RealTimeRedisManager` 广播给在线编辑器。
 
 ## 11. 决策记录
 
