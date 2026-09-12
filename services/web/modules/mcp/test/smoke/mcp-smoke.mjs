@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable no-console */
 
 // A dependency-light smoke check for the MCP wiring.  It uses the SDK's
 // in-memory transport, so no web process (or Docker services) are required.
