@@ -99,6 +99,70 @@ describe('WriteService', () => {
   })
 })
 
+describe('WriteService.withProjectWriteLock', () => {
+  const load = async ({ version }) => {
+    vi.resetModules()
+    const runWithLock = sinon.stub().callsFake((_name, _id, fn) => fn())
+    vi.doMock('@overleaf/settings', () => ({
+      default: { path: { dumpFolder: '/tmp' } },
+    }))
+    vi.doMock('../../../../../app/src/infrastructure/LockManager.mjs', () => ({
+      default: { promises: { runWithLock } },
+    }))
+    vi.doMock(
+      '../../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs',
+      () => ({
+        default: {
+          promises: { _mergeUpdate: sinon.stub(), deleteUpdate: sinon.stub() },
+        },
+      })
+    )
+    vi.doMock(
+      '../../../../../app/src/Features/Project/ProjectEntityHandler.mjs',
+      () => ({ default: { promises: { getAllEntities: sinon.stub() } } })
+    )
+    vi.doMock('../../../app/src/VersionService.mjs', () => ({
+      default: {
+        promises: { getLatestVersion: sinon.stub().resolves({ version }) },
+      },
+    }))
+    vi.doMock('../../../app/src/LabelService.mjs', () => ({
+      default: { promises: { createLabel: sinon.stub() } },
+    }))
+    const { default: WriteService } =
+      await import('../../../app/src/WriteService.mjs')
+    return { WriteService, runWithLock }
+  }
+
+  it('runs the write under the project-sync lock and hands it the version', async () => {
+    const { WriteService, runWithLock } = await load({ version: 4 })
+    const result = await WriteService.withProjectWriteLock(
+      'p',
+      4,
+      async current => `ran at ${current.version}`
+    )
+    expect(result).toBe('ran at 4')
+    expect(runWithLock.firstCall.args.slice(0, 2)).toEqual([
+      'project-sync',
+      'p',
+    ])
+  })
+
+  it('refuses a stale base version without running the write', async () => {
+    const { WriteService } = await load({ version: 5 })
+    const run = sinon.stub()
+    const error = await WriteService.withProjectWriteLock('p', 3, run).catch(
+      error => error
+    )
+    expect(error).toMatchObject({
+      code: 'version_conflict',
+      expectedVersion: 3,
+      actualVersion: 5,
+    })
+    expect(run.called).toBe(false)
+  })
+})
+
 describe('WriteService labels', () => {
   it('does not create a label when no files are applied', async () => {
     vi.resetModules()
