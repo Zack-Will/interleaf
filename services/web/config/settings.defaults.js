@@ -1115,6 +1115,7 @@ module.exports = {
     'launchpad',
     'server-ce-scripts',
     'user-activate',
+    'project-sync',
   ],
   viewIncludes: {},
 
