@@ -84,6 +84,12 @@ class NotFoundAtVersionError extends OError {
     this.code = 'not_found_at_version'
   }
 }
+class BranchNotFoundError extends OError {
+  constructor(message = 'branch not found', properties = {}) {
+    super(message, properties)
+    this.code = 'branch_not_found'
+  }
+}
 class InvalidEditError extends OError {
   constructor(message = 'invalid edit', properties = {}) {
     super(message, properties)
@@ -105,6 +111,7 @@ export {
   AnchorAmbiguousError,
   NotFoundAtVersionError,
   InvalidEditError,
+  BranchNotFoundError,
 }
 export default {
   InvalidTokenRequestError,
@@ -121,4 +128,5 @@ export default {
   AnchorAmbiguousError,
   NotFoundAtVersionError,
   InvalidEditError,
+  BranchNotFoundError,
 }

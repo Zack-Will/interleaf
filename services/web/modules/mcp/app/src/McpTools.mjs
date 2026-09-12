@@ -52,6 +52,12 @@ function summaryText(data) {
     return writeSummary(data)
   if (Array.isArray(data.diff))
     return `${data.count ?? data.diff.length} diff entries`
+  if (Array.isArray(data.branches))
+    return `${data.count ?? data.branches.length} branches`
+  if (Array.isArray(data.conflicts))
+    return data.mergeable
+      ? 'Branch merge is clean'
+      : `${data.conflicts.length} merge conflicts`
   if (data.path && data.project_version != null)
     return `${data.path}; project version ${data.project_version}; document version ${data.doc_version ?? 'unknown'}`
   if (data.project_id && data.project_version != null) {
@@ -103,6 +109,7 @@ function writeResult(data, requestedCount = null) {
 
 function nextAction(error, next) {
   if (next) return next
+  if (error.next_action) return error.next_action
   if (error.code === 'anchor_ambiguous')
     return 're-read the file and pick a unique anchor; candidate_lines lists the matches'
   if (error.code === 'anchor_not_found')
@@ -606,18 +613,92 @@ export function registerTools(
           throw new FileTooLargeError()
         const before = document.lines.join('\n')
         const content = lines.join('\n')
-        const result = await services.WriteService.writeFiles(id, userId, {
-          baseVersion: base_version,
-          message,
-          agent: agent || clientName || 'mcp',
-          files: [{ path, content }],
-        })
+        let result
+        try {
+          result = await services.WriteService.writeFiles(id, userId, {
+            baseVersion: base_version,
+            message,
+            agent: agent || clientName || 'mcp',
+            files: [{ path, content }],
+          })
+        } catch (error) {
+          if (error.code === 'version_conflict') {
+            error.next_action = `re-read changed files and retry with base_version=${error.actualVersion}`
+          }
+          throw error
+        }
         return {
           path,
           project_version: result.version,
           label: result.label,
           diff: createTwoFilesPatch(path, path, before, content),
         }
+      })
+  )
+
+  server.tool(
+    'create_branch',
+    'Create a project branch',
+    { project: z.string(), name: z.string() },
+    async ({ project, name }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        return services.BranchService.createBranch(id, userId, { name })
+      })
+  )
+
+  server.tool(
+    'list_branches',
+    'List project branches',
+    { project: z.string() },
+    async ({ project }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        return services.BranchService.listBranches(id, userId)
+      })
+  )
+
+  server.tool(
+    'diff_branch',
+    'Compare a branch with its parent',
+    { branch: z.string() },
+    async ({ branch }) =>
+      run(async () => {
+        const id = projectId(branch, services)
+        return services.BranchService.diffBranch(id, userId)
+      })
+  )
+
+  server.tool(
+    'merge_branch',
+    'Merge a branch into its parent',
+    {
+      branch: z.string(),
+      dry_run: z.boolean().optional(),
+      message: z.string().optional(),
+    },
+    async ({ branch, dry_run = true, message }) => {
+      try {
+        const id = projectId(branch, services)
+        const result = await services.BranchService.mergeBranch(id, userId, {
+          dryRun: dry_run,
+          message,
+        })
+        return { isError: false, ...textResult(result) }
+      } catch (error) {
+        return errorResult(error)
+      }
+    }
+  )
+
+  server.tool(
+    'archive_branch',
+    'Archive a project branch',
+    { branch: z.string() },
+    async ({ branch }) =>
+      run(async () => {
+        const id = projectId(branch, services)
+        return services.BranchService.archiveBranch(id, userId)
       })
   )
 

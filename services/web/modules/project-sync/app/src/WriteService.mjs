@@ -7,6 +7,7 @@ import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/Updat
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import VersionService from './VersionService.mjs'
 import LabelService from './LabelService.mjs'
+import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import { VersionConflictError } from './Errors.mjs'
 
 async function writeFiles(
@@ -30,12 +31,61 @@ async function writeFiles(
       const origin = { ...originExtra, kind: 'mcp', agent, message }
       const applied = []
       const failed = []
+      const unchanged = []
       const tempPaths = []
       try {
         for (const item of files) {
           const target = String(item.path || '').replace(/^\/+/, '')
           try {
+            if (!item.delete && item.contentBase64 == null) {
+              try {
+                const entities =
+                  await ProjectEntityHandler.promises.getAllEntities(projectId)
+                const docs =
+                  await ProjectEntityHandler.promises.getAllDocPathsFromProjectById(
+                    projectId
+                  )
+                const docEntry = Object.entries(docs || {}).find(
+                  ([, pathname]) =>
+                    String(pathname).replace(/^\/+/, '') === target
+                )
+                if (docEntry) {
+                  const document =
+                    await DocumentUpdaterHandler.promises.getDocument(
+                      projectId,
+                      docEntry[0],
+                      -1
+                    )
+                  const lines = Array.isArray(document.lines)
+                    ? document.lines
+                    : String(document.lines || '').split(/\r\n|\n|\r/)
+                  if (lines.join('\n') === String(item.content ?? '')) {
+                    unchanged.push(target)
+                    continue
+                  }
+                } else if (
+                  (entities?.docs || []).some(
+                    doc => String(doc.path).replace(/^\/+/, '') === target
+                  )
+                ) {
+                  unchanged.push(target)
+                  continue
+                }
+              } catch {}
+            }
             if (item.delete) {
+              const entities =
+                await ProjectEntityHandler.promises.getAllEntities(projectId)
+              const exists = [
+                ...(entities.docs || []),
+                ...(entities.files || []),
+              ].some(
+                entity => String(entity.path).replace(/^\/+/, '') === target
+              )
+              if (!exists) {
+                unchanged.push(target)
+                continue
+              }
               await UpdateMerger.promises.deleteUpdate(
                 userId,
                 projectId,
@@ -76,7 +126,13 @@ async function writeFiles(
         }
         const after = await VersionService.promises.getLatestVersion(projectId)
         if (applied.length === 0) {
-          return { version: after.version, label: null, applied, failed }
+          return {
+            version: after.version,
+            label: null,
+            applied,
+            ...(files.length ? { unchanged } : {}),
+            failed,
+          }
         }
         const labelComment = originExtra.revert
           ? `${message} (reverted from ${originExtra.revert.from} to ${originExtra.revert.to})`
@@ -94,6 +150,7 @@ async function writeFiles(
             comment: label.comment ?? message,
           },
           applied,
+          unchanged,
           failed,
         }
       } finally {
