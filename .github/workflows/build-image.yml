@@ -1,0 +1,90 @@
+# Builds the Community Edition image of this fork (Overleaf CE plus the
+# project-sync, mcp, git-bridge, review and github-backup modules) and pushes it
+# to the GitHub Container Registry, so that a NAS or any other small host can
+# deploy it with a plain `docker pull` instead of building TeX Live locally.
+#
+# The Overleaf Toolkit insists on a version-shaped tag (`X.Y.Z`) and derives the
+# git-bridge tag from the same string, so the workflow also mirrors the official
+# git-bridge image under the same tag in this namespace.
+name: Build CE image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image tag, must look like X.Y.Z for the Overleaf Toolkit'
+        required: true
+        default: '6.2.0'
+      git_bridge_source:
+        description: 'Official git-bridge image to mirror under the same tag'
+        required: true
+        default: 'quay.io/sharelatex/git-bridge:6.2.0'
+      base_image:
+        description: 'Published Overleaf base image to build on'
+        required: true
+        default: 'sharelatex/sharelatex-base:6.1.0'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the tag shape the toolkit requires
+        run: |
+          echo "${{ inputs.version }}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "version must be X.Y.Z"; exit 1; }
+
+      # The image carries TeX Live and a full node_modules tree; the hosted
+      # runner needs the space the preinstalled toolchains occupy.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `server-ce/Dockerfile` is built from the monorepo root, and the Makefile
+      # copies this ignore file there before building.
+      - name: Stage the build context
+        run: cp server-ce/.dockerignore .dockerignore
+
+      - name: Build and push the CE image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server-ce/Dockerfile
+          push: true
+          build-args: |
+            OVERLEAF_BASE_TAG=${{ inputs.base_image }}
+          labels: |
+            com.overleaf.ce.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/overleaf:${{ inputs.version }}
+            ghcr.io/${{ github.repository_owner }}/overleaf:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Copied manifest-to-manifest, so the bytes are never pulled onto the
+      # runner and the digest stays identical to the official image.
+      - name: Mirror the git-bridge image under the same tag
+        run: |
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/git-bridge:${{ inputs.version }} \
+            ${{ inputs.git_bridge_source }}
+          docker buildx imagetools inspect \
+            ghcr.io/${{ github.repository_owner }}/git-bridge:${{ inputs.version }} \
+            | head -20
