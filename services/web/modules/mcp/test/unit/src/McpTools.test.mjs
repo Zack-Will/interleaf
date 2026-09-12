@@ -28,6 +28,17 @@ function setup(overrides = {}) {
     RevertService: {
       revertTo: vi.fn(async () => ({ version: 5, applied: [], failed: [] })),
     },
+    BranchService: {
+      createBranch: vi.fn(async () => ({ branch_project_id: 'b'.repeat(24) })),
+      listBranches: vi.fn(async () => ({ branches: [], count: 0 })),
+      diffBranch: vi.fn(async () => ({ files: [] })),
+      mergeBranch: vi.fn(async () => ({
+        mergeable: true,
+        files: [],
+        conflicts: [],
+      })),
+      archiveBranch: vi.fn(async () => ({ status: 'archived' })),
+    },
     fetchJson: vi.fn(async () => ({ updates: [] })),
     settings: { apis: { project_history: { url: 'http://history' } } },
     ProjectGetter: {
@@ -346,6 +357,11 @@ describe('MCP tools', () => {
       diff: { project, from_version: 1, to_version: 2 },
       write_files: { project, message: 'm', files: [] },
       revert_to: { project, version: 1 },
+      create_branch: { project, name: 'test' },
+      list_branches: { project },
+      diff_branch: { branch: project },
+      merge_branch: { branch: project },
+      archive_branch: { branch: project },
       edit_file: {
         project,
         path: 'main.tex',

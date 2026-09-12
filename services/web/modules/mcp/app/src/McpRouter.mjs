@@ -10,6 +10,7 @@ import VersionService from '../../../project-sync/app/src/VersionService.mjs'
 import LabelService from '../../../project-sync/app/src/LabelService.mjs'
 import WriteService from '../../../project-sync/app/src/WriteService.mjs'
 import RevertService from '../../../project-sync/app/src/RevertService.mjs'
+import BranchService from '../../../project-sync/app/src/BranchService.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import { requireAccessToken } from '../../../project-sync/app/src/TokenAuthMiddleware.mjs'
@@ -23,6 +24,7 @@ export function createDefaultServices() {
     LabelService,
     WriteService,
     RevertService,
+    BranchService,
     ProjectGetter,
     ProjectEntityHandler,
     fetchJson,

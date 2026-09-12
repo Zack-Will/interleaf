@@ -31,6 +31,23 @@ const services = {
       return { version: 3, timestamp: new Date().toISOString() }
     },
   },
+  BranchService: {
+    async createBranch() {
+      return {}
+    },
+    async listBranches() {
+      return { branches: [], count: 0 }
+    },
+    async diffBranch() {
+      return {}
+    },
+    async mergeBranch() {
+      return { mergeable: true, files: [], conflicts: [] }
+    },
+    async archiveBranch() {
+      return {}
+    },
+  },
   RevertService: {
     async revertTo() {
       return { version: 4, project_version: 4, label: null }
@@ -95,7 +112,15 @@ const read = await client.callTool(
   CallToolResultSchema
 )
 
-const requiredTools = ['edit_file', 'revert_to']
+const requiredTools = [
+  'edit_file',
+  'revert_to',
+  'create_branch',
+  'list_branches',
+  'diff_branch',
+  'merge_branch',
+  'archive_branch',
+]
 for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
     throw new Error(`missing tool: ${name}`)
