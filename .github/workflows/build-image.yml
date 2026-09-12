@@ -45,6 +45,11 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
 
+      # Container repository names must be lowercase, and a GitHub account name
+      # need not be.
+      - name: Resolve the registry namespace
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
@@ -73,8 +78,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/overleaf:${{ inputs.version }}
-            ghcr.io/${{ github.repository_owner }}/overleaf:${{ github.sha }}
+            ghcr.io/${{ env.OWNER }}/overleaf:${{ inputs.version }}
+            ghcr.io/${{ env.OWNER }}/overleaf:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -83,8 +88,8 @@ jobs:
       - name: Mirror the git-bridge image under the same tag
         run: |
           docker buildx imagetools create \
-            --tag ghcr.io/${{ github.repository_owner }}/git-bridge:${{ inputs.version }} \
+            --tag ghcr.io/${{ env.OWNER }}/git-bridge:${{ inputs.version }} \
             ${{ inputs.git_bridge_source }}
           docker buildx imagetools inspect \
-            ghcr.io/${{ github.repository_owner }}/git-bridge:${{ inputs.version }} \
+            ghcr.io/${{ env.OWNER }}/git-bridge:${{ inputs.version }} \
             | head -20
