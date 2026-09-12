@@ -147,3 +147,58 @@ describe("WriteService labels", () => {
     expect(createLabel.called).toBe(false);
   });
 });
+
+describe("SnapshotService hash resolution", () => {
+  it("loads text blobs and exposes binary buffers", async () => {
+    vi.resetModules();
+    vi.doMock("@overleaf/settings", () => ({
+      default: {
+        max_doc_length: 100,
+        apis: { project_history: { url: "http://history" } },
+      },
+    }));
+    vi.doMock("@overleaf/fetch-utils", () => ({
+      fetchJson: vi.fn(async () => ({
+        version: 2,
+        files: {
+          "/main.tex": { data: { hash: "h1" } },
+          "/image.png": { data: { hash: "h2" } },
+        },
+      })),
+    }));
+    vi.doMock(
+      "../../../../../app/src/Features/History/HistoryManager.mjs",
+      () => ({
+        default: {
+          promises: {
+            requestBlobWithProjectId: vi.fn(async (_id, hash) => ({
+              stream: (async function* () {
+                yield Buffer.from(hash === "h1" ? "hello" : "\\x00bin", "utf8");
+              })(),
+              contentLength: 5,
+            })),
+          },
+        },
+      }),
+    );
+    vi.doMock(
+      "../../../../../app/src/Features/Uploads/FileTypeManager.mjs",
+      () => ({
+        default: {
+          isEditable: (content) => content === "" || content === "hello",
+        },
+      }),
+    );
+    const { default: SnapshotService } =
+      await import("../../../app/src/SnapshotService.mjs");
+    const snapshot = await SnapshotService.getSnapshot("p", 2, {
+      includeBinary: true,
+    });
+    expect(
+      snapshot.files.find((file) => file.path === "main.tex"),
+    ).toMatchObject({ kind: "doc", content: "hello" });
+    expect(
+      snapshot.files.find((file) => file.path === "image.png"),
+    ).toMatchObject({ kind: "file", hash: "h2" });
+  });
+});
