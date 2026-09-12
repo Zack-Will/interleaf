@@ -413,7 +413,11 @@ agent: archive_branch D
 | **M3 分支** | `SyncBranch` 模型 + 迁移、`BranchService`、五个分支工具、`diff.merge` + `applyPatch` 三方合并、自动标签 | ✅ `feat/branches`，实机验证：不相交合并成功、同行冲突报 hunk、归档 |
 | **M4 git-bridge 适配器** | 四个端点、签名 blob URL、推送与 postback、settings / nginx / compose / webpack 代理、`projectExpired` 删除通知 | ✅ `feat/git-bridge`（Opus），实机验证：官方容器 `git clone` / `push`，历史 origin `git-bridge` |
 | **集成** | `feat/agent-sync` = M3 + M4 + 设计文档，93 个单元测试 | ✅ 本地，未推送 |
-| **M5 可视化** | 设置页令牌区块、编辑器 Git & agents 卡片与模态框、历史面板来源徽章与 Storybook 固件 | 🔄 `feat/ui`（Opus），复用历史面板的标签视图与对比功能 |
+| **M5 可视化** | 设置页令牌区块、编辑器 Git & agents 卡片与模态框、历史面板来源后缀（"You (via Claude Code)"，`McpOrigin` 让 agent 名进历史）、Storybook 固件 | ✅ `feat/ui`（Opus），已合入；浏览器验收待做 |
+| **R1 评论面板** | 模块 `review`：`REVIEW_PANEL_ENABLED`、11 条路由、实时事件、新项目默认 `rangesSupportEnabled` | ✅ codex，已合入，`joinProject` 返回 `trackChangesVisible: true` |
+| **R2 MCP 评论工具** | `ReviewService`、Agent 服务用户、`list_comments` / `get_review_queue` / `reply_comment` / `resolve_comment` / `reopen_comment`、`comments_affected` | ✅ Opus，已合入，136 个单元测试；实机待验 |
+| **R3 新增评论与重锚** | document-updater `POST …/comment` 端点、`add_comment` / `reanchor_comment`、写入后自动重锚 | ⏳ |
+| **R4 修订建议** | agent 以 `meta.tc` 提交，人接受/拒绝 | ⏳ |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
 
 M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent 读写并留下可回滚的 label。
