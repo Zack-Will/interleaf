@@ -148,6 +148,60 @@ describe('WriteService labels', () => {
   })
 })
 
+describe('WriteService origin kind', () => {
+  async function writeOneFile(options) {
+    vi.resetModules()
+    const mergeUpdate = sinon.stub()
+    const lock = { promises: { runWithLock: async (_n, _id, fn) => fn() } }
+    vi.doMock('@overleaf/settings', () => ({
+      default: { path: { dumpFolder: '/tmp' } },
+    }))
+    vi.doMock('../../../../../app/src/infrastructure/LockManager.mjs', () => ({
+      default: lock,
+    }))
+    vi.doMock(
+      '../../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs',
+      () => ({
+        default: {
+          promises: { _mergeUpdate: mergeUpdate, deleteUpdate: sinon.stub() },
+        },
+      })
+    )
+    vi.doMock(
+      '../../../../../app/src/Features/Project/ProjectEntityHandler.mjs',
+      () => ({ default: { promises: { getAllEntities: sinon.stub() } } })
+    )
+    vi.doMock('../../../app/src/VersionService.mjs', () => ({
+      default: {
+        promises: { getLatestVersion: sinon.stub().resolves({ version: 4 }) },
+      },
+    }))
+    vi.doMock('../../../app/src/LabelService.mjs', () => ({
+      default: {
+        promises: { createLabel: sinon.stub().resolves({ id: 'l' }) },
+      },
+    }))
+    const { default: WriteService } =
+      await import('../../../app/src/WriteService.mjs')
+    await WriteService.writeFiles('p', 'u', {
+      message: 'm',
+      files: [{ path: 'main.tex', content: 'hi' }],
+      ...options,
+    })
+    return mergeUpdate.firstCall.args[4]
+  }
+
+  it('defaults to the mcp origin kind', async () => {
+    const origin = await writeOneFile({})
+    expect(origin.kind).toEqual('mcp')
+  })
+
+  it('records git pushes as a git-bridge origin', async () => {
+    const origin = await writeOneFile({ originKind: 'git-bridge' })
+    expect(origin.kind).toEqual('git-bridge')
+  })
+})
+
 describe('SnapshotService hash resolution', () => {
   it('loads text blobs and exposes binary buffers', async () => {
     vi.resetModules()

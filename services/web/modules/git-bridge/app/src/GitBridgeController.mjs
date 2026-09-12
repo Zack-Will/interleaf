@@ -104,11 +104,18 @@ function createHandlers(services) {
     const latest = await VersionService.promises.getLatestVersion(projectId)
     const [authorId] = latest.v2Authors || []
     const user = await resolveUser(authorId)
-    return res.json({
+    const body = {
       latestVerId: toVersionNumber(latest.version),
-      latestVerAt: toIsoString(latest.timestamp),
       latestVerBy: user,
-    })
+    }
+    const latestVerAt = toIsoString(latest.timestamp)
+    // A project with no changes has no timestamp. The key must then be absent
+    // rather than null: the Java client checks `has("latestVerAt")` and would
+    // throw on a JSON null.
+    if (latestVerAt != null) {
+      body.latestVerAt = latestVerAt
+    }
+    return res.json(body)
   }
 
   async function getSavedVers(req, res) {
