@@ -12,7 +12,7 @@ import { VersionConflictError } from "./Errors.mjs";
 async function writeFiles(
   projectId,
   userId,
-  { baseVersion, message, agent, files = [] },
+  { baseVersion, message, agent, files = [], originExtra = {} },
 ) {
   return LockManager.promises.runWithLock(
     "project-sync",
@@ -27,7 +27,7 @@ async function writeFiles(
           expectedVersion: baseVersion,
           actualVersion: current.version,
         });
-      const origin = { kind: "mcp", agent, message };
+      const origin = { ...originExtra, kind: "mcp", agent, message };
       const applied = [];
       const failed = [];
       const tempPaths = [];
@@ -78,11 +78,14 @@ async function writeFiles(
         if (applied.length === 0) {
           return { version: after.version, label: null, applied, failed };
         }
+        const labelComment = originExtra.revert
+          ? `${message} (reverted from ${originExtra.revert.from} to ${originExtra.revert.to})`
+          : message;
         const label = await LabelService.promises.createLabel(
           projectId,
           userId,
           after.version,
-          message,
+          labelComment,
         );
         return {
           version: after.version,
