@@ -200,6 +200,15 @@ const settings = {
   // registers its routes when this is enabled.
   enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
   enableReviewPanel: process.env.REVIEW_PANEL_ENABLED === 'true',
+  // The service account the MCP comment tools speak as, so that replies and
+  // resolutions made by an agent are attributable in the review panel.
+  review: {
+    agentUser: {
+      email: process.env.REVIEW_AGENT_USER_EMAIL || 'agent@overleaf.local',
+      firstName: 'Agent',
+      lastName: process.env.REVIEW_AGENT_USER_NAME || 'MCP',
+    },
+  },
   // Existing projects keep their current ranges support setting.
   splitTestOverrides:
     process.env.REVIEW_PANEL_ENABLED === 'true'
