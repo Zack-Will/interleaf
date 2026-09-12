@@ -140,6 +140,47 @@ const services = {
       return { ok: true, agentUserId: 'agent-user', added: false }
     },
   },
+  SuggestionService: {
+    async suggestDocContent(_projectId, _docId, _userId, { message }) {
+      return {
+        change_ids: ['change-1'],
+        version: 5,
+        label: { id: 'label-1', comment: `Suggest: ${message}` },
+      }
+    },
+    async listSuggestions() {
+      const suggestion = {
+        change_id: 'change-1',
+        doc_id: docId,
+        path: 'main.tex',
+        type: 'insert',
+        text: 'Hi',
+        position: 23,
+        line: 2,
+        column: 1,
+        author: { id: 'agent-user', name: 'Agent MCP' },
+        created_at: '2026-01-01T00:00:00.000Z',
+      }
+      return {
+        files: [
+          {
+            path: 'main.tex',
+            doc_id: docId,
+            suggestions: [suggestion],
+            count: 1,
+          },
+        ],
+        suggestions: [suggestion],
+        count: 1,
+      }
+    },
+    async acceptSuggestions(_projectId, _docId, changeIds) {
+      return { change_ids: changeIds ?? ['change-1'], remaining: 0 }
+    },
+    async rejectSuggestions(_projectId, _docId, changeIds) {
+      return { change_ids: changeIds ?? ['change-1'], remaining: 0 }
+    },
+  },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = [
@@ -201,6 +242,10 @@ const requiredTools = [
   'reopen_comment',
   'add_comment',
   'reanchor_comment',
+  'suggest_edits',
+  'list_suggestions',
+  'accept_suggestions',
+  'reject_suggestions',
 ]
 for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
@@ -290,6 +335,66 @@ if (
   !Array.isArray(ambiguous.structuredContent.candidate_lines)
 )
   throw new Error('an ambiguous anchor did not report its candidate lines')
+const suggested = await client.callTool(
+  {
+    name: 'suggest_edits',
+    arguments: {
+      project: projectId,
+      path: 'main.tex',
+      base_version: 3,
+      edits: [{ type: 'replace_range', start_line: 2, new_text: 'Hi there.' }],
+      message: 'tighten the intro',
+    },
+  },
+  CallToolResultSchema
+)
+if (
+  suggested.structuredContent.acted_as !== 'agent' ||
+  suggested.structuredContent.change_ids.length !== 1 ||
+  suggested.structuredContent.suggestions[0]?.line !== 2 ||
+  !suggested.structuredContent.diff.includes('Hi there.')
+)
+  throw new Error('suggest_edits did not report the tracked changes it created')
+const listedSuggestions = await client.callTool(
+  { name: 'list_suggestions', arguments: { project: projectId } },
+  CallToolResultSchema
+)
+if (
+  listedSuggestions.structuredContent.count !== 1 ||
+  listedSuggestions.structuredContent.files[0]?.path !== 'main.tex'
+)
+  throw new Error('list_suggestions did not group the suggestions by file')
+const accepted = await client.callTool(
+  {
+    name: 'accept_suggestions',
+    arguments: { project: projectId, path: 'main.tex', all: true },
+  },
+  CallToolResultSchema
+)
+if (accepted.structuredContent.remaining !== 0)
+  throw new Error('accept_suggestions did not report the remaining count')
+const rejected = await client.callTool(
+  {
+    name: 'reject_suggestions',
+    arguments: {
+      project: projectId,
+      path: 'main.tex',
+      change_ids: ['change-1'],
+    },
+  },
+  CallToolResultSchema
+)
+if (rejected.structuredContent.change_ids[0] !== 'change-1')
+  throw new Error('reject_suggestions did not act on the requested ids')
+const unspecified = await client.callTool(
+  {
+    name: 'reject_suggestions',
+    arguments: { project: projectId, path: 'main.tex' },
+  },
+  CallToolResultSchema
+)
+if (unspecified.structuredContent.code !== 'invalid_request')
+  throw new Error('reject_suggestions accepted a call naming no suggestions')
 
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
 console.log(`read_file: ${read.structuredContent.path}`)
@@ -303,6 +408,11 @@ console.log(`reanchor_comment: ${reanchored.content[0].text}`)
 console.log(
   `anchor_ambiguous: candidate lines ${ambiguous.structuredContent.candidate_lines.join(', ')}`
 )
+console.log(`suggest_edits: ${suggested.content[0].text}`)
+console.log(`list_suggestions: ${listedSuggestions.content[0].text}`)
+console.log(`accept_suggestions: ${accepted.content[0].text}`)
+console.log(`reject_suggestions: ${rejected.content[0].text}`)
+console.log(`reject_suggestions without ids: ${unspecified.content[0].text}`)
 
 await client.close()
 await server.close()

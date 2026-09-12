@@ -14,6 +14,7 @@ import BranchService from '../../../project-sync/app/src/BranchService.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import ReviewService from '../../../review/app/src/ReviewService.mjs'
+import SuggestionService from '../../../review/app/src/SuggestionService.mjs'
 import AgentUser from '../../../review/app/src/AgentUser.mjs'
 import { requireAccessToken } from '../../../project-sync/app/src/TokenAuthMiddleware.mjs'
 import { createMcpServer } from './McpTools.mjs'
@@ -30,6 +31,7 @@ export function createDefaultServices() {
     ProjectGetter,
     ProjectEntityHandler,
     ReviewService,
+    SuggestionService,
     AgentUser,
     fetchJson,
     settings: Settings,

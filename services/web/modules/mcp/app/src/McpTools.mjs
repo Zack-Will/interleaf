@@ -12,6 +12,9 @@ import {
   FileTooLargeError,
   InvalidEditError,
 } from '../../../project-sync/app/src/Errors.mjs'
+// Pure helper, safe to import here: it pulls in nothing that talks to a
+// database, so the smoke script still runs without one.
+import { positionToLineColumn } from '../../../review/app/src/TextPositions.mjs'
 
 function normalizeStructuredContent(data) {
   if (Array.isArray(data)) return { items: data, count: data.length }
@@ -55,7 +58,42 @@ function reviewQueueSummary(data) {
     parts.push(
       `${plural(data.detached_count, 'detached comment')}: the commented text is gone, put them back with reanchor_comment`
     )
+  // Suggestions still pending mean the human has not acted on the last edits
+  // this agent offered, which is a reason not to offer more of the same.
+  if (data.pending_suggestions)
+    parts.push(
+      `${plural(data.pending_suggestions, 'pending suggestion')} nobody has accepted or rejected yet; list_suggestions shows them`
+    )
   return parts.join('\n')
+}
+
+function suggestEditsSummary(data) {
+  const parts = [
+    `${plural(data.change_ids.length, 'suggestion')} pending in ${data.path}`,
+  ]
+  if (data.project_version != null)
+    parts.push(`project version ${data.project_version}`)
+  if (data.label?.comment) parts.push(`label: ${data.label.comment}`)
+  parts.push(
+    data.change_ids.length
+      ? 'nothing is applied until a human accepts them in the review panel'
+      : 'the document already said this, so nothing was suggested'
+  )
+  return parts.join('; ')
+}
+
+function suggestionListSummary(data) {
+  const parts = [
+    `${plural(data.count, 'pending suggestion')} in ${plural(data.files.length, 'file')}`,
+  ]
+  for (const file of data.files)
+    parts.push(`${file.path}: ${plural(file.suggestions.length, 'suggestion')}`)
+  return parts.join('\n')
+}
+
+function suggestionActionSummary(data) {
+  const verb = data.action === 'accept' ? 'Accepted' : 'Rejected'
+  return `${verb} ${plural(data.change_ids.length, 'suggestion')} in ${data.path}; ${plural(data.remaining, 'suggestion')} still pending there`
 }
 
 function commentPlacementSummary(data) {
@@ -202,22 +240,6 @@ function toolError(code, message, next) {
 }
 
 const cleanPath = value => String(value || '').replace(/^\/+/, '')
-
-// Comment offsets are character positions in `lines.join('\n')`; turn one into
-// the 1-based line and column an agent can act on.
-function positionToLineColumn(lines, position) {
-  let remaining = Math.max(0, position)
-  for (let index = 0; index < lines.length; index += 1) {
-    const length = lines[index].length
-    if (remaining <= length) return { line: index + 1, column: remaining + 1 }
-    remaining -= length + 1
-  }
-  const lastIndex = Math.max(0, lines.length - 1)
-  return {
-    line: lines.length || 1,
-    column: (lines[lastIndex]?.length ?? 0) + 1,
-  }
-}
 
 const ELLIPSIS = '...'
 
@@ -424,10 +446,14 @@ async function loadProjectComments(services, id, path) {
   const threads = await services.ReviewService.listThreads(id)
   const comments = []
   const linesByPath = new Map()
+  // The same ranges carry the pending tracked changes, and counting them here
+  // saves reading every document a second time just to say how many there are.
+  let suggestionCount = 0
   for (const doc of wanted) {
     const document = await services.ReviewService.getDocRanges(id, doc.docId)
     const lines = document?.lines || []
     linesByPath.set(doc.path, lines)
+    suggestionCount += (document?.ranges?.changes || []).length
     for (const comment of document?.ranges?.comments || []) {
       const threadId = comment.op?.t || comment.id
       comments.push(commentEntry(doc, lines, comment, threads?.[threadId]))
@@ -439,7 +465,7 @@ async function loadProjectComments(services, id, path) {
       left.line - right.line ||
       left.column - right.column
   )
-  return { comments, linesByPath }
+  return { comments, linesByPath, suggestionCount }
 }
 
 async function findCommentThread(services, id, threadId) {
@@ -631,6 +657,195 @@ function contextFor(lines, line, contextLines) {
   }
 }
 
+const editSchema = z.object({
+  type: z.string(),
+  start_line: z.number().optional(),
+  end_line: z.number().optional(),
+  new_text: z.string().optional(),
+  anchor: z.string().optional(),
+  occurrence: z.number().optional(),
+  title: z.string().optional(),
+  level: z.string().optional(),
+})
+
+/**
+ * Apply the structured edits of `edit_file` to a document, in order, and
+ * report each replacement as a character range of the document as it stood
+ * when that edit ran.  `suggest_edits` builds its new content the same way,
+ * so the two tools take identical `edits` and behave identically on an
+ * ambiguous or missing anchor.
+ *
+ * @param {string[]} documentLines
+ * @param {Array<object>} edits
+ * @return {{lines: string[], changes: Array<object>}}
+ */
+function applyStructuredEdits(documentLines, edits) {
+  let lines = [...documentLines]
+  const split = text => String(text ?? '').split(/\r\n|\n|\r/)
+  const changes = []
+  for (const edit of edits) {
+    if (edit.type === 'replace_range') {
+      const start = edit.start_line
+      const end = edit.end_line ?? start
+      if (
+        !Number.isInteger(start) ||
+        !Number.isInteger(end) ||
+        start < 1 ||
+        end > lines.length ||
+        end < start - 1
+      )
+        throw new InvalidEditError('invalid line range')
+      const inserting = end < start
+      const replacement = split(edit.new_text).join('\n')
+      changes.push({
+        start: offsetOfLineIndex(lines, start - 1),
+        oldLength: inserting
+          ? 0
+          : lines.slice(start - 1, end).join('\n').length,
+        newText: inserting ? `${replacement}\n` : replacement,
+        reanchor: false,
+      })
+      lines.splice(
+        start - 1,
+        Math.max(0, end - start + 1),
+        ...split(edit.new_text)
+      )
+    } else if (edit.type === 'replace_anchor') {
+      const anchor = String(edit.anchor ?? '')
+      const text = lines.join('\n')
+      const positions = []
+      let at = text.indexOf(anchor)
+      while (at >= 0) {
+        positions.push(at)
+        at = text.indexOf(anchor, at + 1)
+      }
+      if (!positions.length) throw new AnchorNotFoundError()
+      const candidateLines = positions.map(
+        position => text.slice(0, position).split('\n').length
+      )
+      if (edit.occurrence != null) {
+        const selected = edit.occurrence - 1
+        if (selected < 0 || selected >= positions.length)
+          throw new AnchorNotFoundError()
+        positions.splice(0, positions.length, positions[selected])
+      } else if (positions.length > 1) {
+        throw new AnchorAmbiguousError('anchor is ambiguous', {
+          candidateLines,
+        })
+      }
+      changes.push({
+        start: positions[0],
+        oldLength: anchor.length,
+        newText: String(edit.new_text ?? ''),
+        reanchor: true,
+      })
+      const replacement =
+        text.slice(0, positions[0]) +
+        String(edit.new_text ?? '') +
+        text.slice(positions[0] + anchor.length)
+      lines = split(replacement)
+    } else if (edit.type === 'replace_section') {
+      const levels = [
+        'part',
+        'chapter',
+        'section',
+        'subsection',
+        'subsubsection',
+        'paragraph',
+        'subparagraph',
+      ]
+      const level = edit.level || 'section'
+      const levelIndex = levels.indexOf(level)
+      if (levelIndex < 0) throw new InvalidEditError('invalid section level')
+      const heading = new RegExp(
+        '^\\\\(' +
+          levels.join('|') +
+          ')\\*?\\{' +
+          String(edit.title).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') +
+          '\\}'
+      )
+      const start = lines.findIndex(
+        line => heading.test(line) && line.match(heading)[1] === level
+      )
+      if (start < 0) throw new AnchorNotFoundError('section not found')
+      let end = lines.length
+      for (let index = start + 1; index < lines.length; index += 1) {
+        const match = lines[index].match(
+          /^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/
+        )
+        if (match && levels.indexOf(match[1]) <= levelIndex) {
+          end = index
+          break
+        }
+        if (/^\\end\{document\}/.test(lines[index])) {
+          end = index
+          break
+        }
+      }
+      const replacementLines = split(edit.new_text)
+      if (!heading.test(replacementLines[0] || ''))
+        throw new InvalidEditError(
+          'replace_section new_text must include heading'
+        )
+      changes.push({
+        start: offsetOfLineIndex(lines, start),
+        oldLength: lines.slice(start, end).join('\n').length,
+        newText: replacementLines.join('\n'),
+        reanchor: true,
+      })
+      lines.splice(start, end - start, ...replacementLines)
+    } else throw new InvalidEditError(`unknown edit type ${edit.type}`)
+  }
+  return { lines, changes }
+}
+
+// A document that outgrows the limit is refused before anything is written.
+function assertDocumentFits(lines, services) {
+  const size = lines.reduce((total, line) => total + line.length + 1, 0)
+  if (size > (services.settings?.max_doc_length ?? Settings.max_doc_length))
+    throw new FileTooLargeError()
+}
+
+// Someone else wrote to the project since the caller read it.  The version to
+// retry with is the one the project is at now, so say it.
+function withVersionConflictHint(error) {
+  if (error.code === 'version_conflict')
+    error.next_action = `re-read changed files and retry with base_version=${error.actualVersion}`
+  return error
+}
+
+// The tracked changes a `suggest_edits` call just created, read back from the
+// live ranges so their line numbers are the ones the human will see.
+async function describeSuggestions(services, id, docId, changeIds) {
+  if (!changeIds.length) return []
+  const wanted = new Set(changeIds.map(String))
+  const { suggestions } = await services.SuggestionService.listSuggestions(
+    id,
+    docId
+  )
+  return suggestions
+    .filter(suggestion => wanted.has(String(suggestion.change_id)))
+    .map(suggestion => ({
+      change_id: suggestion.change_id,
+      type: suggestion.type,
+      line: suggestion.line,
+      text: suggestion.text,
+    }))
+}
+
+// `all: true` is how a caller asks for every pending suggestion of the file
+// without listing them first; anything else has to name the ids, so that a
+// bare call cannot accept work the human has not seen.
+function requestedChangeIds(changeIds, all) {
+  if (all) return null
+  if (Array.isArray(changeIds) && changeIds.length) return changeIds
+  throw toolError(
+    'invalid_request',
+    'pass change_ids, or all: true to act on every pending suggestion of this file',
+    'call list_suggestions to see the pending suggestions and their ids'
+  )
+}
+
 export function registerTools(
   server,
   { services = {}, req = {}, clientName } = {}
@@ -639,6 +854,18 @@ export function registerTools(
   const run = async (fn, next) => {
     try {
       return textResult(await fn())
+    } catch (error) {
+      return errorResult(error, next)
+    }
+  }
+  // `summaryText` picks the human sentence out of the shape of the result,
+  // which stops working once two tools answer with the same shape.  The
+  // suggestion tools say which sentence they want instead of adding more
+  // guesswork to that chain.
+  const runSummarised = async (summarise, fn, next) => {
+    try {
+      const data = await fn()
+      return textResult(data, summarise(data))
     } catch (error) {
       return errorResult(error, next)
     }
@@ -981,18 +1208,7 @@ export function registerTools(
       project: z.string(),
       path: z.string(),
       base_version: z.number().int().nonnegative(),
-      edits: z.array(
-        z.object({
-          type: z.string(),
-          start_line: z.number().optional(),
-          end_line: z.number().optional(),
-          new_text: z.string().optional(),
-          anchor: z.string().optional(),
-          occurrence: z.number().optional(),
-          title: z.string().optional(),
-          level: z.string().optional(),
-        })
-      ),
+      edits: z.array(editSchema),
       message: z.string(),
       agent: z.string().optional(),
     },
@@ -1001,128 +1217,8 @@ export function registerTools(
         const id = projectId(project, services)
         await access(services, req, id, 'write')
         const document = await services.SnapshotService.readDoc(id, path)
-        let lines = [...document.lines]
-        const split = text => String(text ?? '').split(/\r\n|\n|\r/)
-        const changes = []
-        for (const edit of edits) {
-          if (edit.type === 'replace_range') {
-            const start = edit.start_line
-            const end = edit.end_line ?? start
-            if (
-              !Number.isInteger(start) ||
-              !Number.isInteger(end) ||
-              start < 1 ||
-              end > lines.length ||
-              end < start - 1
-            )
-              throw new InvalidEditError('invalid line range')
-            const inserting = end < start
-            const replacement = split(edit.new_text).join('\n')
-            changes.push({
-              start: offsetOfLineIndex(lines, start - 1),
-              oldLength: inserting
-                ? 0
-                : lines.slice(start - 1, end).join('\n').length,
-              newText: inserting ? `${replacement}\n` : replacement,
-              reanchor: false,
-            })
-            lines.splice(
-              start - 1,
-              Math.max(0, end - start + 1),
-              ...split(edit.new_text)
-            )
-          } else if (edit.type === 'replace_anchor') {
-            const anchor = String(edit.anchor ?? '')
-            const text = lines.join('\n')
-            const positions = []
-            let at = text.indexOf(anchor)
-            while (at >= 0) {
-              positions.push(at)
-              at = text.indexOf(anchor, at + 1)
-            }
-            if (!positions.length) throw new AnchorNotFoundError()
-            const candidateLines = positions.map(
-              position => text.slice(0, position).split('\n').length
-            )
-            if (edit.occurrence != null) {
-              const selected = edit.occurrence - 1
-              if (selected < 0 || selected >= positions.length)
-                throw new AnchorNotFoundError()
-              positions.splice(0, positions.length, positions[selected])
-            } else if (positions.length > 1) {
-              throw new AnchorAmbiguousError('anchor is ambiguous', {
-                candidateLines,
-              })
-            }
-            changes.push({
-              start: positions[0],
-              oldLength: anchor.length,
-              newText: String(edit.new_text ?? ''),
-              reanchor: true,
-            })
-            const replacement =
-              text.slice(0, positions[0]) +
-              String(edit.new_text ?? '') +
-              text.slice(positions[0] + anchor.length)
-            lines = split(replacement)
-          } else if (edit.type === 'replace_section') {
-            const levels = [
-              'part',
-              'chapter',
-              'section',
-              'subsection',
-              'subsubsection',
-              'paragraph',
-              'subparagraph',
-            ]
-            const level = edit.level || 'section'
-            const levelIndex = levels.indexOf(level)
-            if (levelIndex < 0)
-              throw new InvalidEditError('invalid section level')
-            const heading = new RegExp(
-              '^\\\\(' +
-                levels.join('|') +
-                ')\\*?\\{' +
-                String(edit.title).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') +
-                '\\}'
-            )
-            const start = lines.findIndex(
-              line => heading.test(line) && line.match(heading)[1] === level
-            )
-            if (start < 0) throw new AnchorNotFoundError('section not found')
-            let end = lines.length
-            for (let index = start + 1; index < lines.length; index += 1) {
-              const match = lines[index].match(
-                /^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/
-              )
-              if (match && levels.indexOf(match[1]) <= levelIndex) {
-                end = index
-                break
-              }
-              if (/^\\end\{document\}/.test(lines[index])) {
-                end = index
-                break
-              }
-            }
-            const replacementLines = split(edit.new_text)
-            if (!heading.test(replacementLines[0] || ''))
-              throw new InvalidEditError(
-                'replace_section new_text must include heading'
-              )
-            changes.push({
-              start: offsetOfLineIndex(lines, start),
-              oldLength: lines.slice(start, end).join('\n').length,
-              newText: replacementLines.join('\n'),
-              reanchor: true,
-            })
-            lines.splice(start, end - start, ...replacementLines)
-          } else throw new InvalidEditError(`unknown edit type ${edit.type}`)
-        }
-        const size = lines.reduce((total, line) => total + line.length + 1, 0)
-        if (
-          size > (services.settings?.max_doc_length ?? Settings.max_doc_length)
-        )
-          throw new FileTooLargeError()
+        const { lines, changes } = applyStructuredEdits(document.lines, edits)
+        assertDocumentFits(lines, services)
         const before = document.lines.join('\n')
         const content = lines.join('\n')
         // Snapshot the comment ranges the write is about to transform, so the
@@ -1138,10 +1234,7 @@ export function registerTools(
             files: [{ path, content }],
           })
         } catch (error) {
-          if (error.code === 'version_conflict') {
-            error.next_action = `re-read changed files and retry with base_version=${error.actualVersion}`
-          }
-          throw error
+          throw withVersionConflictHint(error)
         }
         const { reanchored, failed } = await reanchorDetachedComments(
           services,
@@ -1261,11 +1354,8 @@ export function registerTools(
       run(async () => {
         const id = projectId(project, services)
         await access(services, req, id)
-        const { comments, linesByPath } = await loadProjectComments(
-          services,
-          id,
-          undefined
-        )
+        const { comments, linesByPath, suggestionCount } =
+          await loadProjectComments(services, id, undefined)
         const open = comments.filter(comment => !comment.resolved)
         const files = []
         const detached = []
@@ -1289,6 +1379,7 @@ export function registerTools(
           count: open.length - detached.length,
           detached,
           detached_count: detached.length,
+          pending_suggestions: suggestionCount,
         }
       })
   )
@@ -1432,6 +1523,140 @@ export function registerTools(
           reanchored: true,
         })
       })
+  )
+
+  server.tool(
+    'suggest_edits',
+    'Offer structured edits to a document as tracked changes a human accepts or rejects, instead of writing them straight into the document',
+    {
+      project: z.string(),
+      path: z.string(),
+      base_version: z.number().int().nonnegative(),
+      edits: z.array(editSchema),
+      message: z.string(),
+      agent: z.string().optional(),
+      act_as_agent: z.boolean().optional(),
+    },
+    async ({
+      project,
+      path,
+      base_version,
+      edits,
+      message,
+      agent,
+      act_as_agent = true,
+    }) =>
+      runSummarised(suggestEditsSummary, async () => {
+        const id = projectId(project, services)
+        await access(services, req, id, 'write')
+        const doc = await resolveDoc(services, id, path)
+        const document = await services.SnapshotService.readDoc(id, path)
+        const { lines } = applyStructuredEdits(document.lines, edits)
+        assertDocumentFits(lines, services)
+        const before = document.lines.join('\n')
+        const content = lines.join('\n')
+        const actor = await resolveActor(services, id, userId, act_as_agent)
+        let result
+        try {
+          result = await services.SuggestionService.suggestDocContent(
+            id,
+            doc.docId,
+            actor.userId,
+            {
+              lines,
+              agent: agent || clientName || 'mcp',
+              message,
+              baseVersion: base_version,
+            }
+          )
+        } catch (error) {
+          throw withVersionConflictHint(error)
+        }
+        return {
+          path: doc.path,
+          doc_id: doc.docId,
+          project_version: result.version,
+          label: result.label,
+          change_ids: result.change_ids,
+          suggestions: await describeSuggestions(
+            services,
+            id,
+            doc.docId,
+            result.change_ids
+          ),
+          acted_as: actor.acted_as,
+          ...(actor.reason ? { reason: actor.reason } : {}),
+          diff: createTwoFilesPatch(path, path, before, content),
+        }
+      })
+  )
+
+  server.tool(
+    'list_suggestions',
+    'List the tracked changes waiting for someone to accept or reject them',
+    { project: z.string(), path: z.string().optional() },
+    async ({ project, path }) =>
+      runSummarised(suggestionListSummary, async () => {
+        const id = projectId(project, services)
+        await access(services, req, id)
+        const doc = path == null ? null : await resolveDoc(services, id, path)
+        const { files, count } =
+          await services.SuggestionService.listSuggestions(id, doc?.docId)
+        return { files, count }
+      })
+  )
+
+  // Accepting and rejecting is the human's decision, so these act as the user
+  // whose token the agent is using, never as the agent service user.
+  const suggestionActionTool = (name, description, action) =>
+    server.tool(
+      name,
+      description,
+      {
+        project: z.string(),
+        path: z.string(),
+        change_ids: z.array(z.string()).optional(),
+        all: z.boolean().optional(),
+      },
+      async ({ project, path, change_ids, all = false }) =>
+        runSummarised(suggestionActionSummary, async () => {
+          const id = projectId(project, services)
+          await access(services, req, id, 'write')
+          const doc = await resolveDoc(services, id, path)
+          const ids = requestedChangeIds(change_ids, all)
+          const result =
+            action === 'accept'
+              ? await services.SuggestionService.acceptSuggestions(
+                  id,
+                  doc.docId,
+                  ids,
+                  userId
+                )
+              : await services.SuggestionService.rejectSuggestions(
+                  id,
+                  doc.docId,
+                  ids,
+                  userId
+                )
+          return {
+            action,
+            path: doc.path,
+            doc_id: doc.docId,
+            change_ids: result.change_ids,
+            remaining: result.remaining,
+          }
+        })
+    )
+
+  suggestionActionTool(
+    'accept_suggestions',
+    'Accept tracked changes, applying them to the document',
+    'accept'
+  )
+  suggestionActionTool(
+    'reject_suggestions',
+    'Reject tracked changes, undoing them',
+    'reject'
   )
 
   return server

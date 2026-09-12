@@ -386,6 +386,16 @@ describe('MCP tools', () => {
         path: 'main.tex',
         anchor: { exact: 'one' },
       },
+      suggest_edits: {
+        project,
+        path: 'main.tex',
+        base_version: 4,
+        edits: [],
+        message: 'm',
+      },
+      list_suggestions: { project },
+      accept_suggestions: { project, path: 'main.tex', all: true },
+      reject_suggestions: { project, path: 'main.tex', all: true },
     }
     for (const [name, tool] of Object.entries(server._registeredTools)) {
       const result = await tool.handler(argumentsByTool[name])
