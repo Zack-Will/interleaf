@@ -21,8 +21,8 @@ describe('project-sync module hooks', () => {
   })
 
   it('exposes listPersonalAccessTokens and cleanupPersonalAccessTokens hooks', async ctx => {
-    await expect(ctx.module.hooks.promises.listPersonalAccessTokens('u')).resolves.toEqual([{ id: 't' }])
-    await expect(ctx.module.hooks.promises.cleanupPersonalAccessTokens('u')).resolves.toEqual({ deletedCount: 1 })
+    expect(await ctx.module.hooks.promises.listPersonalAccessTokens('u')).toEqual([{ id: 't' }])
+    expect(await ctx.module.hooks.promises.cleanupPersonalAccessTokens('u')).toEqual({ deletedCount: 1 })
     sinon.assert.calledWith(ctx.listTokens, 'u')
     sinon.assert.calledWith(ctx.revokeAllForUser, 'u')
   })
