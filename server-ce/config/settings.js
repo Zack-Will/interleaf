@@ -217,6 +217,26 @@ const settings = {
   gitBridgePublicBaseUrl:
     process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
 
+  // One-way backup of a project's git history to GitHub (this fork). The
+  // cipher password encrypts the stored GitHub and git-bridge tokens; without
+  // it the feature refuses to store a token at all. `reposDir` holds one bare
+  // mirror per linked project and belongs on the persistent data volume.
+  githubBackup: {
+    enabled: process.env.GITHUB_BACKUP_ENABLED === 'true',
+    intervalSeconds:
+      parseInt(process.env.GITHUB_BACKUP_INTERVAL_SECONDS, 10) || 600,
+    reposDir:
+      process.env.GITHUB_BACKUP_REPOS_DIR || '/var/lib/overleaf/data/github-backup',
+    apiBaseUrl: process.env.GITHUB_BACKUP_API_BASE_URL || 'https://api.github.com',
+    gitTimeoutMs: parseInt(process.env.GITHUB_BACKUP_GIT_TIMEOUT_MS, 10) || 300000,
+    accessTokenEncryptor: {
+      cipherLabel: '2026.1-v3',
+      cipherPasswords: {
+        '2026.1-v3': process.env.GITHUB_BACKUP_CIPHER_PASSWORD,
+      },
+    },
+  },
+
   restrictInvitesToExistingAccounts:
     process.env.OVERLEAF_RESTRICT_INVITES_TO_EXISTING_ACCOUNTS === 'true',
 
