@@ -90,18 +90,20 @@ export function createSuggestionService(services = {}) {
 
   /**
    * Replace the content of a document with `lines` so that the diff lands as
-   * pending tracked changes attributed to `userId`, then label the history
-   * entry the write produced.
+   * pending tracked changes attributed to `userId`.
    *
    * The write takes the same project lock and honours the same `baseVersion`
    * precondition as `WriteService.writeFiles`, so a suggestion and a plain
    * write cannot interleave and a stale `base_version` is refused identically.
+   * It also follows the same label rule: `message` always travels in the
+   * persisted origin, where the history panel shows it, and a label is only
+   * created when the caller asks for one by passing `label: true`.
    *
    * @param {string} projectId
    * @param {string} docId
    * @param {string} userId the user the tracked changes are attributed to
    * @param {{lines: string[], agent?: string, message: string,
-   *          baseVersion?: number}} request
+   *          baseVersion?: number, label?: boolean}} request
    * @return {Promise<{change_ids: string[], version: number,
    *                   label: {id: string, comment: string} | null}>}
    */
@@ -109,7 +111,7 @@ export function createSuggestionService(services = {}) {
     projectId,
     docId,
     userId,
-    { lines, agent, message, baseVersion }
+    { lines, agent, message, baseVersion, label = false }
   ) {
     return writeService.promises.withProjectWriteLock(
       projectId,
@@ -126,15 +128,16 @@ export function createSuggestionService(services = {}) {
         const after = await versionService.promises.getLatestVersion(projectId)
         // A write that suggested nothing changed nothing, and a label on an
         // unchanged version would be noise in the history panel.
-        const label = changeIds.length
-          ? await writeService.promises.createWriteLabel(
-              projectId,
-              userId,
-              after.version,
-              `Suggest: ${message}`
-            )
-          : null
-        return { change_ids: changeIds, version: after.version, label }
+        const created =
+          label && changeIds.length
+            ? await writeService.promises.createWriteLabel(
+                projectId,
+                userId,
+                after.version,
+                `Suggest: ${message}`
+              )
+            : null
+        return { change_ids: changeIds, version: after.version, label: created }
       }
     )
   }

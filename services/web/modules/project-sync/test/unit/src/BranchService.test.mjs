@@ -309,6 +309,9 @@ describe('BranchService mergeBranch', () => {
         message: 'merge it',
         agent: 'agent-x',
         originExtra: { merge: { branch: branchId, branchVersion: 7 } },
+        // Landing a branch is a milestone, so the merge keeps its label even
+        // though ordinary writes no longer create one.
+        label: true,
       })
     )
     expect(mocks.updateOne).toHaveBeenCalledWith(

@@ -101,6 +101,7 @@ describe('suggestion service', () => {
           agent: 'claude',
           message: 'tighten the intro',
           baseVersion: 8,
+          label: true,
         }
       )
       const [lockedProject, baseVersion] =
@@ -124,14 +125,34 @@ describe('suggestion service', () => {
       })
     })
 
-    it('labels the history entry with the suggestion message', async ctx => {
+    it('labels the history entry with the suggestion message when asked', async ctx => {
       await ctx.service.suggestDocContent(projectId, docId, 'agent-user', {
         lines,
         message: 'tighten the intro',
+        label: true,
       })
       expect(ctx.writeService.promises.createWriteLabel.firstCall.args).toEqual(
         [projectId, 'agent-user', 9, 'Suggest: tighten the intro']
       )
+    })
+
+    it('leaves the intent in the origin and creates no label by default', async ctx => {
+      const result = await ctx.service.suggestDocContent(
+        projectId,
+        docId,
+        'agent-user',
+        { lines, agent: 'claude', message: 'tighten the intro' }
+      )
+      expect(result.label).toBe(null)
+      expect(ctx.writeService.promises.createWriteLabel.called).toBe(false)
+      const [, , , , source] =
+        ctx.documentUpdaterClient.promises.setDocumentTracked.firstCall.args
+      expect(source).toEqual({
+        kind: 'mcp',
+        agent: 'claude',
+        message: 'tighten the intro',
+        suggestion: true,
+      })
     })
 
     it('does not label a write that suggested nothing', async ctx => {
@@ -142,7 +163,7 @@ describe('suggestion service', () => {
         projectId,
         docId,
         'agent-user',
-        { lines, message: 'no change' }
+        { lines, message: 'no change', label: true }
       )
       expect(result.label).toBe(null)
       expect(ctx.writeService.promises.createWriteLabel.called).toBe(false)

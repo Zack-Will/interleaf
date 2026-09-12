@@ -59,6 +59,14 @@ const services = {
       return { version: 4, label: null }
     },
   },
+  LabelService: {
+    async createLabel(_projectId, _userId, version, comment) {
+      return { _id: 'label-smoke', comment, version }
+    },
+    async listLabels() {
+      return []
+    },
+  },
   ProjectGetter: {
     promises: {
       async findAllUsersProjects() {
@@ -246,6 +254,7 @@ const requiredTools = [
   'list_suggestions',
   'accept_suggestions',
   'reject_suggestions',
+  'create_label',
 ]
 for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
@@ -395,6 +404,18 @@ const unspecified = await client.callTool(
 )
 if (unspecified.structuredContent.code !== 'invalid_request')
   throw new Error('reject_suggestions accepted a call naming no suggestions')
+const marked = await client.callTool(
+  {
+    name: 'create_label',
+    arguments: { project: projectId, comment: 'Review round 1 handled' },
+  },
+  CallToolResultSchema
+)
+if (
+  marked.structuredContent.project_version !== 3 ||
+  marked.structuredContent.label?.id !== 'label-smoke'
+)
+  throw new Error('create_label did not label the latest project version')
 
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
 console.log(`read_file: ${read.structuredContent.path}`)

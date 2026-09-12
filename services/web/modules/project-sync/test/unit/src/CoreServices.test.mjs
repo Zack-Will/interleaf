@@ -164,10 +164,12 @@ describe('WriteService.withProjectWriteLock', () => {
 })
 
 describe('WriteService labels', () => {
-  it('does not create a label when no files are applied', async () => {
+  // A label is a milestone, so it is only created when the caller asks for
+  // one.  Everything else about the write is unchanged.
+  async function load() {
     vi.resetModules()
     const lock = { promises: { runWithLock: async (_n, _id, fn) => fn() } }
-    const createLabel = sinon.stub()
+    const createLabel = sinon.stub().resolves({ _id: 'l1', comment: 'm' })
     vi.doMock('@overleaf/settings', () => ({
       default: { path: { dumpFolder: '/tmp' } },
     }))
@@ -196,6 +198,13 @@ describe('WriteService labels', () => {
     }))
     const { default: WriteService } =
       await import('../../../app/src/WriteService.mjs')
+    return { WriteService, createLabel }
+  }
+
+  const oneFile = [{ path: 'main.tex', content: 'hi' }]
+
+  it('does not create a label when no files are applied', async () => {
+    const { WriteService, createLabel } = await load()
 
     const result = await WriteService.writeFiles('p', 'u', {
       message: 'm',
@@ -210,6 +219,55 @@ describe('WriteService labels', () => {
       comments_affected: [],
     })
     expect(createLabel.called).toBe(false)
+  })
+
+  it('does not create a label for an ordinary write', async () => {
+    const { WriteService, createLabel } = await load()
+
+    const result = await WriteService.writeFiles('p', 'u', {
+      message: 'Rewrite the abstract',
+      files: oneFile,
+    })
+
+    expect(result.applied).toEqual(['main.tex'])
+    expect(result.label).toBe(null)
+    expect(createLabel.called).toBe(false)
+  })
+
+  it('creates one when the caller marks a milestone', async () => {
+    const { WriteService, createLabel } = await load()
+
+    const result = await WriteService.writeFiles('p', 'u', {
+      message: 'Rewrite the abstract',
+      files: oneFile,
+      label: true,
+    })
+
+    expect(result.label).toEqual({ id: 'l1', comment: 'm' })
+    expect(createLabel.firstCall.args).toEqual([
+      'p',
+      'u',
+      4,
+      'Rewrite the abstract',
+    ])
+  })
+
+  it('keeps the message in the origin whether or not a label is made', async () => {
+    const { WriteService } = await load()
+    const { default: UpdateMerger } =
+      await import('../../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs')
+
+    await WriteService.writeFiles('p', 'u', {
+      message: 'Rewrite the abstract',
+      agent: 'Claude Code',
+      files: oneFile,
+    })
+
+    expect(UpdateMerger.promises._mergeUpdate.firstCall.args[4]).toMatchObject({
+      kind: 'mcp',
+      agent: 'Claude Code',
+      message: 'Rewrite the abstract',
+    })
   })
 })
 
