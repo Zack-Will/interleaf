@@ -54,13 +54,22 @@ export function requireAccessToken(scope) {
       req.syncUser = result
       return next()
     } catch (error) {
-      if (error instanceof InsufficientScopeError) {
+      if (
+        error instanceof InsufficientScopeError ||
+        error?.code === 'insufficient_scope'
+      ) {
         return respond(res, 403, 'insufficient_scope', 'insufficient_scope')
       }
-      if (error instanceof TokenExpiredError) {
+      if (
+        error instanceof TokenExpiredError ||
+        error?.code === 'token_expired'
+      ) {
         return respond(res, 401, 'invalid_token', 'token_expired')
       }
-      if (error instanceof TokenInvalidError) {
+      if (
+        error instanceof TokenInvalidError ||
+        error?.code === 'token_invalid'
+      ) {
         return respond(res, 401, 'invalid_token', 'token_invalid')
       }
       return next(error)
