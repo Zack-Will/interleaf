@@ -12,15 +12,15 @@ function parse(input) {
 }
 function urlFor(projectId) { return `${Settings.siteUrl}/project/${projectId}` }
 async function requireAccess(userId, projectId, level) {
-  const { default: ProjectGetter } = await import('../../../../app/src/Features/Project/ProjectGetter.mjs')
-  const project = await ProjectGetter.promises.getProject(projectId)
-  if (project == null) throw new ProjectNotFoundError()
   const { default: AuthorizationManager } = await import('../../../../app/src/Features/Authorization/AuthorizationManager.mjs')
   const allowed = level === 'write'
     ? await AuthorizationManager.promises.canUserWriteProjectContent(userId, projectId, null)
     : await AuthorizationManager.promises.canUserReadProject(userId, projectId, null)
-  if (!allowed) throw new ProjectAccessError()
-  return true
+  if (allowed) return true
+  const { default: ProjectGetter } = await import('../../../../app/src/Features/Project/ProjectGetter.mjs')
+  const project = await ProjectGetter.promises.getProject(projectId)
+  if (project == null) throw new ProjectNotFoundError()
+  throw new ProjectAccessError()
 }
 export default { parse, urlFor, requireAccess }
 export { parse, urlFor, requireAccess }
