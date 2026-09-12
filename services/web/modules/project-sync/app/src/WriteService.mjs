@@ -11,6 +11,68 @@ import LabelService from './LabelService.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import { VersionConflictError } from './Errors.mjs'
 
+const clean = value => String(value || '').replace(/^\/+/, '')
+
+function threadIdOf(comment) {
+  return comment.op?.t || comment.id
+}
+
+function docLines(document) {
+  return Array.isArray(document.lines)
+    ? document.lines
+    : String(document.lines || '').split(/\r\n|\n|\r/)
+}
+
+function findDocId(docs, target) {
+  const entry = Object.entries(docs || {}).find(
+    ([, pathname]) => clean(pathname) === target
+  )
+  return entry ? entry[0] : null
+}
+
+// Comment ranges are transformed by the editing operations our write produces,
+// so an agent needs to know which of them moved, changed size or lost their
+// text entirely.  `moved` also covers a range that kept its length but now
+// spans different text.
+function commentState(before, after) {
+  if (!after) return 'detached'
+  const beforeText = before.op?.c ?? ''
+  const afterText = after.op?.c ?? ''
+  if (afterText === '' && beforeText !== '') return 'detached'
+  if (afterText.length > beforeText.length) return 'grown'
+  if (afterText.length < beforeText.length) return 'shrunk'
+  if ((after.op?.p ?? 0) !== (before.op?.p ?? 0) || afterText !== beforeText)
+    return 'moved'
+  return 'unchanged'
+}
+
+function compareComments(target, before, after) {
+  const afterByThread = new Map(
+    (after || []).map(comment => [threadIdOf(comment), comment])
+  )
+  return (before || []).map(comment => ({
+    thread_id: threadIdOf(comment),
+    path: target,
+    state: commentState(comment, afterByThread.get(threadIdOf(comment))),
+  }))
+}
+
+async function loadDocument(projectId, docId, target) {
+  try {
+    return await DocumentUpdaterHandler.promises.getDocument(
+      projectId,
+      docId,
+      -1
+    )
+  } catch (error) {
+    logger.warn(
+      { err: error, projectId, path: target },
+      'failed to load project document for comment tracking'
+    )
+    return null
+  }
+}
+
 async function writeFiles(
   projectId,
   userId,
@@ -41,6 +103,7 @@ async function writeFiles(
       const failed = []
       const unchanged = []
       const tempPaths = []
+      const commentsAffected = []
       try {
         let docs
         const hasDocCandidates = files.some(
@@ -62,34 +125,25 @@ async function writeFiles(
           }
         }
         for (const item of files) {
-          const target = String(item.path || '').replace(/^\/+/, '')
+          const target = clean(item.path)
+          // Only text documents carry comment ranges, and only they can be
+          // compared against their current content.
+          const docId =
+            !item.delete && item.contentBase64 == null
+              ? findDocId(docs, target)
+              : null
+          let commentsBefore = []
           try {
-            if (!item.delete && item.contentBase64 == null) {
-              try {
-                const docEntry = Object.entries(docs || {}).find(
-                  ([, pathname]) =>
-                    String(pathname).replace(/^\/+/, '') === target
-                )
-                if (docEntry) {
-                  const document =
-                    await DocumentUpdaterHandler.promises.getDocument(
-                      projectId,
-                      docEntry[0],
-                      -1
-                    )
-                  const lines = Array.isArray(document.lines)
-                    ? document.lines
-                    : String(document.lines || '').split(/\r\n|\n|\r/)
-                  if (lines.join('\n') === String(item.content ?? '')) {
-                    unchanged.push(target)
-                    continue
-                  }
+            if (docId) {
+              const document = await loadDocument(projectId, docId, target)
+              if (document) {
+                if (
+                  docLines(document).join('\n') === String(item.content ?? '')
+                ) {
+                  unchanged.push(target)
+                  continue
                 }
-              } catch (error) {
-                logger.warn(
-                  { err: error, projectId, path: target },
-                  'failed to compare project document for unchanged detection'
-                )
+                commentsBefore = document.ranges?.comments || []
               }
             }
             if (item.delete) {
@@ -139,6 +193,18 @@ async function writeFiles(
               )
             }
             applied.push(target)
+            if (commentsBefore.length) {
+              const document = await loadDocument(projectId, docId, target)
+              // A failed read is not evidence that the comments went away.
+              if (document)
+                commentsAffected.push(
+                  ...compareComments(
+                    target,
+                    commentsBefore,
+                    document.ranges?.comments || []
+                  )
+                )
+            }
           } catch (error) {
             failed.push({ path: target, error: error.message })
           }
@@ -151,6 +217,7 @@ async function writeFiles(
             applied,
             ...(files.length ? { unchanged } : {}),
             failed,
+            comments_affected: commentsAffected,
           }
         }
         const labelComment = originExtra.revert
@@ -171,6 +238,7 @@ async function writeFiles(
           applied,
           unchanged,
           failed,
+          comments_affected: commentsAffected,
         }
       } finally {
         await Promise.all(tempPaths.map(p => fs.unlink(p).catch(() => {})))

@@ -574,6 +574,26 @@ describe('edit_file', () => {
     )
   })
 
+  it('surfaces the comments the write affected', async () => {
+    const affected = [
+      { thread_id: 't1', path: 'main.tex', state: 'shrunk' },
+      { thread_id: 't2', path: 'main.tex', state: 'detached' },
+    ]
+    const { result } = await call(
+      { type: 'replace_range', start_line: 1, end_line: 1, new_text: 'new' },
+      {
+        WriteService: {
+          writeFiles: vi.fn(async () => ({
+            version: 5,
+            label: { comment: 'm' },
+            comments_affected: affected,
+          })),
+        },
+      }
+    )
+    expect(result.structuredContent.comments_affected).toEqual(affected)
+  })
+
   it('rejects section replacement text without its heading', async () => {
     const { result } = await call(
       {

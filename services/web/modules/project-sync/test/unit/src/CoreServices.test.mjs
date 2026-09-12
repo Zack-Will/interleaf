@@ -143,6 +143,7 @@ describe('WriteService labels', () => {
       label: null,
       applied: [],
       failed: [],
+      comments_affected: [],
     })
     expect(createLabel.called).toBe(false)
   })

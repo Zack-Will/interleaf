@@ -802,6 +802,7 @@ export function registerTools(
           path,
           project_version: result.version,
           label: result.label,
+          comments_affected: result.comments_affected,
           diff: createTwoFilesPatch(path, path, before, content),
         }
       })

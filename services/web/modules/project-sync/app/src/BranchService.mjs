@@ -266,7 +266,12 @@ async function mergeBranch(
     { branchProjectId: branch.branchProjectId },
     { $set: { status: 'merged', mergedVersion, mergedAt: new Date() } }
   )
-  return { ...output, version: mergedVersion, label: written.label }
+  return {
+    ...output,
+    version: mergedVersion,
+    label: written.label,
+    comments_affected: written.comments_affected,
+  }
 }
 
 async function archiveBranch(branchProjectId, userId) {
