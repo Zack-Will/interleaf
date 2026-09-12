@@ -33,8 +33,10 @@ function reposDir() {
   return Settings.githubBackup?.reposDir || 'data/github-backup'
 }
 
+// A run is a fetch and a push, each bounded by the git timeout, so the lease
+// must outlive both with a margin, or a slow push could be started twice.
 function leaseDuration() {
-  return Settings.githubBackup?.gitTimeoutMs || 300000
+  return 2 * (Settings.githubBackup?.gitTimeoutMs || 300000) + 60000
 }
 
 function normalizeBranch(branch) {
@@ -221,7 +223,10 @@ async function syncNow(projectId, options = {}) {
         $or: [{ leaseUntil: null }, { leaseUntil: { $lte: now } }],
       },
       { $set: { leaseUntil, status: 'syncing', updatedAt: now } },
-      { new: true }
+      // The document as it was before the claim: the mirror job compares its
+      // last `ok` state with the current project version to skip an unchanged
+      // project, and the claim has just overwritten `status` with `syncing`.
+      { new: false }
     )
   )
 
