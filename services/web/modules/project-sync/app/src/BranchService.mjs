@@ -1,5 +1,5 @@
 // eslint-disable-next-line import/no-extraneous-dependencies -- diff is a web dependency
-import { merge as mergeText } from 'diff'
+import { applyPatch, merge as mergeText } from 'diff'
 import ProjectDetailsHandler from '../../../../app/src/Features/Project/ProjectDetailsHandler.mjs'
 import ProjectDuplicator from '../../../../app/src/Features/Project/ProjectDuplicator.mjs'
 import ProjectDeleter from '../../../../app/src/Features/Project/ProjectDeleter.mjs'
@@ -39,30 +39,29 @@ function snapshotMap(snapshot) {
   return new Map((snapshot?.files || []).map(file => [file.path, file]))
 }
 
-function mergedContent(result, baseContent) {
-  const baseLines = String(baseContent ?? '').split('\n')
-  const output = []
-  let cursor = 0
-  for (const hunk of result.hunks || []) {
-    const start = Math.max(0, (hunk.oldStart || 1) - 1)
-    output.push(...baseLines.slice(cursor, start))
-    for (const line of hunk.lines || []) {
-      if (typeof line !== 'string') continue
-      if (line.startsWith('-')) continue
-      if (line.startsWith('+') || line.startsWith(' '))
-        output.push(line.slice(1))
-      else output.push(line)
-    }
-    cursor = start + (hunk.oldLines || 0)
-  }
-  output.push(...baseLines.slice(cursor))
-  return output.join('\n')
-}
-
 async function getBranch(branchProjectId) {
   const record = await SyncBranch.findOne({ branchProjectId })
   if (!record) throw new BranchNotFoundError()
   return record
+}
+
+async function loadThreeWay(branch) {
+  const [branchVersion, parentVersion] = await Promise.all([
+    VersionService.getLatestVersion(branch.branchProjectId),
+    VersionService.getLatestVersion(branch.parentProjectId),
+  ])
+  const [base, ours, theirs] = await Promise.all([
+    SnapshotService.getSnapshot(branch.parentProjectId, branch.baseVersion, {
+      includeBinary: true,
+    }),
+    SnapshotService.getSnapshot(branch.branchProjectId, branchVersion.version, {
+      includeBinary: true,
+    }),
+    SnapshotService.getSnapshot(branch.parentProjectId, parentVersion.version, {
+      includeBinary: true,
+    }),
+  ])
+  return { branchVersion, parentVersion, base, ours, theirs }
 }
 
 async function createBranch(parentProjectId, userId, { name }) {
@@ -137,21 +136,8 @@ async function diffBranch(branchProjectId, userId) {
   const branch = await getBranch(branchProjectId)
   await ProjectRef.requireAccess(userId, branch.parentProjectId, 'read')
   await ProjectRef.requireAccess(userId, branch.branchProjectId, 'read')
-  const [branchVersion, parentVersion] = await Promise.all([
-    VersionService.getLatestVersion(branch.branchProjectId),
-    VersionService.getLatestVersion(branch.parentProjectId),
-  ])
-  const [base, ours, theirs] = await Promise.all([
-    SnapshotService.getSnapshot(branch.parentProjectId, branch.baseVersion, {
-      includeBinary: true,
-    }),
-    SnapshotService.getSnapshot(branch.branchProjectId, branchVersion.version, {
-      includeBinary: true,
-    }),
-    SnapshotService.getSnapshot(branch.parentProjectId, parentVersion.version, {
-      includeBinary: true,
-    }),
-  ])
+  const { branchVersion, parentVersion, base, ours, theirs } =
+    await loadThreeWay(branch)
   const baseFiles = snapshotMap(base)
   const branchFiles = snapshotMap(ours)
   const parentFiles = snapshotMap(theirs)
@@ -180,43 +166,40 @@ async function diffBranch(branchProjectId, userId) {
 async function mergeBranch(
   branchProjectId,
   userId,
-  { dryRun = true, message } = {}
+  { dryRun = true, message, agent = 'mcp' } = {}
 ) {
   const branch = await getBranch(branchProjectId)
   await ProjectRef.requireAccess(userId, branch.parentProjectId, 'write')
-  const result = await diffBranch(branchProjectId, userId)
-  const [base, ours, theirs] = await Promise.all([
-    SnapshotService.getSnapshot(branch.parentProjectId, result.base_version, {
-      includeBinary: true,
-    }),
-    SnapshotService.getSnapshot(branch.branchProjectId, result.branch_version, {
-      includeBinary: true,
-    }),
-    SnapshotService.getSnapshot(branch.parentProjectId, result.parent_version, {
-      includeBinary: true,
-    }),
-  ])
+  await ProjectRef.requireAccess(userId, branch.branchProjectId, 'read')
+  const { branchVersion, parentVersion, base, ours, theirs } =
+    await loadThreeWay(branch)
   const baseFiles = snapshotMap(base)
   const branchFiles = snapshotMap(ours)
   const parentFiles = snapshotMap(theirs)
+  const paths = new Set([
+    ...baseFiles.keys(),
+    ...branchFiles.keys(),
+    ...parentFiles.keys(),
+  ])
   const files = []
   const conflicts = []
-  for (const entry of result.files) {
-    const branchFile = branchFiles.get(entry.path)
-    const parentFile = parentFiles.get(entry.path)
-    const baseFile = baseFiles.get(entry.path)
-    if (entry.state === 'branch_only') {
-      if (!branchFile) files.push({ path: entry.path, delete: true })
+  for (const path of [...paths].sort()) {
+    const branchFile = branchFiles.get(path)
+    const parentFile = parentFiles.get(path)
+    const baseFile = baseFiles.get(path)
+    const state = classify(baseFile, branchFile, parentFile)
+    if (state === 'branch_only') {
+      if (!branchFile) files.push({ path, delete: true })
       else if (branchFile.kind === 'doc')
-        files.push({ path: entry.path, content: branchFile.content })
+        files.push({ path, content: branchFile.content })
       else
         files.push({
-          path: entry.path,
+          path,
           contentBase64: (
             branchFile.buffer || (await branchFile.getBuffer())
           ).toString('base64'),
         })
-    } else if (entry.state === 'both_differ') {
+    } else if (state === 'both_differ') {
       if (
         branchFile?.kind === 'doc' &&
         parentFile?.kind === 'doc' &&
@@ -233,33 +216,44 @@ async function mergeBranch(
             .map(line => ({ mine: line.mine, theirs: line.theirs }))
         )
         if (hunkConflicts.length)
-          conflicts.push({ path: entry.path, conflicts: hunkConflicts })
-        else
-          files.push({
-            path: entry.path,
-            content: mergedContent(merged, baseFile.content),
-          })
-      } else
-        conflicts.push({
-          path: entry.path,
-          conflicts: [{ mine: [], theirs: [] }],
-        })
+          conflicts.push({ path, conflicts: hunkConflicts })
+        else {
+          const content = applyPatch(baseFile.content, merged)
+          if (content === false)
+            conflicts.push({ path, conflicts: [{ reason: 'apply_failed' }] })
+          else files.push({ path, content })
+        }
+      } else {
+        let reason = 'binary_both_changed'
+        if (!branchFile && parentFile)
+          reason = 'deleted_in_branch_modified_in_parent'
+        else if (branchFile && !parentFile)
+          reason = 'modified_in_branch_deleted_in_parent'
+        conflicts.push({ path, conflicts: [{ reason }] })
+      }
     }
   }
-  const output = { mergeable: conflicts.length === 0, files, conflicts }
+  const output = {
+    mergeable: conflicts.length === 0,
+    files,
+    conflicts,
+    branch_version: branchVersion.version,
+    parent_version: parentVersion.version,
+    base_version: branch.baseVersion,
+  }
   if (dryRun || conflicts.length) return output
   const written = await WriteService.writeFiles(
     branch.parentProjectId,
     userId,
     {
-      baseVersion: result.parent_version,
+      baseVersion: parentVersion.version,
       message: message ?? `Merge branch ${branch.name}`,
-      agent: 'mcp',
+      agent,
       files,
       originExtra: {
         merge: {
           branch: idOf(branch.branchProjectId),
-          branchVersion: result.branch_version,
+          branchVersion: branchVersion.version,
         },
       },
     }
