@@ -25,4 +25,5 @@ const rollback = async () => {
   await Helpers.dropIndexesFromCollection(collection, indexes);
 };
 
+export { tags, migrate, rollback };
 export default { tags, migrate, rollback };
