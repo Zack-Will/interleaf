@@ -10,7 +10,6 @@ import LabelService from '../project-sync/app/src/LabelService.mjs'
 import WriteService from '../project-sync/app/src/WriteService.mjs'
 import ProjectGetter from '../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectEntityHandler from '../../app/src/Features/Project/ProjectEntityHandler.mjs'
-import ProjectEntityHandler from '../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import { requireAccessToken } from '../project-sync/app/src/TokenAuthMiddleware.mjs'
 
 const defaults = { ProjectRef, SnapshotService, VersionService, LabelService, WriteService, ProjectGetter, ProjectEntityHandler }
