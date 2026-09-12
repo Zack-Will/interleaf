@@ -5,6 +5,7 @@ import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
 import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
 import TokenService from './TokenService.mjs'
 import { requireAccessToken } from './TokenAuthMiddleware.mjs'
+import { expressify } from '@overleaf/promise-utils'
 
 const { z, parseReq } = Validation
 
@@ -52,7 +53,13 @@ async function createPersonalAccessToken(req, res) {
 
 async function revokePersonalAccessToken(req, res) {
   const userId = SessionManager.getLoggedInUserId(req.session)
-  await TokenService.promises.revokeToken(userId, req.params.tokenId)
+  const result = await TokenService.promises.revokeToken(
+    userId,
+    req.params.tokenId
+  )
+  if (result.deletedCount === 0) {
+    return res.sendStatus(404)
+  }
   return res.sendStatus(204)
 }
 
@@ -60,17 +67,17 @@ function apply(webRouter) {
   webRouter.get(
     '/user/personal_access_tokens',
     AuthenticationController.requireLogin(),
-    listPersonalAccessTokens
+    expressify(listPersonalAccessTokens)
   )
   webRouter.post(
     '/user/personal_access_tokens',
     AuthenticationController.requireLogin(),
-    createPersonalAccessToken
+    expressify(createPersonalAccessToken)
   )
   webRouter.delete(
     '/user/personal_access_tokens/:tokenId',
     AuthenticationController.requireLogin(),
-    revokePersonalAccessToken
+    expressify(revokePersonalAccessToken)
   )
 }
 
