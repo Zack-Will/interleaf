@@ -1116,6 +1116,7 @@ module.exports = {
     'server-ce-scripts',
     'user-activate',
     'project-sync',
+    'mcp',
   ],
   viewIncludes: {},
 
