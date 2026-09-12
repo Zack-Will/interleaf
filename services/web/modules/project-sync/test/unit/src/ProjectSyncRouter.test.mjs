@@ -46,6 +46,11 @@ describe('project-sync router', () => {
     ctx.ProjectSyncRouter.apply(ctx.webRouter)
   })
 
+  it('registers kebab-case personal access token routes', async ctx => {
+    const paths = [ctx.webRouter.get.firstCall.args[0], ctx.webRouter.post.firstCall.args[0], ctx.webRouter.delete.firstCall.args[0]]
+    expect(paths).toEqual(['/user/personal-access-tokens', '/user/personal-access-tokens', '/user/personal-access-tokens/:tokenId'])
+  })
+
   it('passes invalid POST bodies to validation middleware for a 400 response', async ctx => {
     const postHandler = ctx.webRouter.post.firstCall.args[2]
     const req = { body: { scopes: ['unsupported'] }, session: {} }
