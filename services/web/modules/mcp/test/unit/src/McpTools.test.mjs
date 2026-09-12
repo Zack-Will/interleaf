@@ -820,3 +820,76 @@ describe('label semantics', () => {
     expect(result.content[0].text).toContain('call create_label')
   })
 })
+
+describe('structured errors from internal services', () => {
+  const project = 'a'.repeat(24)
+
+  it('surfaces the code, status and details of a refusal', async () => {
+    const error = Object.assign(new Error('tracked changes need sharejs'), {
+      code: 'ot_type_unsupported',
+      status: 422,
+      details: { ot_type: 'history-ot' },
+    })
+    const { server } = setup({
+      settings: { max_doc_length: 1000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({ path: 'main.tex', lines: ['one'] })),
+      },
+      ProjectEntityHandler: {
+        promises: {
+          getAllDocPathsFromProjectById: vi.fn(async () => ({
+            d1: '/main.tex',
+          })),
+        },
+      },
+      SuggestionService: {
+        suggestDocContent: vi.fn(async () => {
+          throw error
+        }),
+        listSuggestions: vi.fn(),
+      },
+    })
+    const result = await server._registeredTools.suggest_edits.handler({
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      code: 'ot_type_unsupported',
+      message: 'tracked changes need sharejs',
+      status: 422,
+      details: { ot_type: 'history-ot' },
+    })
+    expect(result.structuredContent.next_action).toContain('edit_file')
+  })
+
+  it('tells the agent what to do about an uncoded service failure', async () => {
+    const error = Object.assign(
+      new Error('the request failed with status 503'),
+      { code: 'chat_request_failed', status: 503 }
+    )
+    const { server } = setup({
+      ProjectEntityHandler: {
+        promises: {
+          getAllDocPathsFromProjectById: vi.fn(async () => ({
+            d1: '/main.tex',
+          })),
+        },
+      },
+      ReviewService: {
+        listThreads: vi.fn(async () => {
+          throw error
+        }),
+        getDocRanges: vi.fn(async () => ({ lines: [], ranges: {} })),
+      },
+    })
+    const result = await server._registeredTools.list_comments.handler({
+      project,
+    })
+    expect(result.structuredContent.status).toBe(503)
+    expect(result.structuredContent.next_action).toContain('Overleaf service')
+  })
+})

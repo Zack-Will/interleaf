@@ -11,6 +11,11 @@ import {
   CommentTextMismatchError,
   TrackedWriteError,
 } from './Errors.mjs'
+import {
+  describeRequestFailure,
+  detailsOf,
+  serviceRequestError,
+} from './ServiceErrors.mjs'
 
 const REQUEST_TIMEOUT_MS = 30 * 1000
 
@@ -24,21 +29,20 @@ function commentUrl(projectId, docId) {
 }
 
 // document-updater answers its refusals with a JSON body carrying a stable
-// code; `fetchJson` only hands us the raw text of it.
-function parseErrorBody(error) {
-  try {
-    return JSON.parse(error.body)
-  } catch {
-    return null
-  }
-}
+// code; `fetchJson` only hands us the raw text of it.  A refusal that carries
+// no code still has a status worth reporting, so it becomes a typed error too
+// rather than reaching the agent as "request failed".
+const REQUEST_FAILED = 'document_updater_request_failed'
 
 function translateError(error, { threadId, position }) {
-  const body = parseErrorBody(error)
+  const { status, body } = describeRequestFailure(error)
+  const details = detailsOf(body)
   if (body?.code === 'text_mismatch') {
     return new CommentTextMismatchError(body.message, {
       threadId,
       position,
+      status,
+      details,
       actualText: body.actual_text ?? '',
     })
   }
@@ -47,9 +51,11 @@ function translateError(error, { threadId, position }) {
       code: body.code,
       threadId,
       position,
+      status,
+      details,
     })
   }
-  return error
+  return serviceRequestError(error, REQUEST_FAILED)
 }
 
 /**
@@ -81,15 +87,17 @@ async function addCommentRange(projectId, docId, userId, range) {
 }
 
 function translateSetDocError(error, { projectId, docId }) {
-  const body = parseErrorBody(error)
+  const { status, body } = describeRequestFailure(error)
   if (body?.code) {
     return new TrackedWriteError(body.message, {
       code: body.code,
       projectId,
       docId,
+      status,
+      details: detailsOf(body),
     })
   }
-  return error
+  return serviceRequestError(error, REQUEST_FAILED)
 }
 
 /**

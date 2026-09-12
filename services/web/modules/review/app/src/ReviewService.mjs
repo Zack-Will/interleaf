@@ -13,10 +13,35 @@ import UserInfoController from '../../../../app/src/Features/User/UserInfoContro
 import UserInfoManager from '../../../../app/src/Features/User/UserInfoManager.mjs'
 import DocumentUpdaterClient from './DocumentUpdaterClient.mjs'
 import { ThreadNotFoundError } from './Errors.mjs'
+import {
+  describeRequestFailure,
+  serviceRequestError,
+} from './ServiceErrors.mjs'
 
 function toLines(rawLines) {
   if (Array.isArray(rawLines)) return rawLines
   return String(rawLines || '').split(/\r\n|\n|\r/)
+}
+
+// chat answers a thread it does not know with a 404 and every other refusal
+// with a status; `RequestFailedError` would flatten both into "request failed",
+// which tells an agent nothing about whether to retry or to look the thread up.
+function translateChatError(error, threadId) {
+  const { status } = describeRequestFailure(error)
+  if (status === 404)
+    return new ThreadNotFoundError('comment thread not found', {
+      threadId,
+      status,
+    })
+  return serviceRequestError(error, 'chat_request_failed')
+}
+
+async function onChat(threadId, run) {
+  try {
+    return await run()
+  } catch (error) {
+    throw translateChatError(error, threadId)
+  }
 }
 
 export function createReviewService(services = {}) {
@@ -43,17 +68,16 @@ export function createReviewService(services = {}) {
   }
 
   async function listThreads(projectId) {
-    const threads = await chatApi.promises.getThreads(projectId)
+    const threads = await onChat(undefined, () =>
+      chatApi.promises.getThreads(projectId)
+    )
     await chatManager.promises.injectUserInfoIntoThreads(threads)
     return threads
   }
 
   async function sendComment(projectId, threadId, userId, content) {
-    const message = await chatApi.promises.sendComment(
-      projectId,
-      threadId,
-      userId,
-      content
+    const message = await onChat(threadId, () =>
+      chatApi.promises.sendComment(projectId, threadId, userId, content)
     )
     const user = await userInfoManager.promises.getPersonalInfo(message.user_id)
     message.user = userInfoController.formatPersonalInfo(user)
@@ -62,7 +86,9 @@ export function createReviewService(services = {}) {
   }
 
   async function resolveThread(projectId, docId, threadId, userId) {
-    await chatApi.promises.resolveThread(projectId, threadId, userId)
+    await onChat(threadId, () =>
+      chatApi.promises.resolveThread(projectId, threadId, userId)
+    )
     if (await rangesSupportEnabled(projectId)) {
       await documentUpdater.promises.resolveThread(
         projectId,
@@ -81,7 +107,9 @@ export function createReviewService(services = {}) {
   }
 
   async function reopenThread(projectId, docId, threadId, userId) {
-    await chatApi.promises.reopenThread(projectId, threadId)
+    await onChat(threadId, () =>
+      chatApi.promises.reopenThread(projectId, threadId)
+    )
     if (await rangesSupportEnabled(projectId)) {
       await documentUpdater.promises.reopenThread(
         projectId,
@@ -100,7 +128,9 @@ export function createReviewService(services = {}) {
       threadId,
       userId
     )
-    await chatApi.promises.deleteThread(projectId, threadId)
+    await onChat(threadId, () =>
+      chatApi.promises.deleteThread(projectId, threadId)
+    )
     realtime.emitToRoom(projectId, 'delete-thread', threadId)
   }
 
@@ -153,7 +183,9 @@ export function createReviewService(services = {}) {
     threadId,
     { position, text }
   ) {
-    const threads = await chatApi.promises.getThreads(projectId)
+    const threads = await onChat(threadId, () =>
+      chatApi.promises.getThreads(projectId)
+    )
     if (!threads?.[threadId]) {
       throw new ThreadNotFoundError('comment thread not found', {
         projectId,

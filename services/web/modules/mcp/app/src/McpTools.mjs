@@ -206,6 +206,12 @@ function nextAction(error, next) {
     return 're-read the file and choose an anchor present in the current content'
   if (error.code === 'text_mismatch')
     return 'the document changed under the anchor; re-read the file and retry with the text now at that position (actual_text)'
+  if (error.code === 'thread_not_found')
+    return 'call list_comments to see the threads of this project'
+  if (error.code === 'ot_type_unsupported')
+    return 'this document cannot hold tracked changes; write the change directly with edit_file instead'
+  if (String(error.code).endsWith('_request_failed'))
+    return 'an Overleaf service refused the request (see status and details); retry, and report it if it keeps failing'
   return 'check request'
 }
 
@@ -217,6 +223,11 @@ function errorDetail(error, name) {
 const errorResult = (error, next) => {
   const candidateLines = errorDetail(error, 'candidateLines')
   const actualText = errorDetail(error, 'actualText')
+  // A refusal from document-updater or chat carries the status it answered
+  // with and whatever else its body said; both help an agent decide whether to
+  // retry, re-read or give up.
+  const status = errorDetail(error, 'status')
+  const details = errorDetail(error, 'details')
   return {
     isError: true,
     content: [{ type: 'text', text: error.message || String(error) }],
@@ -231,6 +242,8 @@ const errorResult = (error, next) => {
         : {}),
       ...(candidateLines ? { candidate_lines: candidateLines } : {}),
       ...(actualText != null ? { actual_text: actualText } : {}),
+      ...(status != null ? { status } : {}),
+      ...(details ? { details } : {}),
       next_action: nextAction(error, next),
     },
   }
