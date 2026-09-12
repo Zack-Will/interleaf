@@ -1,0 +1,20 @@
+import { describe, it, expect, vi } from 'vitest'
+import sinon from 'sinon'
+describe('project-sync core services', () => {
+  it('parses project ids and URLs', async () => {
+    vi.resetModules(); vi.doMock('@overleaf/settings', () => ({ default: { siteUrl: 'https://ol' } }))
+    const { default: ProjectRef } = await import('../../../app/src/ProjectRef.mjs')
+    expect(ProjectRef.parse('68c1f9a3e4b0c2d1a5f6e7b8')).toEqual({ projectId: '68c1f9a3e4b0c2d1a5f6e7b8' })
+    expect(ProjectRef.parse('https://x/project/68c1f9a3e4b0c2d1a5f6e7b8/foo')).toEqual({ projectId: '68c1f9a3e4b0c2d1a5f6e7b8' })
+    expect(() => ProjectRef.parse('bad')).toThrow()
+  })
+  it('flushes document updater before history', async () => {
+    vi.resetModules(); const order = []
+    vi.doMock('@overleaf/settings', () => ({ default: { apis: { project_history: { url: 'http://history' } } } }))
+    vi.doMock('@overleaf/fetch-utils', () => ({ fetchJson: sinon.stub().callsFake(async () => { order.push('fetch'); return { version: 3 } }) }))
+    vi.doMock('../../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs', () => ({ default: { promises: { flushProjectToMongo: async () => order.push('doc') } } }))
+    vi.doMock('../../../../../app/src/Features/History/HistoryManager.mjs', () => ({ default: { promises: { flushProject: async () => order.push('hist') } } }))
+    const { default: VersionService } = await import('../../../app/src/VersionService.mjs')
+    await VersionService.getLatestVersion('p'); expect(order).toEqual(['doc', 'hist', 'fetch'])
+  })
+})
