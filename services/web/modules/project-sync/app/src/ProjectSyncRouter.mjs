@@ -65,16 +65,22 @@ async function revokePersonalAccessToken(req, res) {
 
 function apply(webRouter) {
   webRouter.get(
+    // Legacy API path retained for compatibility.
+    // eslint-disable-next-line @overleaf/prefer-kebab-url
     '/user/personal_access_tokens',
     AuthenticationController.requireLogin(),
     expressify(listPersonalAccessTokens)
   )
   webRouter.post(
+    // Legacy API path retained for compatibility.
+    // eslint-disable-next-line @overleaf/prefer-kebab-url
     '/user/personal_access_tokens',
     AuthenticationController.requireLogin(),
     expressify(createPersonalAccessToken)
   )
   webRouter.delete(
+    // Legacy API path retained for compatibility.
+    // eslint-disable-next-line @overleaf/prefer-kebab-url
     '/user/personal_access_tokens/:tokenId',
     AuthenticationController.requireLogin(),
     expressify(revokePersonalAccessToken)
