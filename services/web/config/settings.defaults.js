@@ -281,6 +281,14 @@ module.exports = {
     webpack: {
       url: `http://${process.env.WEBPACK_HOST || '127.0.0.1'}:3808`,
     },
+    gitBridge: {
+      url: `http://${process.env.GIT_BRIDGE_HOST || 'git-bridge'}:${
+        process.env.GIT_BRIDGE_PORT || '8000'
+      }`,
+      // Absolute base URL that the git-bridge container uses to reach web, for
+      // the self-authenticating blob URLs handed out in snapshots.
+      webPublicUrl: process.env.GIT_BRIDGE_WEB_PUBLIC_URL,
+    },
     wiki: {
       url: process.env.WIKI_URL || 'https://learnwiki.overleaf.com',
       maxCacheAge: parseInt(process.env.WIKI_MAX_CACHE_AGE || 5 * minutes, 10),
@@ -486,6 +494,9 @@ module.exports = {
     ? process.env.DEFAULT_LATEX_COMPILER
     : 'pdflatex',
   enableSubscriptions: false,
+  enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
+  gitBridgePublicBaseUrl:
+    process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
   restrictedCountries: [],
   enableOnboardingEmails: process.env.ENABLE_ONBOARDING_EMAILS === 'true',
 
@@ -1117,6 +1128,7 @@ module.exports = {
     'user-activate',
     'project-sync',
     'mcp',
+    'git-bridge',
   ],
   viewIncludes: {},
 
