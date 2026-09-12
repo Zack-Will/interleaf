@@ -369,6 +369,11 @@ describe('MCP tools', () => {
         edits: [],
         message: 'm',
       },
+      list_comments: { project },
+      get_review_queue: { project },
+      reply_comment: { project, thread_id: 't', content: 'c' },
+      resolve_comment: { project, thread_id: 't' },
+      reopen_comment: { project, thread_id: 't' },
     }
     for (const [name, tool] of Object.entries(server._registeredTools)) {
       const result = await tool.handler(argumentsByTool[name])

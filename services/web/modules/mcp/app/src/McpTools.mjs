@@ -34,6 +34,35 @@ function writeSummary(data) {
   return parts.join('; ')
 }
 
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
+function commentsSummary(data) {
+  const hidden = data.resolved_hidden
+    ? `; ${data.resolved_hidden} resolved hidden`
+    : ''
+  return `${plural(data.count, 'comment')}${hidden}`
+}
+
+function reviewQueueSummary(data) {
+  const parts = [
+    `${plural(data.count, 'open comment')} in ${plural(data.files.length, 'file')}`,
+  ]
+  for (const file of data.files)
+    parts.push(`${file.path}: ${plural(file.count, 'comment')}`)
+  if (data.detached_count)
+    parts.push(`${plural(data.detached_count, 'detached comment')}`)
+  return parts.join('\n')
+}
+
+function commentActionSummary(data) {
+  if (data.message_id)
+    return `Replied to thread ${data.thread_id} as ${data.acted_as}`
+  const state = data.resolved ? 'Resolved' : 'Reopened'
+  return `${state} thread ${data.thread_id} as ${data.acted_as}`
+}
+
 function summaryText(data) {
   if (Array.isArray(data)) return `${data.length} items`
   if (!data || typeof data !== 'object')
@@ -41,6 +70,10 @@ function summaryText(data) {
   if (Array.isArray(data.projects)) return `${data.count} projects`
   if (Array.isArray(data.entries)) return `${data.count} history entries`
   if (Array.isArray(data.headings)) return `${data.count} headings`
+  if (Array.isArray(data.comments)) return commentsSummary(data)
+  if (Array.isArray(data.detached) && Array.isArray(data.files))
+    return reviewQueueSummary(data)
+  if (data.thread_id) return commentActionSummary(data)
   if (Array.isArray(data.matches)) {
     const lines = data.matches
       .slice(0, 39)
@@ -140,6 +173,144 @@ function projectId(ref, services) {
 
 async function access(services, request, id, level = 'read') {
   return services.ProjectRef.requireAccess(request.syncUser.userId, id, level)
+}
+
+function toolError(code, message, next) {
+  return Object.assign(new Error(message), { code, next_action: next })
+}
+
+const cleanPath = value => String(value || '').replace(/^\/+/, '')
+
+// Comment offsets are character positions in `lines.join('\n')`; turn one into
+// the 1-based line and column an agent can act on.
+function positionToLineColumn(lines, position) {
+  let remaining = Math.max(0, position)
+  for (let index = 0; index < lines.length; index += 1) {
+    const length = lines[index].length
+    if (remaining <= length) return { line: index + 1, column: remaining + 1 }
+    remaining -= length + 1
+  }
+  const lastIndex = Math.max(0, lines.length - 1)
+  return {
+    line: lines.length || 1,
+    column: (lines[lastIndex]?.length ?? 0) + 1,
+  }
+}
+
+function formatUser(user, fallbackId) {
+  const id = user?.id || (user?._id != null ? String(user._id) : fallbackId)
+  if (!user) return id ? { id: String(id) } : undefined
+  const name = [user.first_name, user.last_name]
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+  return { id: id == null ? undefined : String(id), name, email: user.email }
+}
+
+function formatMessages(thread) {
+  return (thread?.messages || []).map(message => ({
+    id: message.id,
+    content: message.content,
+    timestamp: message.timestamp,
+    user: formatUser(message.user, message.user_id),
+  }))
+}
+
+function commentEntry(doc, lines, comment, thread) {
+  const threadId = comment.op?.t || comment.id
+  const quotedText = comment.op?.c ?? ''
+  const position = comment.op?.p ?? 0
+  const messages = formatMessages(thread)
+  const { line, column } = positionToLineColumn(lines, position)
+  return {
+    thread_id: threadId,
+    doc_id: doc.docId,
+    path: doc.path,
+    quoted_text: quotedText,
+    detached: quotedText === '',
+    position,
+    line,
+    column,
+    resolved: Boolean(thread?.resolved),
+    resolved_at: thread?.resolved_at,
+    resolved_by: thread?.resolved
+      ? formatUser(thread.resolved_by_user, thread.resolved_by_user_id)
+      : undefined,
+    created_at: messages[0]?.timestamp ?? comment.metadata?.ts,
+    author: messages[0]?.user ?? formatUser(null, comment.metadata?.user_id),
+    messages,
+  }
+}
+
+// Joins the live comment ranges of every document with the chat threads that
+// hold their messages and resolved state.
+async function loadProjectComments(services, id, path) {
+  const docPaths =
+    await services.ProjectEntityHandler.promises.getAllDocPathsFromProjectById(
+      id
+    )
+  const docs = Object.entries(docPaths || {}).map(([docId, pathname]) => ({
+    docId,
+    path: cleanPath(pathname),
+  }))
+  const target = path == null ? null : cleanPath(path)
+  const wanted = target ? docs.filter(doc => doc.path === target) : docs
+  if (target && !wanted.length)
+    throw toolError(
+      'doc_not_found',
+      `no document at ${target}`,
+      'call get_project to list the document paths'
+    )
+  const threads = await services.ReviewService.listThreads(id)
+  const comments = []
+  const linesByPath = new Map()
+  for (const doc of wanted) {
+    const document = await services.ReviewService.getDocRanges(id, doc.docId)
+    const lines = document?.lines || []
+    linesByPath.set(doc.path, lines)
+    for (const comment of document?.ranges?.comments || []) {
+      const threadId = comment.op?.t || comment.id
+      comments.push(commentEntry(doc, lines, comment, threads?.[threadId]))
+    }
+  }
+  comments.sort(
+    (left, right) =>
+      left.path.localeCompare(right.path) ||
+      left.line - right.line ||
+      left.column - right.column
+  )
+  return { comments, linesByPath }
+}
+
+async function findCommentThread(services, id, threadId) {
+  const { comments } = await loadProjectComments(services, id)
+  const comment = comments.find(entry => entry.thread_id === threadId)
+  if (!comment)
+    throw toolError(
+      'thread_not_found',
+      `no comment thread ${threadId} in this project`,
+      'call list_comments to see the threads of this project'
+    )
+  return comment
+}
+
+// The agent posts as its own service user when the token user owns the
+// project; otherwise it falls back to the token user and says so.
+async function resolveActor(services, id, userId, actAsAgent) {
+  if (!actAsAgent || !services.AgentUser)
+    return { userId, acted_as: 'token_user' }
+  const result = await services.AgentUser.ensureAgentIsCollaborator(id, userId)
+  if (result?.ok) return { userId: result.agentUserId, acted_as: 'agent' }
+  return { userId, acted_as: 'token_user', reason: result?.reason }
+}
+
+function contextFor(lines, line, contextLines) {
+  const index = line - 1
+  return {
+    before: lines.slice(Math.max(0, index - contextLines), index),
+    line: lines[index] ?? '',
+    after: lines.slice(index + 1, index + 1 + contextLines),
+  }
 }
 
 export function registerTools(
@@ -703,6 +874,133 @@ export function registerTools(
         return services.BranchService.archiveBranch(id, userId)
       })
   )
+
+  server.tool(
+    'list_comments',
+    'List review comments with their anchored text and messages',
+    {
+      project: z.string(),
+      path: z.string().optional(),
+      include_resolved: z.boolean().optional(),
+    },
+    async ({ project, path, include_resolved = false }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        await access(services, req, id)
+        const { comments } = await loadProjectComments(services, id, path)
+        const visible = include_resolved
+          ? comments
+          : comments.filter(comment => !comment.resolved)
+        return {
+          comments: visible,
+          count: visible.length,
+          resolved_hidden: comments.length - visible.length,
+        }
+      })
+  )
+
+  server.tool(
+    'get_review_queue',
+    'List the unresolved comments of a project with their surrounding lines',
+    { project: z.string(), context_lines: z.number().int().optional() },
+    async ({ project, context_lines = 3 }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        await access(services, req, id)
+        const { comments, linesByPath } = await loadProjectComments(
+          services,
+          id,
+          undefined
+        )
+        const open = comments.filter(comment => !comment.resolved)
+        const files = []
+        const detached = []
+        for (const comment of open) {
+          if (comment.detached) {
+            detached.push(comment)
+            continue
+          }
+          const lines = linesByPath.get(comment.path) || []
+          const entry = {
+            ...comment,
+            context: contextFor(lines, comment.line, context_lines),
+          }
+          const file = files.find(item => item.path === comment.path)
+          if (file) file.comments.push(entry)
+          else files.push({ path: comment.path, comments: [entry] })
+        }
+        for (const file of files) file.count = file.comments.length
+        return {
+          files,
+          count: open.length - detached.length,
+          detached,
+          detached_count: detached.length,
+        }
+      })
+  )
+
+  server.tool(
+    'reply_comment',
+    'Reply to a review comment thread',
+    {
+      project: z.string(),
+      thread_id: z.string(),
+      content: z.string(),
+      act_as_agent: z.boolean().optional(),
+    },
+    async ({ project, thread_id, content, act_as_agent = true }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        await access(services, req, id, 'write')
+        const comment = await findCommentThread(services, id, thread_id)
+        const actor = await resolveActor(services, id, userId, act_as_agent)
+        const message = await services.ReviewService.sendComment(
+          id,
+          thread_id,
+          actor.userId,
+          content
+        )
+        return {
+          thread_id,
+          path: comment.path,
+          message_id: message?.id,
+          acted_as: actor.acted_as,
+          ...(actor.reason ? { reason: actor.reason } : {}),
+        }
+      })
+  )
+
+  const threadStateTool = (name, description, resolved) =>
+    server.tool(
+      name,
+      description,
+      {
+        project: z.string(),
+        thread_id: z.string(),
+        act_as_agent: z.boolean().optional(),
+      },
+      async ({ project, thread_id, act_as_agent = true }) =>
+        run(async () => {
+          const id = projectId(project, services)
+          await access(services, req, id, 'write')
+          const comment = await findCommentThread(services, id, thread_id)
+          const actor = await resolveActor(services, id, userId, act_as_agent)
+          const apply = resolved
+            ? services.ReviewService.resolveThread
+            : services.ReviewService.reopenThread
+          await apply(id, comment.doc_id, thread_id, actor.userId)
+          return {
+            thread_id,
+            path: comment.path,
+            resolved,
+            acted_as: actor.acted_as,
+            ...(actor.reason ? { reason: actor.reason } : {}),
+          }
+        })
+    )
+
+  threadStateTool('resolve_comment', 'Resolve a review comment thread', true)
+  threadStateTool('reopen_comment', 'Reopen a review comment thread', false)
 
   return server
 }

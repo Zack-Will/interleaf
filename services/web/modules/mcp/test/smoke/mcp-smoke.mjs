@@ -9,6 +9,7 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { createMcpServer } from '../../app/src/McpTools.mjs'
 
 const projectId = '0123456789abcdef01234567'
+const docId = '76543210fedcba9876543210'
 
 const services = {
   ProjectRef: {
@@ -66,6 +67,58 @@ const services = {
     },
   },
   settings: { max_doc_length: 2000000 },
+  ProjectEntityHandler: {
+    promises: {
+      async getAllDocPathsFromProjectById() {
+        return { [docId]: '/main.tex' }
+      },
+    },
+  },
+  ReviewService: {
+    async listThreads() {
+      return {
+        'thread-1': {
+          messages: [
+            {
+              id: 'message-1',
+              content: 'Please tighten this sentence.',
+              timestamp: 1700000000000,
+              user_id: 'reviewer-1',
+              user: { id: 'reviewer-1', first_name: 'Rev' },
+            },
+          ],
+        },
+      }
+    },
+    async getDocRanges() {
+      return {
+        lines: [
+          '\\section{Introduction}',
+          'Hello from the smoke test.',
+          'Done.',
+        ],
+        ranges: {
+          comments: [
+            {
+              id: 'comment-1',
+              op: { c: 'Hello', p: 23, t: 'thread-1' },
+            },
+          ],
+        },
+        version: 3,
+      }
+    },
+    async sendComment() {
+      return { id: 'message-2' }
+    },
+    async resolveThread() {},
+    async reopenThread() {},
+  },
+  AgentUser: {
+    async ensureAgentIsCollaborator() {
+      return { ok: true, agentUserId: 'agent-user', added: false }
+    },
+  },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = [
@@ -120,6 +173,11 @@ const requiredTools = [
   'diff_branch',
   'merge_branch',
   'archive_branch',
+  'list_comments',
+  'get_review_queue',
+  'reply_comment',
+  'resolve_comment',
+  'reopen_comment',
 ]
 for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
@@ -135,9 +193,34 @@ if (
   projects.structuredContent.count !== 1
 )
   throw new Error('list_projects returned an invalid structuredContent shape')
+const queue = await client.callTool(
+  { name: 'get_review_queue', arguments: { project: projectId } },
+  CallToolResultSchema
+)
+const queued = queue.structuredContent.files?.[0]?.comments?.[0]
+if (!queued || queued.line !== 2 || queued.column !== 1)
+  throw new Error('get_review_queue did not place the comment on line 2')
+const reply = await client.callTool(
+  {
+    name: 'reply_comment',
+    arguments: {
+      project: projectId,
+      thread_id: 'thread-1',
+      content: 'Tightened in the latest revision.',
+    },
+  },
+  CallToolResultSchema
+)
+if (reply.structuredContent.acted_as !== 'agent')
+  throw new Error('reply_comment did not post as the agent user')
+
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
 console.log(`read_file: ${read.structuredContent.path}`)
 console.log(`list_projects: ${projects.structuredContent.count} projects`)
+console.log(`get_review_queue: ${queue.content[0].text.split('\n')[0]}`)
+console.log(
+  `reply_comment: message ${reply.structuredContent.message_id} as ${reply.structuredContent.acted_as}`
+)
 
 await client.close()
 await server.close()

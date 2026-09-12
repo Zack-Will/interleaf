@@ -13,6 +13,8 @@ import RevertService from '../../../project-sync/app/src/RevertService.mjs'
 import BranchService from '../../../project-sync/app/src/BranchService.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
+import ReviewService from '../../../review/app/src/ReviewService.mjs'
+import AgentUser from '../../../review/app/src/AgentUser.mjs'
 import { requireAccessToken } from '../../../project-sync/app/src/TokenAuthMiddleware.mjs'
 import { createMcpServer } from './McpTools.mjs'
 
@@ -27,6 +29,8 @@ export function createDefaultServices() {
     BranchService,
     ProjectGetter,
     ProjectEntityHandler,
+    ReviewService,
+    AgentUser,
     fetchJson,
     settings: Settings,
   }
@@ -47,7 +51,7 @@ async function handle(request, response) {
 }
 
 const McpModule = {
-  dependencies: ['project-sync'],
+  dependencies: ['project-sync', 'review'],
   nonCsrfRouter: {
     apply(webRouter, privateApiRouter, publicApiRouter) {
       const middleware = requireAccessToken('mcp')
