@@ -84,7 +84,7 @@ export function registerTools(server, { services = defaults, req = {}, clientNam
 
 export function createMcpServer(options={}) { const server = new McpServer({ name:'overleaf-mcp', version:'1.0.0' }); registerTools(server, options); return server }
 
-async function handle(req,res) { const server=createMcpServer({ req }); const transport=new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await server.connect(transport); return transport.handleRequest(req,res,req.body) }
+async function handle(req,res) { const clientName = req.body?.params?.clientInfo?.name; const server=createMcpServer({ req, clientName }); const transport=new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await server.connect(transport); return transport.handleRequest(req,res,req.body) }
 
 const McpModule = { dependencies:['project-sync'], nonCsrfRouter:{ apply(webRouter, privateApiRouter, publicApiRouter) { const middleware=requireAccessToken('mcp'); publicApiRouter.post('/mcp', middleware, handle); publicApiRouter.get('/mcp', middleware, handle); publicApiRouter.delete('/mcp', middleware, handle) } } }
 export default McpModule
