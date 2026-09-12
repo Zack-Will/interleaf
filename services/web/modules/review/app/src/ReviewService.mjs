@@ -2,6 +2,8 @@
 // MCP comment tools.  Everything that talks to chat, document-updater or the
 // realtime service is injectable so that unit tests and the MCP smoke script
 // can run without any of those services.
+import RangesTracker from '@overleaf/ranges-tracker'
+import logger from '@overleaf/logger'
 import ChatApiHandler from '../../../../app/src/Features/Chat/ChatApiHandler.mjs'
 import ChatManager from '../../../../app/src/Features/Chat/ChatManager.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
@@ -9,6 +11,8 @@ import EditorRealTimeController from '../../../../app/src/Features/Editor/Editor
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import UserInfoController from '../../../../app/src/Features/User/UserInfoController.mjs'
 import UserInfoManager from '../../../../app/src/Features/User/UserInfoManager.mjs'
+import DocumentUpdaterClient from './DocumentUpdaterClient.mjs'
+import { ThreadNotFoundError } from './Errors.mjs'
 
 function toLines(rawLines) {
   if (Array.isArray(rawLines)) return rawLines
@@ -24,6 +28,10 @@ export function createReviewService(services = {}) {
   const projectGetter = services.ProjectGetter || ProjectGetter
   const userInfoManager = services.UserInfoManager || UserInfoManager
   const userInfoController = services.UserInfoController || UserInfoController
+  const documentUpdaterClient =
+    services.DocumentUpdaterClient || DocumentUpdaterClient
+  const generateThreadId =
+    services.generateThreadId || (() => RangesTracker.generateId())
 
   // The document-updater resolve / reopen endpoints only mirror to history when
   // the project stores ranges there.  Everything else lives in chat.
@@ -96,6 +104,72 @@ export function createReviewService(services = {}) {
     realtime.emitToRoom(projectId, 'delete-thread', threadId)
   }
 
+  // A comment is two things: a chat thread that holds the messages, and a
+  // range in the document that points at the text.  The editor creates them in
+  // that order with a client-generated thread id, and so do we.
+  async function createComment(
+    projectId,
+    docId,
+    userId,
+    { position, text, content }
+  ) {
+    const threadId = generateThreadId()
+    const message = await sendComment(projectId, threadId, userId, content)
+    try {
+      const { comment, version } =
+        await documentUpdaterClient.promises.addCommentRange(
+          projectId,
+          docId,
+          userId,
+          { threadId, position, text }
+        )
+      return { threadId, comment, version, message }
+    } catch (error) {
+      // The thread exists but points at nothing, and the review panel would
+      // show it forever.  Take it back out before reporting the failure.
+      await rollbackThread(projectId, threadId)
+      throw error
+    }
+  }
+
+  async function rollbackThread(projectId, threadId) {
+    try {
+      await chatApi.promises.deleteThread(projectId, threadId)
+      realtime.emitToRoom(projectId, 'delete-thread', threadId)
+    } catch (error) {
+      logger.warn(
+        { err: error, projectId, threadId },
+        'failed to roll back a comment thread whose range could not be created'
+      )
+    }
+  }
+
+  // Submitting a comment op with a thread id that already exists moves the
+  // range, which is how a detached or drifted comment gets a new home.
+  async function reanchorComment(
+    projectId,
+    docId,
+    userId,
+    threadId,
+    { position, text }
+  ) {
+    const threads = await chatApi.promises.getThreads(projectId)
+    if (!threads?.[threadId]) {
+      throw new ThreadNotFoundError('comment thread not found', {
+        projectId,
+        threadId,
+      })
+    }
+    const { comment, version } =
+      await documentUpdaterClient.promises.addCommentRange(
+        projectId,
+        docId,
+        userId,
+        { threadId, position, text }
+      )
+    return { threadId, comment, version }
+  }
+
   // Live document state: the lines and the ranges as document-updater currently
   // holds them, so comment offsets line up with the text the agent reads.
   async function getDocRanges(projectId, docId) {
@@ -117,6 +191,8 @@ export function createReviewService(services = {}) {
     resolveThread,
     reopenThread,
     deleteThread,
+    createComment,
+    reanchorComment,
     getDocRanges,
   }
 }

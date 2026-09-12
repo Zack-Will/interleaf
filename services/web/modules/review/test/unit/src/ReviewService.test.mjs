@@ -52,14 +52,24 @@ describe('review service', () => {
     ctx.userInfoController = {
       formatPersonalInfo: sinon.stub().returns({ id: 'user-1' }),
     }
+    ctx.documentUpdaterClient = {
+      promises: {
+        addCommentRange: sinon.stub().resolves({
+          comment: { id: threadId, op: { c: 'one', p: 0, t: threadId } },
+          version: 8,
+        }),
+      },
+    }
     ctx.service = createReviewService({
       ChatApiHandler: ctx.chatApi,
       ChatManager: ctx.chatManager,
       DocumentUpdaterHandler: ctx.documentUpdater,
+      DocumentUpdaterClient: ctx.documentUpdaterClient,
       ProjectGetter: ctx.projectGetter,
       EditorRealTimeController: ctx.realtime,
       UserInfoManager: ctx.userInfoManager,
       UserInfoController: ctx.userInfoController,
+      generateThreadId: () => threadId,
     })
   })
 
@@ -114,6 +124,127 @@ describe('review service', () => {
       ctx.documentUpdater.promises.deleteThread,
       ctx.chatApi.promises.deleteThread
     )
+  })
+
+  it('creates the chat thread before the comment range', async ctx => {
+    const result = await ctx.service.createComment(projectId, docId, 'user-1', {
+      position: 0,
+      text: 'one',
+      content: 'please rephrase',
+    })
+    sinon.assert.callOrder(
+      ctx.chatApi.promises.sendComment,
+      ctx.documentUpdaterClient.promises.addCommentRange
+    )
+    sinon.assert.calledWith(
+      ctx.chatApi.promises.sendComment,
+      projectId,
+      threadId,
+      'user-1',
+      'please rephrase'
+    )
+    sinon.assert.calledWith(
+      ctx.documentUpdaterClient.promises.addCommentRange,
+      projectId,
+      docId,
+      'user-1',
+      { threadId, position: 0, text: 'one' }
+    )
+    expect(result.threadId).toBe(threadId)
+    expect(result.version).toBe(8)
+    expect(result.comment.op.t).toBe(threadId)
+  })
+
+  it('deletes the thread again when the comment range cannot be created', async ctx => {
+    const failure = Object.assign(new Error('text mismatch'), {
+      code: 'text_mismatch',
+      actualText: 'two',
+    })
+    ctx.documentUpdaterClient.promises.addCommentRange.rejects(failure)
+    const error = await ctx.service
+      .createComment(projectId, docId, 'user-1', {
+        position: 0,
+        text: 'one',
+        content: 'please rephrase',
+      })
+      .catch(error => error)
+    expect(error).toBe(failure)
+    sinon.assert.calledWith(
+      ctx.chatApi.promises.deleteThread,
+      projectId,
+      threadId
+    )
+    sinon.assert.calledWith(
+      ctx.realtime.emitToRoom,
+      projectId,
+      'delete-thread',
+      threadId
+    )
+  })
+
+  it('still reports the original failure when the rollback fails', async ctx => {
+    ctx.documentUpdaterClient.promises.addCommentRange.rejects(
+      new Error('document-updater is down')
+    )
+    ctx.chatApi.promises.deleteThread.rejects(new Error('chat is down too'))
+    const error = await ctx.service
+      .createComment(projectId, docId, 'user-1', {
+        position: 0,
+        text: 'one',
+        content: 'please rephrase',
+      })
+      .catch(error => error)
+    expect(error.message).toBe('document-updater is down')
+  })
+
+  it('re-anchors an existing thread with the same thread id', async ctx => {
+    const result = await ctx.service.reanchorComment(
+      projectId,
+      docId,
+      'user-1',
+      threadId,
+      { position: 4, text: 'two' }
+    )
+    sinon.assert.calledWith(
+      ctx.documentUpdaterClient.promises.addCommentRange,
+      projectId,
+      docId,
+      'user-1',
+      { threadId, position: 4, text: 'two' }
+    )
+    sinon.assert.notCalled(ctx.chatApi.promises.sendComment)
+    expect(result).toEqual({
+      threadId,
+      comment: { id: threadId, op: { c: 'one', p: 0, t: threadId } },
+      version: 8,
+    })
+  })
+
+  it('refuses to re-anchor a thread that does not exist', async ctx => {
+    const error = await ctx.service
+      .reanchorComment(projectId, docId, 'user-1', 'missing-thread', {
+        position: 4,
+        text: 'two',
+      })
+      .catch(error => error)
+    expect(error.code).toBe('thread_not_found')
+    sinon.assert.notCalled(ctx.documentUpdaterClient.promises.addCommentRange)
+  })
+
+  it('propagates a text mismatch from re-anchoring', async ctx => {
+    const failure = Object.assign(new Error('text mismatch'), {
+      code: 'text_mismatch',
+      actualText: 'three',
+    })
+    ctx.documentUpdaterClient.promises.addCommentRange.rejects(failure)
+    const error = await ctx.service
+      .reanchorComment(projectId, docId, 'user-1', threadId, {
+        position: 4,
+        text: 'two',
+      })
+      .catch(error => error)
+    expect(error.code).toBe('text_mismatch')
+    expect(error.actualText).toBe('three')
   })
 
   it('returns live lines and ranges for a document', async ctx => {
