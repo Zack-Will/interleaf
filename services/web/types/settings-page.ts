@@ -1,9 +1,15 @@
+export type AccessTokenScope = 'git_bridge' | 'mcp'
+
+// Shape of the records returned by the `listPersonalAccessTokens` module hook
+// (modules/project-sync/app/src/TokenService.mjs).
 export type AccessToken = {
-  _id: string
-  accessTokenPartial: string
-  createdAt: Date
-  accessTokenExpiresAt: Date
-  lastUsedAt?: Date
+  id: string
+  tokenPrefix: string
+  scopes: AccessTokenScope[]
+  label?: string
+  createdAt: string
+  expiresAt?: string | null
+  lastUsedAt?: string | null
 }
 
 export type SAMLError = {
