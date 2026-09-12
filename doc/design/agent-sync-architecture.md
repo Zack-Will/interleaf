@@ -417,7 +417,7 @@ agent: archive_branch D
 | **R1 评论面板** | 模块 `review`：`REVIEW_PANEL_ENABLED`、11 条路由、实时事件、新项目默认 `rangesSupportEnabled` | ✅ codex，已合入，`joinProject` 返回 `trackChangesVisible: true` |
 | **R2 MCP 评论工具** | `ReviewService`、Agent 服务用户、`list_comments` / `get_review_queue` / `reply_comment` / `resolve_comment` / `reopen_comment`、`comments_affected` | ✅ Opus，已合入，136 个单元测试；实机待验 |
 | **R3 新增评论与重锚** | document-updater `POST …/comment` 端点、`add_comment` / `reanchor_comment`、写入后自动重锚 | ✅ Opus，已合入，165 个 web 单元测试 + 521 个 document-updater 测试；实机：agent 用 `add_comment` 建评论，`edit_file` 改写被评论句子后评论跟随新文本（`shrunk`，未游离） |
-| **R4 修订建议** | agent 以 `meta.tc` 提交，人接受/拒绝 | ⏳ |
+| **R4 修订建议** | document-updater `setDoc` 增加 `track_changes`、`SuggestionService`、`suggest_edits` / `list_suggestions` / `accept_suggestions` / `reject_suggestions` | ✅ Opus，已合入并推送；实机：agent 对一句话提建议，编辑器里出现 Agent MCP 的 3 条修订标记（2 插入 1 删除），`get_review_queue` 报 `pending_suggestions: 3` |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
 
 M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent 读写并留下可回滚的 label。
