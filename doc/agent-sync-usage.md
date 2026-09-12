@@ -19,6 +19,8 @@ What the fork adds:
   `git push` work against a project.
 
 For the design behind it, see `doc/design/agent-sync-architecture.md`.
+For the optional one-way backup of a project to a GitHub repository, see
+`doc/github-backup.md`.
 
 ## Enabling it
 
