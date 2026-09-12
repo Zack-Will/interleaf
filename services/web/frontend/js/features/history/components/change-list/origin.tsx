@@ -8,6 +8,7 @@ function Origin({ origin }: Pick<LoadedUpdate['meta'], 'origin'>) {
   if (origin?.kind === 'dropbox') result = t('history_entry_origin_dropbox')
   if (origin?.kind === 'upload') result = t('history_entry_origin_upload')
   if (origin?.kind === 'git-bridge') result = t('history_entry_origin_git')
+  if (origin?.kind === 'mcp') result = t('history_entry_origin_agent')
   if (origin?.kind === 'github') result = t('history_entry_origin_github')
 
   if (result) {

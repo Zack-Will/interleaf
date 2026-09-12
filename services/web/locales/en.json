@@ -1120,6 +1120,7 @@
   "history_compare_up_to_this_version": "Compare up to this version",
   "history_delete_label": "Delete label",
   "history_download_this_version": "Download this version",
+  "history_entry_origin_agent": "via Agent",
   "history_entry_origin_dropbox": "via Dropbox",
   "history_entry_origin_git": "via Git",
   "history_entry_origin_github": "via GitHub",

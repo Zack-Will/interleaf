@@ -12,13 +12,14 @@ export interface Meta {
   start_ts: number
   end_ts: number
   type?: 'external' // TODO
-  source?: 'git-bridge' // TODO
+  source?: 'git-bridge' | 'mcp' // TODO
   origin?:
     | {
         kind:
           | 'dropbox'
           | 'upload'
           | 'git-bridge'
+          | 'mcp'
           | 'github'
           | 'history-resync'
           | 'history-migration'

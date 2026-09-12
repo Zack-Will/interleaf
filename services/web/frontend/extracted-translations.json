@@ -868,6 +868,7 @@
   "history_compare_up_to_this_version": "",
   "history_delete_label": "",
   "history_download_this_version": "",
+  "history_entry_origin_agent": "",
   "history_entry_origin_dropbox": "",
   "history_entry_origin_git": "",
   "history_entry_origin_github": "",
