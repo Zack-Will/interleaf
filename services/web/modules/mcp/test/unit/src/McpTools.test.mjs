@@ -374,6 +374,18 @@ describe('MCP tools', () => {
       reply_comment: { project, thread_id: 't', content: 'c' },
       resolve_comment: { project, thread_id: 't' },
       reopen_comment: { project, thread_id: 't' },
+      add_comment: {
+        project,
+        path: 'main.tex',
+        anchor: { exact: 'one' },
+        content: 'c',
+      },
+      reanchor_comment: {
+        project,
+        thread_id: 't',
+        path: 'main.tex',
+        anchor: { exact: 'one' },
+      },
     }
     for (const [name, tool] of Object.entries(server._registeredTools)) {
       const result = await tool.handler(argumentsByTool[name])

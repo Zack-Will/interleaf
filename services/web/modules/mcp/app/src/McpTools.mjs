@@ -52,8 +52,16 @@ function reviewQueueSummary(data) {
   for (const file of data.files)
     parts.push(`${file.path}: ${plural(file.count, 'comment')}`)
   if (data.detached_count)
-    parts.push(`${plural(data.detached_count, 'detached comment')}`)
+    parts.push(
+      `${plural(data.detached_count, 'detached comment')}: the commented text is gone, put them back with reanchor_comment`
+    )
   return parts.join('\n')
+}
+
+function commentPlacementSummary(data) {
+  const action = data.reanchored ? 'Re-anchored' : 'Added'
+  const place = `${data.path}:${data.line}:${data.column}`
+  return `${action} comment ${data.thread_id} at ${place} as ${data.acted_as}`
 }
 
 function commentActionSummary(data) {
@@ -73,6 +81,8 @@ function summaryText(data) {
   if (Array.isArray(data.comments)) return commentsSummary(data)
   if (Array.isArray(data.detached) && Array.isArray(data.files))
     return reviewQueueSummary(data)
+  if (data.thread_id && data.quoted_text != null)
+    return commentPlacementSummary(data)
   if (data.thread_id) return commentActionSummary(data)
   if (Array.isArray(data.matches)) {
     const lines = data.matches
@@ -147,25 +157,37 @@ function nextAction(error, next) {
     return 're-read the file and pick a unique anchor; candidate_lines lists the matches'
   if (error.code === 'anchor_not_found')
     return 're-read the file and choose an anchor present in the current content'
+  if (error.code === 'text_mismatch')
+    return 'the document changed under the anchor; re-read the file and retry with the text now at that position (actual_text)'
   return 'check request'
 }
 
-const errorResult = (error, next) => ({
-  isError: true,
-  content: [{ type: 'text', text: error.message || String(error) }],
-  structuredContent: {
-    code: error.code || 'error',
-    message: error.message || String(error),
-    ...(error.expectedVersion != null
-      ? { expected_version: error.expectedVersion }
-      : {}),
-    ...(error.actualVersion != null
-      ? { actual_version: error.actualVersion }
-      : {}),
-    ...(error.candidateLines ? { candidate_lines: error.candidateLines } : {}),
-    next_action: nextAction(error, next),
-  },
-})
+// OError keeps constructor properties on `info`, so look in both places.
+function errorDetail(error, name) {
+  return error[name] ?? error.info?.[name]
+}
+
+const errorResult = (error, next) => {
+  const candidateLines = errorDetail(error, 'candidateLines')
+  const actualText = errorDetail(error, 'actualText')
+  return {
+    isError: true,
+    content: [{ type: 'text', text: error.message || String(error) }],
+    structuredContent: {
+      code: error.code || 'error',
+      message: error.message || String(error),
+      ...(error.expectedVersion != null
+        ? { expected_version: error.expectedVersion }
+        : {}),
+      ...(error.actualVersion != null
+        ? { actual_version: error.actualVersion }
+        : {}),
+      ...(candidateLines ? { candidate_lines: candidateLines } : {}),
+      ...(actualText != null ? { actual_text: actualText } : {}),
+      next_action: nextAction(error, next),
+    },
+  }
+}
 
 function projectId(ref, services) {
   return services.ProjectRef.parse(ref).projectId
@@ -195,6 +217,129 @@ function positionToLineColumn(lines, position) {
     line: lines.length || 1,
     column: (lines[lastIndex]?.length ?? 0) + 1,
   }
+}
+
+const ELLIPSIS = '...'
+
+function occurrences(text, needle) {
+  const positions = []
+  let at = text.indexOf(needle)
+  while (at >= 0) {
+    positions.push(at)
+    at = text.indexOf(needle, at + 1)
+  }
+  return positions
+}
+
+function linesOfPositions(text, positions) {
+  return positions.map(position => text.slice(0, position).split('\n').length)
+}
+
+function resolveExactAnchor(text, exact) {
+  const positions = occurrences(text, exact)
+  if (!positions.length)
+    throw new AnchorNotFoundError('anchor text is not in this document')
+  if (positions.length > 1)
+    throw new AnchorAmbiguousError('anchor text occurs more than once', {
+      candidateLines: linesOfPositions(text, positions),
+    })
+  return { position: positions[0], text: exact }
+}
+
+// The first suffix occurrence that leaves the whole prefix inside the span.
+function findSuffixEnd(text, suffix, minimumEnd) {
+  let at = text.indexOf(suffix, Math.max(0, minimumEnd - suffix.length))
+  while (at >= 0 && at + suffix.length < minimumEnd) {
+    at = text.indexOf(suffix, at + 1)
+  }
+  return at < 0 ? -1 : at + suffix.length
+}
+
+// Notion-style "first words...last words": quote the ends of a long passage
+// instead of all of it.
+function resolveEllipsisAnchor(text, pattern) {
+  const separator = pattern.indexOf(ELLIPSIS)
+  if (separator < 0) return resolveExactAnchor(text, pattern)
+  const prefix = pattern.slice(0, separator)
+  const suffix = pattern.slice(separator + ELLIPSIS.length)
+  if (!prefix || !suffix)
+    throw toolError(
+      'invalid_anchor',
+      'start_with_ellipsis needs text on both sides of the "..."',
+      'pass "first words...last words", or use exact for a short quote'
+    )
+  const spans = []
+  for (const start of occurrences(text, prefix)) {
+    const end = findSuffixEnd(text, suffix, start + prefix.length)
+    if (end >= 0) spans.push({ position: start, text: text.slice(start, end) })
+  }
+  if (!spans.length)
+    throw new AnchorNotFoundError(
+      'no passage starts with the prefix and ends with the suffix'
+    )
+  if (spans.length > 1)
+    throw new AnchorAmbiguousError('more than one passage matches the anchor', {
+      candidateLines: linesOfPositions(
+        text,
+        spans.map(span => span.position)
+      ),
+    })
+  return spans[0]
+}
+
+function resolveLineAnchor(lines, anchor) {
+  const start = anchor.start_line
+  const end = anchor.end_line ?? start
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 1 ||
+    end < start ||
+    end > lines.length
+  )
+    throw toolError(
+      'invalid_anchor',
+      `line range ${start}-${end} is outside a document of ${lines.length} lines`,
+      'read the file again and use a 1-based line range within it'
+    )
+  const position = lines
+    .slice(0, start - 1)
+    .reduce((total, line) => total + line.length + 1, 0)
+  return { position, text: lines.slice(start - 1, end).join('\n') }
+}
+
+function anchorKind(anchor) {
+  const kinds = []
+  if (anchor?.exact != null) kinds.push('exact')
+  if (anchor?.start_with_ellipsis != null) kinds.push('ellipsis')
+  if (anchor?.start_line != null || anchor?.end_line != null)
+    kinds.push('lines')
+  if (kinds.length !== 1)
+    throw toolError(
+      'invalid_anchor',
+      'anchor needs exactly one of exact, start_with_ellipsis or start_line/end_line',
+      'pass a single anchor form'
+    )
+  return kinds[0]
+}
+
+// Turns an anchor into the character range the comment op needs.  Offsets are
+// computed on lines.join('\n'), the same text document-updater holds.
+function resolveAnchor(lines, anchor) {
+  const text = lines.join('\n')
+  const kind = anchorKind(anchor)
+  let range
+  if (kind === 'exact') range = resolveExactAnchor(text, String(anchor.exact))
+  else if (kind === 'ellipsis')
+    range = resolveEllipsisAnchor(text, String(anchor.start_with_ellipsis))
+  else range = resolveLineAnchor(lines, anchor)
+  if (!range.text)
+    throw toolError(
+      'invalid_anchor',
+      'the anchor selects no text',
+      'pick an anchor that covers at least one character'
+    )
+  return range
 }
 
 function formatUser(user, fallbackId) {
@@ -242,25 +387,40 @@ function commentEntry(doc, lines, comment, thread) {
   }
 }
 
-// Joins the live comment ranges of every document with the chat threads that
-// hold their messages and resolved state.
-async function loadProjectComments(services, id, path) {
+async function listDocs(services, id) {
   const docPaths =
     await services.ProjectEntityHandler.promises.getAllDocPathsFromProjectById(
       id
     )
-  const docs = Object.entries(docPaths || {}).map(([docId, pathname]) => ({
+  return Object.entries(docPaths || {}).map(([docId, pathname]) => ({
     docId,
     path: cleanPath(pathname),
   }))
+}
+
+function docNotFoundError(target) {
+  return toolError(
+    'doc_not_found',
+    `no document at ${target}`,
+    'call get_project to list the document paths'
+  )
+}
+
+async function resolveDoc(services, id, path) {
+  const target = cleanPath(path)
+  const docs = await listDocs(services, id)
+  const doc = docs.find(doc => doc.path === target)
+  if (!doc) throw docNotFoundError(target)
+  return doc
+}
+
+// Joins the live comment ranges of every document with the chat threads that
+// hold their messages and resolved state.
+async function loadProjectComments(services, id, path) {
+  const docs = await listDocs(services, id)
   const target = path == null ? null : cleanPath(path)
   const wanted = target ? docs.filter(doc => doc.path === target) : docs
-  if (target && !wanted.length)
-    throw toolError(
-      'doc_not_found',
-      `no document at ${target}`,
-      'call get_project to list the document paths'
-    )
+  if (target && !wanted.length) throw docNotFoundError(target)
   const threads = await services.ReviewService.listThreads(id)
   const comments = []
   const linesByPath = new Map()
@@ -302,6 +462,164 @@ async function resolveActor(services, id, userId, actAsAgent) {
   const result = await services.AgentUser.ensureAgentIsCollaborator(id, userId)
   if (result?.ok) return { userId: result.agentUserId, acted_as: 'agent' }
   return { userId, acted_as: 'token_user', reason: result?.reason }
+}
+
+// Where the comment ended up, read back from the range document-updater
+// returned rather than from what we asked for: the op may have been
+// transformed against edits that were in flight.
+function commentPlacement(lines, path, result, range, actor, extra = {}) {
+  const position = result.comment?.op?.p ?? range.position
+  const quotedText = result.comment?.op?.c ?? range.text
+  const { line, column } = positionToLineColumn(lines, position)
+  return {
+    thread_id: result.threadId,
+    path,
+    position,
+    line,
+    column,
+    quoted_text: quotedText,
+    doc_version: result.version,
+    acted_as: actor.acted_as,
+    ...(actor.reason ? { reason: actor.reason } : {}),
+    ...extra,
+  }
+}
+
+function offsetOfLineIndex(lines, index) {
+  let offset = 0
+  for (
+    let position = 0;
+    position < index && position < lines.length;
+    position++
+  )
+    offset += lines[position].length + 1
+  return offset
+}
+
+// Each structured edit replaces one stretch of the document.  Positions are
+// recorded against the document as it stood when that edit ran, so they have
+// to be walked back to the document the comments were anchored in, and forward
+// to the document the write produced.
+function toOriginalPosition(position, earlierChanges, preferEnd) {
+  let result = position
+  for (let index = earlierChanges.length - 1; index >= 0; index -= 1) {
+    const change = earlierChanges[index]
+    const newEnd = change.start + change.newText.length
+    if (result >= newEnd) result += change.oldLength - change.newText.length
+    else if (result > change.start)
+      result = preferEnd ? change.start + change.oldLength : change.start
+  }
+  return result
+}
+
+function toFinalPosition(position, laterChanges) {
+  let result = position
+  for (const change of laterChanges) {
+    const oldEnd = change.start + change.oldLength
+    if (result >= oldEnd) result += change.newText.length - change.oldLength
+    else if (result > change.start) result = change.start
+  }
+  return result
+}
+
+// Only anchor-shaped edits replace a passage a comment could have been on;
+// a line range edit still shifts the offsets of the ones around it.
+function replacedRegions(changes) {
+  return changes
+    .map((change, index) => ({
+      reanchor: change.reanchor,
+      newText: change.newText,
+      oldStart: toOriginalPosition(
+        change.start,
+        changes.slice(0, index),
+        false
+      ),
+      oldEnd: toOriginalPosition(
+        change.start + change.oldLength,
+        changes.slice(0, index),
+        true
+      ),
+      newStart: toFinalPosition(change.start, changes.slice(index + 1)),
+    }))
+    .filter(region => region.reanchor)
+}
+
+function spanIntersects(comment, region) {
+  const start = comment.op?.p ?? 0
+  const end = start + (comment.op?.c?.length ?? 0)
+  if (start === end) return start >= region.oldStart && start <= region.oldEnd
+  return start < region.oldEnd && end > region.oldStart
+}
+
+// The comments this write detached, paired with the text that replaced them.
+function reanchorTargets(commentsBefore, commentsAffected, target, regions) {
+  const detached = new Set(
+    (commentsAffected || [])
+      .filter(entry => entry.state === 'detached' && entry.path === target)
+      .map(entry => entry.thread_id)
+  )
+  const targets = []
+  for (const comment of commentsBefore || []) {
+    const threadId = comment.op?.t || comment.id
+    if (!detached.has(threadId)) continue
+    const region = regions.find(region => spanIntersects(comment, region))
+    if (region) targets.push({ threadId, region })
+  }
+  return targets
+}
+
+async function commentSnapshot(services, id, path) {
+  if (!services.ReviewService?.reanchorComment) return null
+  try {
+    const doc = await resolveDoc(services, id, path)
+    const document = await services.ReviewService.getDocRanges(id, doc.docId)
+    const comments = document?.ranges?.comments || []
+    return comments.length ? { docId: doc.docId, comments } : null
+  } catch {
+    // A project whose comments we cannot read is a project we cannot
+    // re-anchor in; the edit itself is unaffected.
+    return null
+  }
+}
+
+// Best effort: a comment we fail to move is reported, never fatal.
+async function reanchorDetachedComments(
+  services,
+  id,
+  userId,
+  { snapshot, changes, lines, result, path }
+) {
+  const reanchored = []
+  const failed = []
+  if (!snapshot || !result?.comments_affected?.length)
+    return { reanchored, failed }
+  const targets = reanchorTargets(
+    snapshot.comments,
+    result.comments_affected,
+    cleanPath(path),
+    replacedRegions(changes)
+  )
+  for (const { threadId, region } of targets) {
+    try {
+      const moved = await services.ReviewService.reanchorComment(
+        id,
+        snapshot.docId,
+        userId,
+        threadId,
+        { position: region.newStart, text: region.newText }
+      )
+      const position = moved?.comment?.op?.p ?? region.newStart
+      const { line, column } = positionToLineColumn(lines, position)
+      reanchored.push({ thread_id: threadId, line, column })
+    } catch (error) {
+      failed.push({
+        thread_id: threadId,
+        code: error.code || 'error',
+        message: error.message || String(error),
+      })
+    }
+  }
+  return { reanchored, failed }
 }
 
 function contextFor(lines, line, contextLines) {
@@ -685,6 +1003,7 @@ export function registerTools(
         const document = await services.SnapshotService.readDoc(id, path)
         let lines = [...document.lines]
         const split = text => String(text ?? '').split(/\r\n|\n|\r/)
+        const changes = []
         for (const edit of edits) {
           if (edit.type === 'replace_range') {
             const start = edit.start_line
@@ -697,6 +1016,16 @@ export function registerTools(
               end < start - 1
             )
               throw new InvalidEditError('invalid line range')
+            const inserting = end < start
+            const replacement = split(edit.new_text).join('\n')
+            changes.push({
+              start: offsetOfLineIndex(lines, start - 1),
+              oldLength: inserting
+                ? 0
+                : lines.slice(start - 1, end).join('\n').length,
+              newText: inserting ? `${replacement}\n` : replacement,
+              reanchor: false,
+            })
             lines.splice(
               start - 1,
               Math.max(0, end - start + 1),
@@ -725,6 +1054,12 @@ export function registerTools(
                 candidateLines,
               })
             }
+            changes.push({
+              start: positions[0],
+              oldLength: anchor.length,
+              newText: String(edit.new_text ?? ''),
+              reanchor: true,
+            })
             const replacement =
               text.slice(0, positions[0]) +
               String(edit.new_text ?? '') +
@@ -774,6 +1109,12 @@ export function registerTools(
               throw new InvalidEditError(
                 'replace_section new_text must include heading'
               )
+            changes.push({
+              start: offsetOfLineIndex(lines, start),
+              oldLength: lines.slice(start, end).join('\n').length,
+              newText: replacementLines.join('\n'),
+              reanchor: true,
+            })
             lines.splice(start, end - start, ...replacementLines)
           } else throw new InvalidEditError(`unknown edit type ${edit.type}`)
         }
@@ -784,6 +1125,10 @@ export function registerTools(
           throw new FileTooLargeError()
         const before = document.lines.join('\n')
         const content = lines.join('\n')
+        // Snapshot the comment ranges the write is about to transform, so the
+        // ones it detaches can be put back on the replacement text.  Never let
+        // this stop the edit.
+        const snapshot = await commentSnapshot(services, id, path)
         let result
         try {
           result = await services.WriteService.writeFiles(id, userId, {
@@ -798,11 +1143,19 @@ export function registerTools(
           }
           throw error
         }
+        const { reanchored, failed } = await reanchorDetachedComments(
+          services,
+          id,
+          userId,
+          { snapshot, changes, lines, result, path }
+        )
         return {
           path,
           project_version: result.version,
           label: result.label,
           comments_affected: result.comments_affected,
+          ...(reanchored.length ? { reanchored } : {}),
+          ...(failed.length ? { reanchor_failed: failed } : {}),
           diff: createTwoFilesPatch(path, path, before, content),
         }
       })
@@ -1002,6 +1355,84 @@ export function registerTools(
 
   threadStateTool('resolve_comment', 'Resolve a review comment thread', true)
   threadStateTool('reopen_comment', 'Reopen a review comment thread', false)
+
+  const anchorSchema = z.object({
+    exact: z.string().optional(),
+    start_with_ellipsis: z.string().optional(),
+    start_line: z.number().int().optional(),
+    end_line: z.number().int().optional(),
+  })
+
+  server.tool(
+    'add_comment',
+    'Anchor a new review comment to a passage of a document',
+    {
+      project: z.string(),
+      path: z.string(),
+      anchor: anchorSchema,
+      content: z.string(),
+      act_as_agent: z.boolean().optional(),
+    },
+    async ({ project, path, anchor, content, act_as_agent = true }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        await access(services, req, id, 'write')
+        const doc = await resolveDoc(services, id, path)
+        const document = await services.ReviewService.getDocRanges(
+          id,
+          doc.docId
+        )
+        const lines = document?.lines || []
+        const range = resolveAnchor(lines, anchor)
+        const actor = await resolveActor(services, id, userId, act_as_agent)
+        const result = await services.ReviewService.createComment(
+          id,
+          doc.docId,
+          actor.userId,
+          { position: range.position, text: range.text, content }
+        )
+        return commentPlacement(lines, doc.path, result, range, actor, {
+          doc_id: doc.docId,
+          message_id: result.message?.id,
+        })
+      })
+  )
+
+  server.tool(
+    'reanchor_comment',
+    'Move a detached or drifted review comment onto new text',
+    {
+      project: z.string(),
+      thread_id: z.string(),
+      path: z.string(),
+      anchor: anchorSchema,
+      act_as_agent: z.boolean().optional(),
+    },
+    async ({ project, thread_id, path, anchor, act_as_agent = true }) =>
+      run(async () => {
+        const id = projectId(project, services)
+        await access(services, req, id, 'write')
+        const doc = await resolveDoc(services, id, path)
+        const document = await services.ReviewService.getDocRanges(
+          id,
+          doc.docId
+        )
+        const lines = document?.lines || []
+        const range = resolveAnchor(lines, anchor)
+        const actor = await resolveActor(services, id, userId, act_as_agent)
+        const result = await services.ReviewService.reanchorComment(
+          id,
+          doc.docId,
+          actor.userId,
+          thread_id,
+          { position: range.position, text: range.text }
+        )
+        return commentPlacement(lines, doc.path, result, range, actor, {
+          doc_id: doc.docId,
+          reanchored: true,
+        })
+      })
+  )
 
   return server
 }

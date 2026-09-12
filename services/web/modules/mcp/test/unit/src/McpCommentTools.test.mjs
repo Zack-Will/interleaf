@@ -73,6 +73,19 @@ function setup(overrides = {}) {
     sendComment: vi.fn(async () => ({ id: 'm-new' })),
     resolveThread: vi.fn(async () => {}),
     reopenThread: vi.fn(async () => {}),
+    createComment: vi.fn(async (_id, _docId, _userId, { position, text }) => ({
+      threadId: 't-new',
+      comment: { id: 't-new', op: { c: text, p: position, t: 't-new' } },
+      version: 9,
+      message: { id: 'm-new' },
+    })),
+    reanchorComment: vi.fn(
+      async (_id, _docId, _userId, threadId, { position, text }) => ({
+        threadId,
+        comment: { id: threadId, op: { c: text, p: position, t: threadId } },
+        version: 10,
+      })
+    ),
     ...(overrides.ReviewService || {}),
   }
   const agentUser = {
@@ -100,6 +113,7 @@ function setup(overrides = {}) {
     ReviewService: reviewService,
     AgentUser: agentUser,
     settings: {},
+    ...(overrides.services || {}),
   }
   const server = createMcpServer({
     services,
@@ -387,5 +401,352 @@ describe('MCP comment tools', () => {
       'u-token'
     )
     expect(reopened.structuredContent.resolved).toBe(false)
+  })
+})
+
+describe('MCP comment anchoring tools', () => {
+  const addComment = (server, anchor, overrides = {}) =>
+    server._registeredTools.add_comment.handler({
+      project: projectId,
+      path: 'main.tex',
+      anchor,
+      content: 'please rephrase',
+      ...overrides,
+    })
+
+  it('anchors a comment on an exact quote', async () => {
+    const { server, reviewService } = setup()
+    const result = await addComment(server, { exact: 'Alpha beta.' })
+    expect(reviewService.createComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'agent-1',
+      { position: 16, text: 'Alpha beta.', content: 'please rephrase' }
+    )
+    expect(result.structuredContent).toMatchObject({
+      thread_id: 't-new',
+      path: 'main.tex',
+      line: 2,
+      column: 1,
+      quoted_text: 'Alpha beta.',
+      acted_as: 'agent',
+      message_id: 'm-new',
+    })
+    expect(result.content[0].text).toBe(
+      'Added comment t-new at main.tex:2:1 as agent'
+    )
+  })
+
+  it('anchors a comment on a first-words...last-words quote', async () => {
+    const { server, reviewService } = setup()
+    await addComment(server, { start_with_ellipsis: 'Alpha...beta.' })
+    expect(reviewService.createComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'agent-1',
+      { position: 16, text: 'Alpha beta.', content: 'please rephrase' }
+    )
+  })
+
+  it('anchors a comment on a line range', async () => {
+    const { server, reviewService } = setup()
+    await addComment(server, { start_line: 2, end_line: 3 })
+    expect(reviewService.createComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'agent-1',
+      {
+        position: 16,
+        text: 'Alpha beta.\nGamma delta.',
+        content: 'please rephrase',
+      }
+    )
+  })
+
+  it('reports an ambiguous anchor with the lines it matched', async () => {
+    const { server, reviewService } = setup({
+      documents: {
+        [mainDocId]: {
+          lines: ['Repeat me', 'filler', 'Repeat me'],
+          ranges: { comments: [] },
+        },
+        [partDocId]: { lines: partLines, ranges: { comments: [] } },
+      },
+    })
+    const result = await addComment(server, { exact: 'Repeat me' })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('anchor_ambiguous')
+    expect(result.structuredContent.candidate_lines).toEqual([1, 3])
+    expect(reviewService.createComment).not.toHaveBeenCalled()
+  })
+
+  it('reports an anchor that is not in the document', async () => {
+    const { server } = setup()
+    const result = await addComment(server, { exact: 'nowhere' })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+  })
+
+  it('rejects an anchor that mixes two forms', async () => {
+    const { server } = setup()
+    const result = await addComment(server, { exact: 'Alpha', start_line: 2 })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('invalid_anchor')
+  })
+
+  it('rejects a line range outside the document', async () => {
+    const { server } = setup()
+    const result = await addComment(server, { start_line: 9, end_line: 9 })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('invalid_anchor')
+  })
+
+  it('reports an unknown path', async () => {
+    const { server } = setup()
+    const result = await server._registeredTools.add_comment.handler({
+      project: projectId,
+      path: 'missing.tex',
+      anchor: { exact: 'Alpha' },
+      content: 'x',
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('doc_not_found')
+  })
+
+  it('passes a text mismatch back with the text that is there now', async () => {
+    const { server } = setup({
+      ReviewService: {
+        createComment: vi.fn(async () => {
+          throw Object.assign(new Error('text mismatch'), {
+            code: 'text_mismatch',
+            actualText: 'Alpha gamma.',
+          })
+        }),
+      },
+    })
+    const result = await addComment(server, { exact: 'Alpha beta.' })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      code: 'text_mismatch',
+      actual_text: 'Alpha gamma.',
+    })
+    expect(result.structuredContent.next_action).toContain('re-read')
+  })
+
+  it('re-anchors an existing thread onto new text', async () => {
+    const { server, reviewService } = setup()
+    const result = await server._registeredTools.reanchor_comment.handler({
+      project: projectId,
+      thread_id: 't-detached',
+      path: 'main.tex',
+      anchor: { exact: 'Gamma delta.' },
+    })
+    expect(reviewService.reanchorComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'agent-1',
+      't-detached',
+      { position: 28, text: 'Gamma delta.' }
+    )
+    expect(result.structuredContent).toMatchObject({
+      thread_id: 't-detached',
+      line: 3,
+      column: 1,
+      quoted_text: 'Gamma delta.',
+      reanchored: true,
+    })
+    expect(result.content[0].text).toBe(
+      'Re-anchored comment t-detached at main.tex:3:1 as agent'
+    )
+  })
+
+  it('reports a thread that no longer exists', async () => {
+    const { server } = setup({
+      ReviewService: {
+        reanchorComment: vi.fn(async () => {
+          throw Object.assign(new Error('comment thread not found'), {
+            code: 'thread_not_found',
+          })
+        }),
+      },
+    })
+    const result = await server._registeredTools.reanchor_comment.handler({
+      project: projectId,
+      thread_id: 't-gone',
+      path: 'main.tex',
+      anchor: { exact: 'Gamma delta.' },
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('thread_not_found')
+  })
+
+  it('tells the agent to re-anchor the detached comments of the queue', async () => {
+    const { server } = setup()
+    const result = await server._registeredTools.get_review_queue.handler({
+      project: projectId,
+    })
+    expect(result.content[0].text).toContain('reanchor_comment')
+  })
+})
+
+describe('edit_file re-anchoring', () => {
+  // `writeFiles` reports which comments the write transformed; only the ones
+  // it detached, and only where the edit replaced their text, are moved.
+  function editSetup({ commentsAffected, ReviewService } = {}) {
+    const writeFiles = vi.fn(async () => ({
+      version: 6,
+      label: { comment: 'edit' },
+      comments_affected: commentsAffected ?? [
+        { thread_id: 't-alpha', path: 'main.tex', state: 'detached' },
+        { thread_id: 't-beta', path: 'main.tex', state: 'shrunk' },
+      ],
+    }))
+    const context = setup({
+      ReviewService,
+      services: {
+        SnapshotService: {
+          readDoc: vi.fn(async () => ({
+            path: 'main.tex',
+            lines: mainLines,
+            totalLines: mainLines.length,
+          })),
+        },
+        WriteService: { writeFiles },
+        settings: { max_doc_length: 100000 },
+      },
+    })
+    return { ...context, writeFiles }
+  }
+
+  const edit = (server, edits) =>
+    server._registeredTools.edit_file.handler({
+      project: projectId,
+      path: 'main.tex',
+      base_version: 4,
+      edits,
+      message: 'edit',
+    })
+
+  it('moves a comment the edit detached onto the replacement text', async () => {
+    const { server, reviewService } = editSetup()
+    const result = await edit(server, [
+      {
+        type: 'replace_anchor',
+        anchor: 'Alpha beta.',
+        new_text: 'Alpha gamma.',
+      },
+    ])
+    expect(reviewService.reanchorComment).toHaveBeenCalledTimes(1)
+    expect(reviewService.reanchorComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'u-token',
+      't-alpha',
+      { position: 16, text: 'Alpha gamma.' }
+    )
+    expect(result.structuredContent.reanchored).toEqual([
+      { thread_id: 't-alpha', line: 2, column: 1 },
+    ])
+    expect(result.structuredContent.reanchor_failed).toBeUndefined()
+  })
+
+  it('maps offsets through the earlier edits of the same call', async () => {
+    const { server, reviewService } = editSetup()
+    const result = await edit(server, [
+      { type: 'replace_range', start_line: 1, end_line: 1, new_text: 'A\nB' },
+      {
+        type: 'replace_anchor',
+        anchor: 'Alpha beta.',
+        new_text: 'Alpha gamma.',
+      },
+    ])
+    // The comment sat at offset 16 of the original document and the
+    // replacement sits at offset 4 of the written one.
+    expect(reviewService.reanchorComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'u-token',
+      't-alpha',
+      { position: 4, text: 'Alpha gamma.' }
+    )
+    expect(result.structuredContent.reanchored).toEqual([
+      { thread_id: 't-alpha', line: 3, column: 1 },
+    ])
+  })
+
+  it('leaves a detached comment alone when the edit replaced other text', async () => {
+    const { server, reviewService } = editSetup()
+    const result = await edit(server, [
+      {
+        type: 'replace_anchor',
+        anchor: 'Gamma delta.',
+        new_text: 'Gamma epsilon.',
+      },
+    ])
+    expect(reviewService.reanchorComment).not.toHaveBeenCalled()
+    expect(result.structuredContent.reanchored).toBeUndefined()
+  })
+
+  it('does not move a comment a line range edit detached', async () => {
+    const { server, reviewService } = editSetup()
+    await edit(server, [
+      { type: 'replace_range', start_line: 2, end_line: 2, new_text: 'Other.' },
+    ])
+    expect(reviewService.reanchorComment).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed re-anchor without failing the edit', async () => {
+    const { server } = editSetup({
+      ReviewService: {
+        reanchorComment: vi.fn(async () => {
+          throw Object.assign(new Error('text mismatch'), {
+            code: 'text_mismatch',
+          })
+        }),
+      },
+    })
+    const result = await edit(server, [
+      {
+        type: 'replace_anchor',
+        anchor: 'Alpha beta.',
+        new_text: 'Alpha gamma.',
+      },
+    ])
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent.project_version).toBe(6)
+    expect(result.structuredContent.reanchor_failed).toEqual([
+      { thread_id: 't-alpha', code: 'text_mismatch', message: 'text mismatch' },
+    ])
+  })
+
+  it('skips re-anchoring when the write detached nothing', async () => {
+    const { server, reviewService } = editSetup({
+      commentsAffected: [
+        { thread_id: 't-alpha', path: 'main.tex', state: 'grown' },
+      ],
+    })
+    await edit(server, [
+      {
+        type: 'replace_anchor',
+        anchor: 'Alpha beta.',
+        new_text: 'Alpha gamma.',
+      },
+    ])
+    expect(reviewService.reanchorComment).not.toHaveBeenCalled()
+  })
+
+  it('still edits when the review service cannot re-anchor', async () => {
+    const { server } = editSetup({
+      ReviewService: { reanchorComment: undefined },
+    })
+    const result = await edit(server, [
+      {
+        type: 'replace_anchor',
+        anchor: 'Alpha beta.',
+        new_text: 'Alpha gamma.',
+      },
+    ])
+    expect(result.structuredContent.project_version).toBe(6)
+    expect(result.structuredContent.reanchored).toBeUndefined()
   })
 })

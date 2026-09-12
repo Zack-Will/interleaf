@@ -113,6 +113,27 @@ const services = {
     },
     async resolveThread() {},
     async reopenThread() {},
+    async createComment(_projectId, _docId, _userId, { position, text }) {
+      return {
+        threadId: 'thread-2',
+        comment: {
+          id: 'thread-2',
+          op: { c: text, p: position, t: 'thread-2' },
+        },
+        version: 4,
+        message: { id: 'message-3' },
+      }
+    },
+    async reanchorComment(_projectId, _docId, _userId, threadId, range) {
+      return {
+        threadId,
+        comment: {
+          id: threadId,
+          op: { c: range.text, p: range.position, t: threadId },
+        },
+        version: 5,
+      }
+    },
   },
   AgentUser: {
     async ensureAgentIsCollaborator() {
@@ -178,6 +199,8 @@ const requiredTools = [
   'reply_comment',
   'resolve_comment',
   'reopen_comment',
+  'add_comment',
+  'reanchor_comment',
 ]
 for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
@@ -213,6 +236,60 @@ const reply = await client.callTool(
 )
 if (reply.structuredContent.acted_as !== 'agent')
   throw new Error('reply_comment did not post as the agent user')
+// "\\section{Introduction}" is 22 characters, so line 2 starts at offset 23
+// and line 3 at offset 50.
+const added = await client.callTool(
+  {
+    name: 'add_comment',
+    arguments: {
+      project: projectId,
+      path: 'main.tex',
+      anchor: { start_with_ellipsis: 'Hello...smoke test.' },
+      content: 'Is this still true?',
+    },
+  },
+  CallToolResultSchema
+)
+if (
+  added.structuredContent.position !== 23 ||
+  added.structuredContent.line !== 2 ||
+  added.structuredContent.quoted_text !== 'Hello from the smoke test.'
+)
+  throw new Error('add_comment did not resolve the ellipsis anchor')
+const reanchored = await client.callTool(
+  {
+    name: 'reanchor_comment',
+    arguments: {
+      project: projectId,
+      thread_id: 'thread-1',
+      path: 'main.tex',
+      anchor: { start_line: 3, end_line: 3 },
+    },
+  },
+  CallToolResultSchema
+)
+if (
+  reanchored.structuredContent.position !== 50 ||
+  reanchored.structuredContent.quoted_text !== 'Done.'
+)
+  throw new Error('reanchor_comment did not resolve the line anchor')
+const ambiguous = await client.callTool(
+  {
+    name: 'add_comment',
+    arguments: {
+      project: projectId,
+      path: 'main.tex',
+      anchor: { exact: 'e' },
+      content: 'nope',
+    },
+  },
+  CallToolResultSchema
+)
+if (
+  ambiguous.structuredContent.code !== 'anchor_ambiguous' ||
+  !Array.isArray(ambiguous.structuredContent.candidate_lines)
+)
+  throw new Error('an ambiguous anchor did not report its candidate lines')
 
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
 console.log(`read_file: ${read.structuredContent.path}`)
@@ -220,6 +297,11 @@ console.log(`list_projects: ${projects.structuredContent.count} projects`)
 console.log(`get_review_queue: ${queue.content[0].text.split('\n')[0]}`)
 console.log(
   `reply_comment: message ${reply.structuredContent.message_id} as ${reply.structuredContent.acted_as}`
+)
+console.log(`add_comment: ${added.content[0].text}`)
+console.log(`reanchor_comment: ${reanchored.content[0].text}`)
+console.log(
+  `anchor_ambiguous: candidate lines ${ambiguous.structuredContent.candidate_lines.join(', ')}`
 )
 
 await client.close()
