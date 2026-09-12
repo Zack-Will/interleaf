@@ -397,6 +397,8 @@ describe("edit_file", () => {
         "\\section{parent}",
         "\\subsection{child}",
         "old child",
+        "\\subsection{sibling}",
+        "sibling body",
         "\\section{next}",
         "next body",
         "\\subsection{later}",
@@ -411,7 +413,7 @@ describe("edit_file", () => {
           {
             path: "main.tex",
             content:
-              "\\section{parent}\n\\subsection{child}\nnew child\n\\section{next}\nnext body\n\\subsection{later}\nlater body",
+              "\\section{parent}\n\\subsection{child}\nnew child\n\\subsection{sibling}\nsibling body\n\\section{next}\nnext body\n\\subsection{later}\nlater body",
           },
         ],
       }),
