@@ -47,10 +47,10 @@ describe('project-sync TokenService', () => {
     const token = 'olp_1234567890abcdef'
     const result = await ctx.TokenService.promises.verifyToken(token, 'git_bridge')
     expect(result).toEqual({ userId: 'user-1', scopes: ['git_bridge'], tokenId: 'tok-1' })
-    expect(ctx.PersonalAccessToken.findOne).toHaveBeenCalledWith({
+    sinon.assert.calledWith(ctx.PersonalAccessToken.findOne, {
       hashedToken: ctx.TokenService.hashToken(token),
     })
-    expect(ctx.PersonalAccessToken.updateOne).toHaveBeenCalled()
+    sinon.assert.calledOnce(ctx.PersonalAccessToken.updateOne)
   })
 
   it('rejects unknown, malformed, expired, and insufficient-scope tokens', async ctx => {
@@ -74,8 +74,8 @@ describe('project-sync TokenService', () => {
     expect(listed).toEqual([{ id: 'id', tokenPrefix: 'olp_1234', scopes: ['git_bridge'], label: 'x', createdAt: rec.createdAt, expiresAt: null, lastUsedAt: null }])
     expect(listed[0]).not.toHaveProperty('hashedToken')
     await ctx.TokenService.promises.revokeToken('u', 'id')
-    expect(ctx.PersonalAccessToken.deleteOne).toHaveBeenCalledWith({ _id: 'id', user_id: 'u' })
+    sinon.assert.calledWith(ctx.PersonalAccessToken.deleteOne, { _id: 'id', user_id: 'u' })
     await ctx.TokenService.promises.revokeAllForUser('u')
-    expect(ctx.PersonalAccessToken.deleteMany).toHaveBeenCalledWith({ user_id: 'u' })
+    sinon.assert.calledWith(ctx.PersonalAccessToken.deleteMany, { user_id: 'u' })
   })
 })

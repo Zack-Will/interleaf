@@ -31,9 +31,9 @@ describe('project-sync token authentication middleware', () => {
     ctx.verifyToken.resolves({ userId: 'u', scopes: ['git_bridge'], tokenId: 't' })
     const req = reqWithAuthorization('Bearer olp_1234567890abcdef')
     await ctx.requireAccessToken('git_bridge')(req, ctx.res, ctx.next)
-    expect(ctx.verifyToken).toHaveBeenCalledWith('olp_1234567890abcdef', 'git_bridge')
+    sinon.assert.calledWith(ctx.verifyToken, 'olp_1234567890abcdef', 'git_bridge')
     expect(req.syncUser).toEqual({ userId: 'u', scopes: ['git_bridge'], tokenId: 't' })
-    expect(ctx.next).toHaveBeenCalled()
+    sinon.assert.called(ctx.next)
   })
 
   it('accepts Basic git credentials', async ctx => {
@@ -41,8 +41,8 @@ describe('project-sync token authentication middleware', () => {
     const encoded = Buffer.from('git:olp_1234567890abcdef').toString('base64')
     const req = reqWithAuthorization(`Basic ${encoded}`)
     await ctx.requireAccessToken('git_bridge')(req, ctx.res, ctx.next)
-    expect(ctx.verifyToken).toHaveBeenCalledWith('olp_1234567890abcdef', 'git_bridge')
-    expect(ctx.next).toHaveBeenCalled()
+    sinon.assert.calledWith(ctx.verifyToken, 'olp_1234567890abcdef', 'git_bridge')
+    sinon.assert.called(ctx.next)
   })
 
   it('returns token_malformed for malformed authorization headers', async ctx => {
@@ -51,9 +51,9 @@ describe('project-sync token authentication middleware', () => {
       ctx.next.resetHistory()
       const req = reqWithAuthorization(value)
       await ctx.requireAccessToken('git_bridge')(req, ctx.res, ctx.next)
-      expect(ctx.res.status).toHaveBeenCalledWith(401)
-      expect(ctx.res.json).toHaveBeenCalledWith({ error: 'invalid_token', error_code: 'token_malformed' })
-      expect(ctx.verifyToken).not.toHaveBeenCalled()
+      sinon.assert.calledWith(ctx.res.status, 401)
+      sinon.assert.calledWith(ctx.res.json, { error: 'invalid_token', error_code: 'token_malformed' })
+      sinon.assert.notCalled(ctx.verifyToken)
     }
   })
 
@@ -70,9 +70,9 @@ describe('project-sync token authentication middleware', () => {
       ctx.next.resetHistory()
       ctx.verifyToken.rejects(new ErrorType())
       await ctx.requireAccessToken('git_bridge')(reqWithAuthorization('Bearer olp_1234567890abcdef'), ctx.res, ctx.next)
-      expect(ctx.res.status).toHaveBeenCalledWith(status)
-      expect(ctx.res.json).toHaveBeenCalledWith(body)
-      expect(ctx.next).not.toHaveBeenCalled()
+      sinon.assert.calledWith(ctx.res.status, status)
+      sinon.assert.calledWith(ctx.res.json, body)
+      sinon.assert.notCalled(ctx.next)
       ctx.verifyToken.resetBehavior()
     }
   })
