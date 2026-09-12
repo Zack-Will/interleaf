@@ -18,3 +18,18 @@ describe('project-sync core services', () => {
     await VersionService.getLatestVersion('p'); expect(order).toEqual(['doc', 'hist', 'fetch'])
   })
 })
+
+describe('WriteService', () => {
+  it('rejects stale base versions before writing', async () => {
+    vi.resetModules()
+    const lock = { promises: { runWithLock: async (_n, _id, fn) => fn() } }
+    vi.doMock('@overleaf/settings', () => ({ default: { path: { dumpFolder: '/tmp' } } }))
+    vi.doMock('../../../../../app/src/infrastructure/LockManager.mjs', () => ({ default: lock }))
+    vi.doMock('../../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs', () => ({ default: { promises: { _mergeUpdate: sinon.stub(), deleteUpdate: sinon.stub() } } }))
+    vi.doMock('../../../../../app/src/Features/Project/ProjectEntityHandler.mjs', () => ({ default: { promises: { getAllEntities: sinon.stub() } } }))
+    vi.doMock('../../../app/src/VersionService.mjs', () => ({ default: { promises: { getLatestVersion: sinon.stub().resolves({ version: 4 }) } } }))
+    vi.doMock('../../../app/src/LabelService.mjs', () => ({ default: { promises: { createLabel: sinon.stub() } } }))
+    const { default: WriteService } = await import('../../../app/src/WriteService.mjs')
+    await expect(WriteService.writeFiles('p', 'u', { baseVersion: 3, message: 'm', files: [] })).rejects.toMatchObject({ code: 'version_conflict', expectedVersion: 3, actualVersion: 4 })
+  })
+})
