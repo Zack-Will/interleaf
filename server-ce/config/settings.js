@@ -196,6 +196,12 @@ const settings = {
   // The name this is used to describe your Overleaf Community Edition Installation
   appName: process.env.OVERLEAF_APP_NAME || 'Overleaf Community Edition',
 
+  // Git bridge (this fork): the web-side adapter in modules/git-bridge only
+  // registers its routes when this is enabled.
+  enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
+  gitBridgePublicBaseUrl:
+    process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
+
   restrictInvitesToExistingAccounts:
     process.env.OVERLEAF_RESTRICT_INVITES_TO_EXISTING_ACCOUNTS === 'true',
 
@@ -281,6 +287,14 @@ const settings = {
     project_history: {
       sendProjectStructureOps: true,
       url: 'http://127.0.0.1:3054',
+    },
+    gitBridge: {
+      url: `http://${process.env.GIT_BRIDGE_HOST || 'git-bridge'}:${
+        process.env.GIT_BRIDGE_PORT || '8000'
+      }`,
+      // How the git-bridge container reaches web, for the signed blob URLs
+      // handed out in snapshots. Defaults to siteUrl.
+      webPublicUrl: process.env.GIT_BRIDGE_WEB_PUBLIC_URL,
     },
     v1_history: {
       url: process.env.V1_HISTORY_URL || 'http://127.0.0.1:3100/api',

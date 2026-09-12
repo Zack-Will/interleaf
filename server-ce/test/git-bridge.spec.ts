@@ -447,12 +447,41 @@ Hello world
     checkDisabled()
   })
 
-  describe('unavailable in CE', function () {
+  // Upstream Community Edition ignores GIT_BRIDGE_ENABLED entirely, so the
+  // upstream spec asserts the feature stays off. This fork ships the web side
+  // of the git-bridge contract as services/web/modules/git-bridge, so setting
+  // GIT_BRIDGE_ENABLED=true does enable it in CE. The editor and settings UI
+  // are still Server Pro only (fork milestone M5), so only the HTTP contract
+  // is asserted here.
+  describe('available in CE', function () {
     if (isExcludedBySharding('CE_CUSTOM_1')) return
     startWith({
       pro: false,
       vars: ENABLED_VARS,
     })
-    checkDisabled()
+    ensureUserExists({ email: USER })
+
+    it('should mount the git-bridge API', function () {
+      // A registered route answers 401 and asks for a personal access token;
+      // a missing route would answer 404.
+      cy.request({
+        url: '/api/v0/docs/404404404404404404404404',
+        failOnStatusCode: false,
+      }).then(response => {
+        expect(response.status).to.equal(401)
+        expect(response.body.error_code).to.equal('token_malformed')
+      })
+    })
+
+    it('should not render the git-bridge UI in the editor yet', function () {
+      login(USER)
+      createProjectAndOpenInNewEditor('maybe git')
+      cy.findByRole('tab', {
+        name: 'File tree',
+      }).should('exist') // Wait for load
+      cy.findByRole('tab', {
+        name: 'Integrations',
+      }).should('not.exist')
+    })
   })
 })
