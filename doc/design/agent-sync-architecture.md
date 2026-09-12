@@ -408,11 +408,12 @@ agent: archive_branch D
 |---|---|---|
 | **M1 令牌与鉴权** | PAT 模型与服务、`requireAccessToken`、`/oauth/token/info`、令牌管理 REST、单元测试 | ✅ 分支 `feat/project-sync-tokens`，13 提交，Vitest 16/16、eslint 通过 |
 | **M2a MCP 读 + `write_files`** | `ProjectRef`、`VersionService`、`SnapshotService`、`LabelService`、`WriteService`、MCP 传输、7 个读工具 + `write_files`、smoke 脚本、`AGENTS.md` | ✅ 分支 `feat/mcp-read`，26 提交，Vitest 26/26、eslint、prettier、smoke 全过 |
-| **M2b `edit_file` / `revert_to` / 前端标签** | 快照 blob 解析、`RevertService`、`edit_file` 三种定位、"(via Agent)" 三处改动 | 🔄 分支 `feat/mcp-write-revert`，进行中 |
-| **M2.5 本地集成环境** | `develop/` compose，跳过 clsi，Redis 端口改映射 | ⏳ 待拍板，runbook 见 `dev-environment.md` |
-| **M3 分支** | `SyncBranch` 模型 + 迁移、`BranchService`、五个分支工具、`diff.merge` 三方合并、自动标签 | |
-| **M4 git-bridge 适配器** | 四个只读端点、签名 blob URL、推送与 postback、settings / nginx / compose、删除通知 | |
-| **M5 可视化** | 设置页令牌区块、编辑器 Git 模态框、分支折叠与修改树视图 | 增量 |
+| **M2b `edit_file` / `revert_to` / 前端标签** | 快照 blob 解析、`RevertService`、`edit_file` 三种定位、"(via Agent)" 三处改动、`services/web/.prettierrc`、MCP 结果对象化 | ✅ `feat/mcp-write-revert`，实机验证：写入 → 冲突 → 编辑 → 回退 |
+| **M2.5 本地集成环境** | `develop/` compose，跳过 clsi | ✅ 运行中，实测修正见 `dev-environment.md` |
+| **M3 分支** | `SyncBranch` 模型 + 迁移、`BranchService`、五个分支工具、`diff.merge` + `applyPatch` 三方合并、自动标签 | ✅ `feat/branches`，实机验证：不相交合并成功、同行冲突报 hunk、归档 |
+| **M4 git-bridge 适配器** | 四个端点、签名 blob URL、推送与 postback、settings / nginx / compose / webpack 代理、`projectExpired` 删除通知 | ✅ `feat/git-bridge`（Opus），实机验证：官方容器 `git clone` / `push`，历史 origin `git-bridge` |
+| **集成** | `feat/agent-sync` = M3 + M4 + 设计文档，93 个单元测试 | ✅ 本地，未推送 |
+| **M5 可视化** | 设置页令牌区块、编辑器 Git & agents 卡片与模态框、历史面板来源徽章与 Storybook 固件 | 🔄 `feat/ui`（Opus），复用历史面板的标签视图与对比功能 |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
 
 M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent 读写并留下可回滚的 label。
