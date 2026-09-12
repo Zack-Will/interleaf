@@ -507,6 +507,27 @@ module.exports = {
   },
   gitBridgePublicBaseUrl:
     process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
+  // One-way mirror of a project's git history to a GitHub repository. It reads
+  // the history from the git-bridge container, so it needs git-bridge enabled.
+  githubBackup: {
+    enabled: process.env.GITHUB_BACKUP_ENABLED === 'true',
+    intervalSeconds: intFromEnv('GITHUB_BACKUP_INTERVAL_SECONDS', 600),
+    reposDir:
+      process.env.GITHUB_BACKUP_REPOS_DIR ||
+      Path.resolve(__dirname, '../data/github-backup'),
+    apiBaseUrl:
+      process.env.GITHUB_BACKUP_API_BASE_URL || 'https://api.github.com',
+    gitTimeoutMs: intFromEnv('GITHUB_BACKUP_GIT_TIMEOUT_MS', 5 * minutes),
+    // The GitHub token and the internal git-bridge token are stored encrypted
+    // with this key. Rotating it makes every existing link unusable, so the
+    // owner has to connect the repository again.
+    accessTokenEncryptor: {
+      cipherLabel: '2026.1-v3',
+      cipherPasswords: {
+        '2026.1-v3': process.env.GITHUB_BACKUP_CIPHER_PASSWORD,
+      },
+    },
+  },
   restrictedCountries: [],
   enableOnboardingEmails: process.env.ENABLE_ONBOARDING_EMAILS === 'true',
 
@@ -1129,6 +1150,10 @@ module.exports = {
         __dirname,
         '../modules/git-bridge/frontend/js/components/git-and-agents-card.tsx'
       ),
+      Path.resolve(
+        __dirname,
+        '../modules/github-backup/frontend/js/components/github-backup-card.tsx'
+      ),
     ],
     referenceSearchSetting: [],
     settingsModalEditorTabSections: [],
@@ -1150,6 +1175,7 @@ module.exports = {
     'mcp',
     'git-bridge',
     'review',
+    'github-backup',
   ],
   viewIncludes: {},
 

@@ -189,6 +189,40 @@ const services = {
       return { change_ids: changeIds ?? ['change-1'], remaining: 0 }
     },
   },
+  GithubBackupService: {
+    promises: {
+      async getStatus() {
+        return {
+          linked: true,
+          project_id: projectId,
+          owner: 'octocat',
+          repo: 'thesis-backup',
+          branch: 'main',
+          repoUrl: 'https://github.com/octocat/thesis-backup',
+          status: 'ok',
+          lastSyncedVersion: 3,
+          lastPushedCommit: 'abcdef1234567890',
+          lastError: null,
+          inProgress: false,
+        }
+      },
+      async syncNow() {
+        return {
+          linked: true,
+          project_id: projectId,
+          owner: 'octocat',
+          repo: 'thesis-backup',
+          branch: 'main',
+          repoUrl: 'https://github.com/octocat/thesis-backup',
+          status: 'ok',
+          lastSyncedVersion: 4,
+          lastPushedCommit: '1234567890abcdef',
+          lastError: null,
+          inProgress: false,
+        }
+      },
+    },
+  },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = [
@@ -255,6 +289,8 @@ const requiredTools = [
   'accept_suggestions',
   'reject_suggestions',
   'create_label',
+  'get_backup_status',
+  'backup_now',
 ]
 for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
@@ -419,6 +455,22 @@ if (
 )
   throw new Error('create_label did not label the latest project version')
 
+const backupStatus = await client.callTool(
+  { name: 'get_backup_status', arguments: { project: projectId } },
+  CallToolResultSchema
+)
+if (
+  backupStatus.structuredContent.repoUrl !==
+  'https://github.com/octocat/thesis-backup'
+)
+  throw new Error('get_backup_status did not report the linked repository')
+const backedUp = await client.callTool(
+  { name: 'backup_now', arguments: { project: projectId } },
+  CallToolResultSchema
+)
+if (backedUp.structuredContent.lastSyncedVersion !== 4)
+  throw new Error('backup_now did not report the version it pushed')
+
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
 console.log(`read_file: ${read.structuredContent.path}`)
 console.log(`list_projects: ${projects.structuredContent.count} projects`)
@@ -437,6 +489,8 @@ console.log(`accept_suggestions: ${accepted.content[0].text}`)
 console.log(`reject_suggestions: ${rejected.content[0].text}`)
 console.log(`reject_suggestions without ids: ${unspecified.content[0].text}`)
 console.log(`create_label: ${marked.content[0].text}`)
+console.log(`get_backup_status: ${backupStatus.content[0].text}`)
+console.log(`backup_now: ${backedUp.content[0].text}`)
 
 await client.close()
 await server.close()

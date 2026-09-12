@@ -46,6 +46,26 @@ function setup(overrides = {}) {
       })),
       archiveBranch: vi.fn(async () => ({ status: 'archived' })),
     },
+    GithubBackupService: {
+      promises: {
+        getStatus: vi.fn(async () => ({
+          linked: true,
+          owner: 'octocat',
+          repo: 'backup',
+          branch: 'main',
+          status: 'ok',
+          lastSyncedVersion: 4,
+        })),
+        syncNow: vi.fn(async () => ({
+          linked: true,
+          owner: 'octocat',
+          repo: 'backup',
+          branch: 'main',
+          status: 'ok',
+          lastSyncedVersion: 4,
+        })),
+      },
+    },
     fetchJson: vi.fn(async () => ({ updates: [] })),
     settings: { apis: { project_history: { url: 'http://history' } } },
     ProjectGetter: {
@@ -406,12 +426,50 @@ describe('MCP tools', () => {
       list_suggestions: { project },
       accept_suggestions: { project, path: 'main.tex', all: true },
       reject_suggestions: { project, path: 'main.tex', all: true },
+      get_backup_status: { project },
+      backup_now: { project },
     }
     for (const [name, tool] of Object.entries(server._registeredTools)) {
       const result = await tool.handler(argumentsByTool[name])
       expect(typeof result.structuredContent).toBe('object')
       expect(Array.isArray(result.structuredContent)).toBe(false)
     }
+  })
+})
+
+describe('github backup tools', () => {
+  it('reports the linked repository and can ask for a backup', async () => {
+    const { server, services } = setup()
+    const project = 'a'.repeat(24)
+
+    const status = await server._registeredTools.get_backup_status.handler({
+      project,
+    })
+    expect(status.structuredContent.owner).toBe('octocat')
+    expect(status.content[0].text).toContain('octocat/backup')
+
+    const backedUp = await server._registeredTools.backup_now.handler({
+      project,
+    })
+    expect(backedUp.structuredContent.status).toBe('ok')
+    expect(services.GithubBackupService.promises.syncNow).toHaveBeenCalledWith(
+      project,
+      { force: true }
+    )
+    expect(services.ProjectRef.requireAccess).toHaveBeenCalledWith(
+      'u',
+      project,
+      'write'
+    )
+  })
+
+  it('says so when the server has no backup module', async () => {
+    const { server } = setup({ GithubBackupService: undefined })
+    const result = await server._registeredTools.get_backup_status.handler({
+      project: 'a'.repeat(24),
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('backup_disabled')
   })
 })
 

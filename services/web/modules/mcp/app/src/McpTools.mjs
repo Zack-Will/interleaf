@@ -105,6 +105,18 @@ function labelSummary(data) {
   return `Marked project version ${data.project_version} as a saved version: ${data.label.comment}`
 }
 
+function backupSummary(data) {
+  if (!data.linked) return 'This project is not backed up to GitHub'
+  const parts = [`${data.owner}/${data.repo} (${data.branch}): ${data.status}`]
+  if (data.inProgress) parts.push('a backup is running right now')
+  if (data.lastSyncedVersion != null)
+    parts.push(`last backed up project version ${data.lastSyncedVersion}`)
+  if (data.lastPushedCommit)
+    parts.push(`commit ${String(data.lastPushedCommit).slice(0, 12)}`)
+  if (data.lastError?.message) parts.push(data.lastError.message)
+  return parts.join('; ')
+}
+
 function commentPlacementSummary(data) {
   const action = data.reanchored ? 'Re-anchored' : 'Added'
   const place = `${data.path}:${data.line}:${data.column}`
@@ -1735,6 +1747,46 @@ export function registerTools(
     'reject_suggestions',
     'Reject tracked changes, undoing them',
     'reject'
+  )
+
+  // Linking and unlinking need a GitHub token, which stays in the browser
+  // flow: an agent can only look at the backup and ask for one to run.
+  function backupService() {
+    if (!services.GithubBackupService)
+      throw toolError(
+        'backup_disabled',
+        'GitHub backup is not enabled on this server',
+        'ask the server administrator to set GITHUB_BACKUP_ENABLED'
+      )
+    return services.GithubBackupService
+  }
+
+  server.tool(
+    'get_backup_status',
+    'Report whether this project is mirrored to a GitHub repository, and how the last backup went',
+    { project: z.string() },
+    async ({ project }) =>
+      runSummarised(backupSummary, async () => {
+        const id = projectId(project, services)
+        await access(services, req, id)
+        return await backupService().promises.getStatus(id)
+      })
+  )
+
+  server.tool(
+    'backup_now',
+    'Push the latest saved project history to the linked GitHub repository now',
+    { project: z.string() },
+    async ({ project }) =>
+      runSummarised(
+        backupSummary,
+        async () => {
+          const id = projectId(project, services)
+          await access(services, req, id, 'write')
+          return await backupService().promises.syncNow(id, { force: true })
+        },
+        'check with get_backup_status that the project is linked to a GitHub repository and that you have write access; linking is done by the owner in the editor Integrations panel'
+      )
   )
 
   return server

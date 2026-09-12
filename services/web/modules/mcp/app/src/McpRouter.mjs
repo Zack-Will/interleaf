@@ -16,6 +16,7 @@ import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEn
 import ReviewService from '../../../review/app/src/ReviewService.mjs'
 import SuggestionService from '../../../review/app/src/SuggestionService.mjs'
 import AgentUser from '../../../review/app/src/AgentUser.mjs'
+import GithubBackupService from '../../../github-backup/app/src/GithubBackupService.mjs'
 import { requireAccessToken } from '../../../project-sync/app/src/TokenAuthMiddleware.mjs'
 import { createMcpServer } from './McpTools.mjs'
 
@@ -33,6 +34,7 @@ export function createDefaultServices() {
     ReviewService,
     SuggestionService,
     AgentUser,
+    GithubBackupService,
     fetchJson,
     settings: Settings,
   }
@@ -53,7 +55,7 @@ async function handle(request, response) {
 }
 
 const McpModule = {
-  dependencies: ['project-sync', 'review'],
+  dependencies: ['project-sync', 'review', 'github-backup'],
   nonCsrfRouter: {
     apply(webRouter, privateApiRouter, publicApiRouter) {
       const middleware = requireAccessToken('mcp')
