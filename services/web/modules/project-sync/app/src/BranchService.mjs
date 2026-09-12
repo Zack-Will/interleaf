@@ -259,6 +259,8 @@ async function mergeBranch(
           branchVersion: branchVersion.version,
         },
       },
+      // Landing a branch is a milestone, so the merge always gets its label.
+      label: true,
     }
   )
   const mergedVersion = written.version

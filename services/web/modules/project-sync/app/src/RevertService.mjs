@@ -38,6 +38,9 @@ async function revertTo(projectId, userId, { version, path, message, agent }) {
     agent,
     files,
     originExtra: { revert: { from: current.version, to: version } },
+    // A revert is a milestone by definition: it names a state of the project
+    // somebody chose to come back to, so it always gets its label.
+    label: true,
   })
   return {
     ...result,

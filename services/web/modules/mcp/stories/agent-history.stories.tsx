@@ -51,7 +51,8 @@ const humanEdit: LoadedUpdate = {
 }
 
 // An agent write through the MCP endpoint, by a client that named itself.
-// The label comment is the message the agent passed to write_files.
+// Writes do not create a label any more: the message the agent passed to
+// write_files travels in the origin and is shown under the author line.
 const namedAgentWrite: LoadedUpdate = {
   fromV: 8,
   toV: 9,
@@ -65,9 +66,7 @@ const namedAgentWrite: LoadedUpdate = {
       message: 'Rewrite the abstract for clarity',
     },
   },
-  labels: [
-    label('label-mcp', 'Rewrite the abstract for clarity', 9, NOW - DAY),
-  ],
+  labels: [],
   pathnames: ['main.tex', 'sections/abstract.tex'],
   project_ops: [],
 }
@@ -81,10 +80,70 @@ const anonymousAgentWrite: LoadedUpdate = {
     users: [human],
     start_ts: NOW - 2 * DAY,
     end_ts: NOW - 2 * DAY,
-    origin: { kind: 'mcp' },
+    origin: { kind: 'mcp', message: 'Fix the bibliography' },
   },
-  labels: [label('label-mcp-anon', 'Fix the bibliography', 8, NOW - 2 * DAY)],
+  labels: [],
   pathnames: ['references.bib'],
+  project_ops: [],
+}
+
+// Edits the agent offered as tracked changes for a human to accept or reject.
+const agentSuggestion: LoadedUpdate = {
+  fromV: 9,
+  toV: 10,
+  meta: {
+    users: [human],
+    start_ts: NOW - DAY / 2,
+    end_ts: NOW - DAY / 2,
+    origin: {
+      kind: 'mcp',
+      agent: 'Claude Code',
+      message: 'Tighten the opening paragraph of section 2',
+      suggestion: true,
+    },
+  },
+  labels: [],
+  pathnames: ['sections/method.tex'],
+  project_ops: [],
+}
+
+// A message long enough to be truncated: the whole of it stays in the tooltip.
+const longMessageWrite: LoadedUpdate = {
+  fromV: 10,
+  toV: 11,
+  meta: {
+    users: [human],
+    start_ts: NOW - DAY / 4,
+    end_ts: NOW - DAY / 4,
+    origin: {
+      kind: 'mcp',
+      agent: 'Claude Code',
+      message:
+        'Answer the four review comments on section 3, move the derivation ' +
+        'into an appendix and renumber the equations that referred to it',
+    },
+  },
+  labels: [],
+  pathnames: ['sections/results.tex'],
+  project_ops: [],
+}
+
+// The milestone an agent marks on purpose once a round of work is finished.
+const milestone: LoadedUpdate = {
+  fromV: 11,
+  toV: 12,
+  meta: {
+    users: [human],
+    start_ts: NOW - DAY / 8,
+    end_ts: NOW - DAY / 8,
+    origin: {
+      kind: 'mcp',
+      agent: 'Claude Code',
+      message: 'Review round 1 handled',
+    },
+  },
+  labels: [label('label-mcp', 'Review round 1 handled', 12, NOW - DAY / 8)],
+  pathnames: ['main.tex'],
   project_ops: [],
 }
 
@@ -126,6 +185,9 @@ const projectRestore: LoadedUpdate = {
 
 const updates = [
   humanEdit,
+  milestone,
+  longMessageWrite,
+  agentSuggestion,
   namedAgentWrite,
   anonymousAgentWrite,
   gitPush,

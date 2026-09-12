@@ -3,7 +3,9 @@
 This is a fork of the Overleaf monorepo (`Zack-Will/overleaf`, upstream `overleaf/overleaf`).
 The fork adds three web modules that make Overleaf Community Edition usable by AI agents and
 by Git without Server Pro. Design: `doc/design/agent-sync-architecture.md`. Read it before
-touching these modules.
+touching these modules. `doc/agent-sync-usage.md` is the user-facing guide to the same
+features — how to enable them, get a token, connect a client, and what every tool does; keep
+it in step when you change a tool.
 
 ## Where our code lives
 
@@ -38,7 +40,9 @@ in the commit message. Modules are registered in `moduleImportSequence` in
   responses carry both `content` (short human text) and `structuredContent` (full data); errors
   carry `code`, `message`, `expected_version` / `actual_version` when relevant, and `next_action`.
 - Writes go through `WriteService.writeFiles` (project lock, `base_version` check, origin
-  `{kind:'mcp'|'git-bridge', ...}`, one history label per write). Never bypass it.
+  `{kind:'mcp'|'git-bridge', agent, message, suggestion?}`). Never bypass it. A label is a
+  milestone, not a per-write receipt: `writeFiles` only creates one when the caller passes
+  `label: true`, and the per-change intent lives in the origin, which the history panel shows.
 
 ## Tests and verification
 

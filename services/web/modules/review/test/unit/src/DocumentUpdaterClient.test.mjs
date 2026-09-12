@@ -68,6 +68,8 @@ describe('review document-updater client', () => {
       .catch(error => error)
     expect(error.code).toBe('text_mismatch')
     expect(error.actualText).toBe('thr')
+    expect(error.status).toBe(400)
+    expect(error.details).toEqual({ position: 4, actual_text: 'thr' })
   })
 
   it('keeps the code of any other refusal', async () => {
@@ -89,6 +91,7 @@ describe('review document-updater client', () => {
       .catch(error => error)
     expect(error.code).toBe('ot_type_unsupported')
     expect(error.message).toBe('nope')
+    expect(error.status).toBe(422)
   })
 
   it('asks setDoc to record the diff as tracked changes', async () => {
@@ -147,8 +150,60 @@ describe('review document-updater client', () => {
     )
   })
 
-  it('rethrows a failure with no JSON body untouched', async () => {
-    const original = requestFailure(500, 'Oops, something went wrong')
+  it('types a failure with no JSON body by its status and body text', async () => {
+    const fetchJson = sinon
+      .stub()
+      .rejects(requestFailure(500, 'Oops, something went wrong'))
+    const client = await clientWith(fetchJson)
+    const error = await client
+      .addCommentRange(projectId, docId, 'user-1', {
+        threadId,
+        position: 0,
+        text: 'x',
+      })
+      .catch(error => error)
+    expect(error.code).toBe('document_updater_request_failed')
+    expect(error.status).toBe(500)
+    expect(error.message).toBe(
+      'the request failed with status 500: Oops, something went wrong'
+    )
+  })
+
+  it('types a coded failure of the tracked write with its status and details', async () => {
+    const fetchJson = sinon.stub().rejects(
+      requestFailure(
+        422,
+        JSON.stringify({
+          code: 'ot_type_unsupported',
+          message: 'tracked changes need a sharejs document',
+          ot_type: 'history-ot',
+        })
+      )
+    )
+    const client = await clientWith(fetchJson)
+    const error = await client
+      .setDocumentTracked(projectId, docId, 'user-1', ['one'], 'mcp')
+      .catch(error => error)
+    expect(error.code).toBe('ot_type_unsupported')
+    expect(error.status).toBe(422)
+    expect(error.details).toEqual({ ot_type: 'history-ot' })
+  })
+
+  it('types an uncoded failure of the tracked write too', async () => {
+    const fetchJson = sinon.stub().rejects(requestFailure(503, ''))
+    const client = await clientWith(fetchJson)
+    const error = await client
+      .setDocumentTracked(projectId, docId, 'user-1', ['one'], 'mcp')
+      .catch(error => error)
+    expect(error.code).toBe('document_updater_request_failed')
+    expect(error.status).toBe(503)
+    expect(error.details).toBeUndefined()
+  })
+
+  it('leaves a timeout or socket error alone', async () => {
+    const original = Object.assign(new Error('The operation was aborted'), {
+      name: 'AbortError',
+    })
     const fetchJson = sinon.stub().rejects(original)
     const client = await clientWith(fetchJson)
     const error = await client

@@ -64,6 +64,11 @@ function reviewQueueSummary(data) {
     parts.push(
       `${plural(data.pending_suggestions, 'pending suggestion')} nobody has accepted or rejected yet; list_suggestions shows them`
     )
+  // Individual edits no longer leave a label behind, so the agent has to be
+  // told where the milestone of a review round belongs.
+  parts.push(
+    'When a review round is complete, call create_label to mark it as a saved version.'
+  )
   return parts.join('\n')
 }
 
@@ -94,6 +99,10 @@ function suggestionListSummary(data) {
 function suggestionActionSummary(data) {
   const verb = data.action === 'accept' ? 'Accepted' : 'Rejected'
   return `${verb} ${plural(data.change_ids.length, 'suggestion')} in ${data.path}; ${plural(data.remaining, 'suggestion')} still pending there`
+}
+
+function labelSummary(data) {
+  return `Marked project version ${data.project_version} as a saved version: ${data.label.comment}`
 }
 
 function commentPlacementSummary(data) {
@@ -181,9 +190,9 @@ function writeResult(data, requestedCount = null) {
     structuredContent: {
       ...structured,
       code: 'write_failed',
-      message: 'No files were written and no label was created',
+      message: 'No files were written',
       next_action:
-        'Fix the failed files and retry; nothing was written and no label was created',
+        'Fix the failed files and retry; nothing was written and the project version is unchanged',
     },
   }
 }
@@ -197,6 +206,12 @@ function nextAction(error, next) {
     return 're-read the file and choose an anchor present in the current content'
   if (error.code === 'text_mismatch')
     return 'the document changed under the anchor; re-read the file and retry with the text now at that position (actual_text)'
+  if (error.code === 'thread_not_found')
+    return 'call list_comments to see the threads of this project'
+  if (error.code === 'ot_type_unsupported')
+    return 'this document cannot hold tracked changes; write the change directly with edit_file instead'
+  if (String(error.code).endsWith('_request_failed'))
+    return 'an Overleaf service refused the request (see status and details); retry, and report it if it keeps failing'
   return 'check request'
 }
 
@@ -208,6 +223,11 @@ function errorDetail(error, name) {
 const errorResult = (error, next) => {
   const candidateLines = errorDetail(error, 'candidateLines')
   const actualText = errorDetail(error, 'actualText')
+  // A refusal from document-updater or chat carries the status it answered
+  // with and whatever else its body said; both help an agent decide whether to
+  // retry, re-read or give up.
+  const status = errorDetail(error, 'status')
+  const details = errorDetail(error, 'details')
   return {
     isError: true,
     content: [{ type: 'text', text: error.message || String(error) }],
@@ -222,6 +242,8 @@ const errorResult = (error, next) => {
         : {}),
       ...(candidateLines ? { candidate_lines: candidateLines } : {}),
       ...(actualText != null ? { actual_text: actualText } : {}),
+      ...(status != null ? { status } : {}),
+      ...(details ? { details } : {}),
       next_action: nextAction(error, next),
     },
   }
@@ -836,6 +858,14 @@ async function describeSuggestions(services, id, docId, changeIds) {
 // `all: true` is how a caller asks for every pending suggestion of the file
 // without listing them first; anything else has to name the ids, so that a
 // bare call cannot accept work the human has not seen.
+// An Overleaf label is a milestone: the "saved versions" list a human scans,
+// and the commits the git-bridge exposes.  One label per agent write floods
+// both, so writes leave their intent in the history entry and the agent marks
+// milestones on purpose.  Every write tool repeats this sentence so a client
+// reading a single tool description still learns the rule.
+const LABEL_GUIDANCE =
+  'Set label:true to mark a milestone (saved version); by default only the history entry records this change, showing your message under the author line.'
+
 function requestedChangeIds(changeIds, all) {
   if (all) return null
   if (Array.isArray(changeIds) && changeIds.length) return changeIds
@@ -1137,9 +1167,42 @@ export function registerTools(
       })
   )
 
+  // Labels are the milestones of the project: the "saved versions" a human
+  // browses and the commits the git-bridge exposes.  Writes no longer create
+  // one each, so this is how an agent marks the end of a piece of work.
+  server.tool(
+    'create_label',
+    'Mark a project version as a milestone ("saved version") that humans and Git see. Call it when a piece of work is finished — a review round handled, a section rewritten — not after every write.',
+    {
+      project: z.string(),
+      comment: z.string(),
+      version: z.number().int().nonnegative().optional(),
+    },
+    async ({ project, comment, version }) =>
+      runSummarised(labelSummary, async () => {
+        const id = projectId(project, services)
+        await access(services, req, id, 'write')
+        const latest = await services.VersionService.getLatestVersion(id)
+        const at = version ?? latest.version
+        const label = await services.LabelService.createLabel(
+          id,
+          userId,
+          at,
+          comment
+        )
+        return {
+          project_version: at,
+          label: {
+            id: label.id ?? label._id,
+            comment: label.comment ?? comment,
+          },
+        }
+      })
+  )
+
   server.tool(
     'write_files',
-    'Write project files',
+    `Write project files. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       message: z.string(),
@@ -1153,8 +1216,9 @@ export function registerTools(
       ),
       base_version: z.number().optional(),
       agent: z.string().optional(),
+      label: z.boolean().optional(),
     },
-    async ({ project, message, files, base_version, agent }) => {
+    async ({ project, message, files, base_version, agent, label = false }) => {
       try {
         const id = projectId(project, services)
         await access(services, req, id, 'write')
@@ -1163,6 +1227,7 @@ export function registerTools(
           message,
           agent: agent || clientName || 'mcp',
           files,
+          label,
         })
         return writeResult(result, files.length)
       } catch (error) {
@@ -1177,7 +1242,7 @@ export function registerTools(
   )
   server.tool(
     'revert_to',
-    'Revert a project or file to a historical version',
+    'Revert a project or file to a historical version. A revert is a milestone, so it always creates a label (saved version) of its own.',
     {
       project: z.string(),
       version: z.number().int().nonnegative(),
@@ -1203,7 +1268,7 @@ export function registerTools(
 
   server.tool(
     'edit_file',
-    'Apply structured edits to a text document',
+    `Apply structured edits to a text document. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
@@ -1211,8 +1276,17 @@ export function registerTools(
       edits: z.array(editSchema),
       message: z.string(),
       agent: z.string().optional(),
+      label: z.boolean().optional(),
     },
-    async ({ project, path, base_version, edits, message, agent }) =>
+    async ({
+      project,
+      path,
+      base_version,
+      edits,
+      message,
+      agent,
+      label = false,
+    }) =>
       run(async () => {
         const id = projectId(project, services)
         await access(services, req, id, 'write')
@@ -1232,6 +1306,7 @@ export function registerTools(
             message,
             agent: agent || clientName || 'mcp',
             files: [{ path, content }],
+            label,
           })
         } catch (error) {
           throw withVersionConflictHint(error)
@@ -1289,7 +1364,7 @@ export function registerTools(
 
   server.tool(
     'merge_branch',
-    'Merge a branch into its parent',
+    'Merge a branch into its parent. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
     {
       branch: z.string(),
       dry_run: z.boolean().optional(),
@@ -1527,7 +1602,7 @@ export function registerTools(
 
   server.tool(
     'suggest_edits',
-    'Offer structured edits to a document as tracked changes a human accepts or rejects, instead of writing them straight into the document',
+    `Offer structured edits to a document as tracked changes a human accepts or rejects, instead of writing them straight into the document. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
@@ -1536,6 +1611,7 @@ export function registerTools(
       message: z.string(),
       agent: z.string().optional(),
       act_as_agent: z.boolean().optional(),
+      label: z.boolean().optional(),
     },
     async ({
       project,
@@ -1545,6 +1621,7 @@ export function registerTools(
       message,
       agent,
       act_as_agent = true,
+      label = false,
     }) =>
       runSummarised(suggestEditsSummary, async () => {
         const id = projectId(project, services)
@@ -1567,6 +1644,7 @@ export function registerTools(
               agent: agent || clientName || 'mcp',
               message,
               baseVersion: base_version,
+              label,
             }
           )
         } catch (error) {

@@ -21,7 +21,14 @@ function setup(overrides = {}) {
       })),
     },
     VersionService: { getLatestVersion: vi.fn(async () => ({ version: 4 })) },
-    LabelService: { listLabels: vi.fn(async () => []) },
+    LabelService: {
+      listLabels: vi.fn(async () => []),
+      createLabel: vi.fn(async (_projectId, _userId, version, comment) => ({
+        _id: 'label-1',
+        comment,
+        version,
+      })),
+    },
     WriteService: {
       writeFiles: vi.fn(async () => ({ version: 5, applied: [], failed: [] })),
     },
@@ -275,7 +282,9 @@ describe('MCP tools', () => {
     expect(result.structuredContent.failed).toEqual([
       { path: 'main.tex', error: 'EACCES' },
     ])
-    expect(result.structuredContent.next_action).toContain('no label')
+    expect(result.structuredContent.next_action).toContain(
+      'nothing was written'
+    )
   })
 
   it('keeps partial write failures as successful results', async () => {
@@ -355,6 +364,7 @@ describe('MCP tools', () => {
       search: { project, query: 'one' },
       list_history: { project },
       diff: { project, from_version: 1, to_version: 2 },
+      create_label: { project, comment: 'done' },
       write_files: { project, message: 'm', files: [] },
       revert_to: { project, version: 1 },
       create_branch: { project, name: 'test' },
@@ -662,5 +672,224 @@ describe('edit_file', () => {
       { settings: { max_doc_length: 2 } }
     )
     expect(large.result.structuredContent.code).toBe('file_too_large')
+  })
+})
+
+// Labels are milestones now: a write records its intent in the history entry
+// and only marks a saved version when the agent says so.
+describe('label semantics', () => {
+  const project = 'a'.repeat(24)
+
+  it('write_files does not label by default and labels on request', async () => {
+    const { server, services } = setup()
+    await server._registeredTools.write_files.handler({
+      project,
+      message: 'm',
+      files: [],
+    })
+    expect(services.WriteService.writeFiles.mock.calls[0][2].label).toBe(false)
+
+    await server._registeredTools.write_files.handler({
+      project,
+      message: 'm',
+      files: [],
+      label: true,
+    })
+    expect(services.WriteService.writeFiles.mock.calls[1][2].label).toBe(true)
+  })
+
+  it('edit_file passes the label flag through to the write', async () => {
+    const writeFiles = vi.fn(async () => ({ version: 5, label: null }))
+    const { server } = setup({
+      settings: { max_doc_length: 1000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({ path: 'main.tex', lines: ['one'] })),
+      },
+      WriteService: { writeFiles },
+    })
+    await server._registeredTools.edit_file.handler({
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    })
+    expect(writeFiles.mock.calls[0][2].label).toBe(false)
+
+    await server._registeredTools.edit_file.handler({
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+      label: true,
+    })
+    expect(writeFiles.mock.calls[1][2].label).toBe(true)
+  })
+
+  it('suggest_edits passes the label flag through to the suggestion', async () => {
+    const suggestDocContent = vi.fn(async () => ({
+      version: 5,
+      label: null,
+      change_ids: [],
+    }))
+    const { server } = setup({
+      settings: { max_doc_length: 1000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({ path: 'main.tex', lines: ['one'] })),
+      },
+      ProjectEntityHandler: {
+        promises: {
+          getAllDocPathsFromProjectById: vi.fn(async () => ({
+            d1: '/main.tex',
+          })),
+        },
+      },
+      SuggestionService: { suggestDocContent, listSuggestions: vi.fn() },
+    })
+    await server._registeredTools.suggest_edits.handler({
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+      label: true,
+    })
+    expect(suggestDocContent.mock.calls[0][3].label).toBe(true)
+  })
+
+  it('create_label labels the latest version, or the one it was given', async () => {
+    const { server, services } = setup()
+
+    const latest = await server._registeredTools.create_label.handler({
+      project,
+      comment: 'Review round 1 handled',
+    })
+    expect(services.LabelService.createLabel).toHaveBeenCalledWith(
+      project,
+      'u',
+      4,
+      'Review round 1 handled'
+    )
+    expect(latest.structuredContent).toEqual({
+      project_version: 4,
+      label: { id: 'label-1', comment: 'Review round 1 handled' },
+    })
+    expect(latest.content[0].text).toContain('Review round 1 handled')
+
+    await server._registeredTools.create_label.handler({
+      project,
+      comment: 'An earlier milestone',
+      version: 2,
+    })
+    expect(services.LabelService.createLabel.mock.calls[1][2]).toBe(2)
+  })
+
+  it('create_label needs write access', async () => {
+    const error = Object.assign(new Error('forbidden'), { code: 'forbidden' })
+    const { server } = setup({
+      ProjectRef: {
+        parse: x => ({ projectId: x }),
+        urlFor: x => x,
+        requireAccess: vi.fn(async (_userId, _id, level) => {
+          if (level === 'write') throw error
+        }),
+      },
+    })
+    const result = await server._registeredTools.create_label.handler({
+      project,
+      comment: 'nope',
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('forbidden')
+  })
+
+  it('tells the agent to mark a finished review round with a label', async () => {
+    const { server } = setup({
+      ProjectEntityHandler: {
+        promises: { getAllDocPathsFromProjectById: vi.fn(async () => ({})) },
+      },
+      ReviewService: {
+        listThreads: vi.fn(async () => ({})),
+        getDocRanges: vi.fn(async () => ({ lines: [], ranges: {} })),
+      },
+    })
+    const result = await server._registeredTools.get_review_queue.handler({
+      project,
+    })
+    expect(result.content[0].text).toContain('call create_label')
+  })
+})
+
+describe('structured errors from internal services', () => {
+  const project = 'a'.repeat(24)
+
+  it('surfaces the code, status and details of a refusal', async () => {
+    const error = Object.assign(new Error('tracked changes need sharejs'), {
+      code: 'ot_type_unsupported',
+      status: 422,
+      details: { ot_type: 'history-ot' },
+    })
+    const { server } = setup({
+      settings: { max_doc_length: 1000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({ path: 'main.tex', lines: ['one'] })),
+      },
+      ProjectEntityHandler: {
+        promises: {
+          getAllDocPathsFromProjectById: vi.fn(async () => ({
+            d1: '/main.tex',
+          })),
+        },
+      },
+      SuggestionService: {
+        suggestDocContent: vi.fn(async () => {
+          throw error
+        }),
+        listSuggestions: vi.fn(),
+      },
+    })
+    const result = await server._registeredTools.suggest_edits.handler({
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      code: 'ot_type_unsupported',
+      message: 'tracked changes need sharejs',
+      status: 422,
+      details: { ot_type: 'history-ot' },
+    })
+    expect(result.structuredContent.next_action).toContain('edit_file')
+  })
+
+  it('tells the agent what to do about an uncoded service failure', async () => {
+    const error = Object.assign(
+      new Error('the request failed with status 503'),
+      { code: 'chat_request_failed', status: 503 }
+    )
+    const { server } = setup({
+      ProjectEntityHandler: {
+        promises: {
+          getAllDocPathsFromProjectById: vi.fn(async () => ({
+            d1: '/main.tex',
+          })),
+        },
+      },
+      ReviewService: {
+        listThreads: vi.fn(async () => {
+          throw error
+        }),
+        getDocRanges: vi.fn(async () => ({ lines: [], ranges: {} })),
+      },
+    })
+    const result = await server._registeredTools.list_comments.handler({
+      project,
+    })
+    expect(result.structuredContent.status).toBe(503)
+    expect(result.structuredContent.next_action).toContain('Overleaf service')
   })
 })

@@ -267,3 +267,71 @@ describe('review service', () => {
     expect(document.ranges).toEqual({})
   })
 })
+
+// chat refusals arrive as `RequestFailedError('request failed')`, which an
+// agent cannot act on; the service names them instead.
+describe('review service chat failures', () => {
+  function chatFailure(status, body) {
+    return Object.assign(new Error('request failed'), {
+      body,
+      response: { status },
+    })
+  }
+
+  function serviceWith(chatApi) {
+    return createReviewService({
+      ChatApiHandler: { promises: chatApi },
+      ChatManager: {
+        promises: { injectUserInfoIntoThreads: sinon.stub().resolves() },
+      },
+      DocumentUpdaterHandler: { promises: {} },
+      DocumentUpdaterClient: { promises: {} },
+      ProjectGetter: { promises: {} },
+      EditorRealTimeController: { emitToRoom: sinon.stub() },
+      UserInfoManager: { promises: {} },
+      UserInfoController: {},
+    })
+  }
+
+  it('reads a 404 from chat as thread_not_found', async () => {
+    const service = serviceWith({
+      sendComment: sinon.stub().rejects(chatFailure(404, 'not found')),
+    })
+    const error = await service
+      .sendComment(projectId, threadId, 'user-1', 'hello')
+      .catch(error => error)
+    expect(error.code).toBe('thread_not_found')
+    expect(error.status).toBe(404)
+  })
+
+  it('names any other chat refusal with its status', async () => {
+    const service = serviceWith({
+      resolveThread: sinon.stub().rejects(chatFailure(503, 'unavailable')),
+    })
+    const error = await service
+      .resolveThread(projectId, docId, threadId, 'user-1')
+      .catch(error => error)
+    expect(error.code).toBe('chat_request_failed')
+    expect(error.status).toBe(503)
+    expect(error.message).toContain('503')
+  })
+
+  it('names a failure to list the threads of a project', async () => {
+    const service = serviceWith({
+      getThreads: sinon.stub().rejects(chatFailure(500, '')),
+    })
+    const error = await service.listThreads(projectId).catch(error => error)
+    expect(error.code).toBe('chat_request_failed')
+    expect(error.status).toBe(500)
+  })
+
+  it('reads a 404 when reopening a thread as thread_not_found', async () => {
+    const service = serviceWith({
+      reopenThread: sinon.stub().rejects(chatFailure(404, '')),
+    })
+    const error = await service
+      .reopenThread(projectId, docId, threadId, 'user-1')
+      .catch(error => error)
+    expect(error.code).toBe('thread_not_found')
+  })
+})

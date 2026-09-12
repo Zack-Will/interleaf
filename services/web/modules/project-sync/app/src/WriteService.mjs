@@ -107,9 +107,10 @@ async function withProjectWriteLock(projectId, baseVersion, run) {
 }
 
 /**
- * The single history label a write leaves behind, in the shape the MCP tools
- * return it.  The labels API echoes back the stored document, which names the
- * id `_id`, and older project-history builds answer without the comment.
+ * The history label a write leaves behind when it was asked for one, in the
+ * shape the MCP tools return it.  The labels API echoes back the stored
+ * document, which names the id `_id`, and older project-history builds answer
+ * without the comment.
  *
  * @param {string} projectId
  * @param {string} userId
@@ -127,6 +128,24 @@ async function createWriteLabel(projectId, userId, version, comment) {
   return { id: label.id ?? label._id, comment: label.comment ?? comment }
 }
 
+/**
+ * Apply a batch of file writes to a project, atomically with respect to other
+ * agent writes.
+ *
+ * An Overleaf label is a milestone — a "saved version" a human picked out of
+ * the timeline, and the commit the git-bridge exposes — so a write does not
+ * leave one behind by default.  The intent of the change travels in the
+ * persisted origin instead, where the history panel shows it under the author
+ * line.  Callers that really are marking a milestone (a revert, a branch
+ * merge, or an agent that asked for it) pass `label: true`.
+ *
+ * @param {string} projectId
+ * @param {string} userId
+ * @param {{baseVersion?: number|string, message: string, agent?: string,
+ *          files?: Array<object>, originExtra?: object, originKind?: string,
+ *          label?: boolean}} request
+ * @return {Promise<object>}
+ */
 async function writeFiles(
   projectId,
   userId,
@@ -137,6 +156,7 @@ async function writeFiles(
     files = [],
     originExtra = {},
     originKind = 'mcp',
+    label = false,
   }
 ) {
   return withProjectWriteLock(projectId, baseVersion, async () => {
@@ -263,15 +283,12 @@ async function writeFiles(
       const labelComment = originExtra.revert
         ? `${message} (reverted from ${originExtra.revert.from} to ${originExtra.revert.to})`
         : message
-      const label = await createWriteLabel(
-        projectId,
-        userId,
-        after.version,
-        labelComment
-      )
+      const created = label
+        ? await createWriteLabel(projectId, userId, after.version, labelComment)
+        : null
       return {
         version: after.version,
-        label,
+        label: created,
         applied,
         unchanged,
         failed,

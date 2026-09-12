@@ -34,8 +34,10 @@
 
 ## 1. 设计原则
 
+面向用户的使用说明见 `doc/agent-sync-usage.md`（开启方式、令牌、客户端接入、工具清单、评论轮工作流、git clone 与常见错误）。
+
 1. **agent 易用性第一**。工具少而正交，参数显式，无会话隐式状态，错误可执行。
-2. **每次 agent 写入都是可回滚的一个节点**。写入必带 message，落地即打 label，人在历史面板里能看见、能一键恢复。
+2. **每次 agent 写入都是可回滚的一个节点**。写入必带 message；message 随 origin 落盘并显示在历史面板的作者行下面，人一眼能看见改动意图、能一键恢复。label 留给里程碑（见 4.5）。
 3. **临时分支是一等能力**。agent 可以在不打扰主线的副本上工作，再以可审阅的方式合回。
 4. **原生接口优先**。复用 Overleaf 已有的 handler、history label、RestoreManager、ProjectDuplicator，不引入新的抽象层与存储，除非原生能力确实缺失。
 5. **可视化增量交付**。历史面板已能展示 label 与来源；专门的树视图、设置页 UI 后续再补。
@@ -214,14 +216,22 @@ async function getLatestVersion(projectId) {
 
 ### 4.5 写服务与修改树
 
-**每次写入 = 锁内应用 + 一个 label。** label 的 comment 就是 agent 传入的 message，version 是写入后的 `project_version`。这样：
+**每次写入 = 锁内应用 + origin 里的 message；label 只给里程碑。**（R5 修订，见第 11 节第 14 条。）
 
-- 历史面板里每个 agent 写入都是一条命名版本，人一眼可见，且原生支持"恢复到此版本"。
+Overleaf 的 label 就是"保存的版本"：人在历史面板的 Labels 视图里逐条浏览，git-bridge 也把它们暴露成 commit。一次 agent 写入打一个 label，会把这两处都刷屏，git 历史也被切碎。因此：
+
+- **逐次改动的意图存在 origin 里**：`{kind:'mcp', agent, message, suggestion?}` 由 `McpOrigin` 序列化落盘，前端在历史条目的作者行下面渲染成一行灰色副标题（CSS 省略号截断，完整文本进 `title`）。
+- **`writeFiles` 默认不打 label**，`label: true` 时才打，结果里 `label` 为 `null`。`message` 仍是必填，仍进 origin。
+- **`revert_to` 与 `merge_branch` 天然是里程碑**，内部固定传 `label: true`，行为不变。
+- **agent 自己标里程碑**：新工具 `create_label(project, comment, version?)`；`get_review_queue` 的摘要末尾提示"一轮评论处理完就调 create_label"。
+
+其余不变：
+
 - `list_history` 直接读 label 与 updates，不需要新的节点集合。
 - 回滚 = `RestoreManager` 恢复到某个 label 的版本，origin 为 `project-restore`，本身又是一个新版本。线性历史下回滚是向前的，语义与 git revert 一致。
 
 ```js
-async function writeFiles(projectId, userId, {baseVersion, message, agent, upserts, deletes}) {
+async function writeFiles(projectId, userId, {baseVersion, message, agent, upserts, deletes, label = false}) {
   return LockManager.runWithLock(`sync:${projectId}`, async () => {
     const current = await getLatestVersion(projectId)
     if (baseVersion != null && current.version !== baseVersion)
@@ -232,8 +242,10 @@ async function writeFiles(projectId, userId, {baseVersion, message, agent, upser
     for (const path of deletes)
       await UpdateMerger.promises.deleteUpdate(userId, projectId, path, origin)
     const after = await getLatestVersion(projectId)
-    await LabelsService.create(projectId, userId, after.version, message)
-    return {version: after.version, label}
+    const created = label
+      ? await LabelsService.create(projectId, userId, after.version, message)
+      : null
+    return {version: after.version, label: created}
   })
 }
 ```
@@ -296,7 +308,7 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 
 ### 5.2 工具面
 
-所有工具 `project` 参数接受 id 或 URL。所有读返回 `project_version`；所有写要求 `message`，返回新的 `project_version` 与 label。
+所有工具 `project` 参数接受 id 或 URL。所有读返回 `project_version`；所有写要求 `message`，返回新的 `project_version`；`label` 默认 `false`，此时返回 `label: null`（见 4.5）。
 
 | 工具 | 输入 | 输出 / 语义 |
 |---|---|---|
@@ -305,14 +317,15 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 | `read_file` | `project`, `path`, `range?` | 内容、`sha256`、`project_version`；大文件按行范围分片 |
 | `get_outline` | `project`, `path?` | LaTeX 章节结构，服务端解析 |
 | `search` | `project`, `query`, `regex?` | 命中列表，含行号与上下文 |
-| `write_files` | `project`, `base_version?`, `message`, `files[]`（`{path, content | content_base64 | delete:true}`） | 原子写入 + label。`base_version` 不符 → `conflict`，附当前版本与相关文件的 diff |
-| `edit_file` | `project`, `path`, `base_version`, `edits[]`, `message` | `edits` 支持 `replace_range` / `replace_anchor`（文本锚点）/ `replace_section`（按标题）。服务端算出新内容后走 `write_files` |
+| `write_files` | `project`, `base_version?`, `message`, `files[]`（`{path, content | content_base64 | delete:true}`）, `label?` | 原子写入。`label: true` 才打 label。`base_version` 不符 → `conflict`，附当前版本与相关文件的 diff |
+| `edit_file` | `project`, `path`, `base_version`, `edits[]`, `message`, `label?` | `edits` 支持 `replace_range` / `replace_anchor`（文本锚点）/ `replace_section`（按标题）。服务端算出新内容后走 `write_files` |
 | `list_history` | `project`, `limit?`, `before?` | label 列表 + updates，含 origin 与作者 |
 | `diff` | `project`, `from_version`, `to_version`, `path?` | project-history diff |
-| `revert_to` | `project`, `version`, `path?`, `message` | `RestoreManager`，返回新版本 |
-| `create_branch` / `list_branches` / `diff_branch` / `merge_branch` / `archive_branch` | 见 4.6 | |
+| `create_label` | `project`, `comment`, `version?` | 把某个版本（默认最新）标成里程碑，返回 `{project_version, label:{id, comment}}`。需写权限 |
+| `revert_to` | `project`, `version`, `path?`, `message` | 取历史快照 + `writeFiles`，返回新版本；里程碑事件，恒打 label |
+| `create_branch` / `list_branches` / `diff_branch` / `merge_branch` / `archive_branch` | 见 4.6 | `merge_branch` 是里程碑事件，合入成功恒打 label |
 
-返回同时提供 `content`（人类可读文本）与 `structuredContent`（机器字段）。错误统一为 `{code, message, expected_version?, actual_version?, next_action}`：
+返回同时提供 `content`（人类可读文本）与 `structuredContent`（机器字段）。错误统一为 `{code, message, expected_version?, actual_version?, status?, details?, next_action}`。其中 `status` 与 `details` 来自内部服务的拒绝：`@overleaf/fetch-utils` 把 document-updater 与 chat 的任何拒绝都抛成同一个 `RequestFailedError('request failed')`，模块 `review` 在 `ServiceErrors.mjs` 里统一翻译成带 HTTP 状态、服务自己的稳定 `code`（`text_mismatch`、`ot_type_unsupported`…）与剩余 body 字段（`actual_text` 等）的 typed error；chat 的 404 翻成 `thread_not_found`，没有 code 的拒绝翻成 `document_updater_request_failed` / `chat_request_failed`。超时与 socket 错误原样抛出。示例：
 
 ```json
 {
@@ -326,9 +339,9 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 
 ### 5.3 归属与可见性
 
-- origin `{kind:'mcp', agent:'<MCP client name>', message}`。
-- 前端 `origin.tsx` 增加 `mcp` → "(via Agent)"；`editor-manager-context.tsx:238` 的 `source === 'git-bridge'` 判断扩展为包含 `mcp`。词条 `history_entry_origin_agent` 加进 `locales/en.json` 后需 `npm run extract-translations`。
-- **agent 名字暂不进历史。** `libraries/overleaf-editor-core/lib/origin/index.js` 的 `Origin.toRaw()` 只序列化 `kind`，`origin.agent` 写入 history-v1 时会被丢弃。要显示具体 agent 名需新增 `McpOrigin` 子类并在共享库注册，影响 history-v1 与 project-history。agent 名已写在 label 的 message 里，M5 再评估是否值得动共享库。
+- origin `{kind:'mcp', agent:'<MCP client name>', message, suggestion?}`。
+- 前端 `origin.tsx` 把 `mcp` 渲染成 "(via Agent)" / "(via __agent__)"，`suggestion` 为真时改成 "(via __agent__, suggestion)"；`editor-manager-context.tsx:238` 的 `source === 'git-bridge'` 判断扩展为包含 `mcp`。四条词条手工加进 `locales/en.json` 与 `frontend/extracted-translations.json`。
+- **agent 名、message 与 suggestion 标记都进历史。** `Origin.toRaw()` 只序列化 `kind`，所以共享库里加了 `McpOrigin` 子类（`libraries/overleaf-editor-core/lib/origin/mcp_origin.js`）并在 `Origin.fromRaw` 注册；`suggestion` 为假时不落盘。`history-version-message.tsx` 把 `message` 渲染成作者行下面的一行灰色副标题（仅全历史列表，Labels 列表不变）。
 - project-history 的 `SummarizedUpdatesManager` 会在 `origin.kind` 变化处切分条目，所以 agent 改动天然与人工编辑分开显示。
 
 ### 5.4 UI 接入路径（M5）
@@ -468,12 +481,18 @@ M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent
 | `resolve_comment` / `reopen_comment` | 写 chat；项目开了 `rangesSupportEnabled` 再镜像 document-updater |
 | `add_comment(project, path, anchor, content)` | `anchor` 为首尾片段加省略号（Notion 式）或行范围，服务端换算精确范围，原文必须逐字匹配 |
 | `reanchor_comment(project, thread_id, path, anchor)` | 把游离或漂移的评论移到新文本 |
-| `suggest_edits(project, path, base_version, edits, message, agent?, act_as_agent?)` | `edits` 与锚点语义同 `edit_file`，但结果作为 tracked changes 落盘，等人接受或拒绝；返回 `{ project_version, label, change_ids, suggestions: [{change_id, type, line, text}], diff }` |
+| `suggest_edits(project, path, base_version, edits, message, agent?, act_as_agent?, label?)` | `edits` 与锚点语义同 `edit_file`，但结果作为 tracked changes 落盘，等人接受或拒绝；返回 `{ project_version, label, change_ids, suggestions: [{change_id, type, line, text}], diff }`。`label` 默认 `false` |
 | `list_suggestions(project, path?)` | 待处理的修订建议按文件分组，每条含 `change_id`、`insert`/`delete`、原文、行列与作者 |
 | `accept_suggestions(project, path, change_ids \| all)` / `reject_suggestions(...)` | 需写权限；以令牌用户（而非 agent 服务用户）身份落定——这是人的决定，工具只是让 agent 能按明确指令代劳——返回该文件剩余条数 |
 
 `get_review_queue` 的摘要另附 `pending_suggestions`（取自它已经读过的 ranges，不额外多读一遍文档），
-让 agent 知道上一轮建议人还没处理。
+让 agent 知道上一轮建议人还没处理；摘要末尾固定提示"一轮评论处理完就调 `create_label` 标里程碑"。
+
+**建议的 suggestion 标记落盘。** `SuggestionService` 给 document-updater 的 source 是
+`{kind:'mcp', agent, message, suggestion:true}`，document-updater 原样放进 `meta.origin`，
+project-history 原样放进 change 的 `origin`。`McpOrigin` 因此多认一个可选布尔 `suggestion`
+（假值不写入 raw，`isSuggestion()` 读回），历史面板据此把后缀从 "(via Claude Code)" 换成
+"(via Claude Code, suggestion)"。
 
 `edit_file` / `write_files` 返回增加 `comments_affected: [{thread_id, path, state: 'shrunk'|'grown'|'detached'|'moved'}]`；若 `replace_anchor` / `replace_section` 覆盖了某评论范围，写入后自动把该评论重新锚到替换后的文本。一轮评论处理对应一个 label，message 引用处理的线程 id。
 
@@ -534,6 +553,8 @@ ranges 读回，与人在 review panel 里看到的一致；`acceptSuggestions` 
 8. **模块三分**：便于按需启用与向 upstream 贡献。
 9. **回退用自有原语而非 `RestoreManager`**：绕开 `rangesSupportEnabled` 开关，保持实体 id 稳定，回退也成为带 label 的普通节点。
 10. **分支分组用标签**：项目列表无扩展点，标签零改动；嵌套视图列为 M5 可选。
-11. **agent 名字不进 origin**：避免为显示名改共享库 `overleaf-editor-core`；名字留在 label message 里。
+11. ~~**agent 名字不进 origin**~~：已推翻。R2 起新增 `McpOrigin`（`agent` / `message`），R5 再加 `suggestion`，历史面板直接显示。
 12. **三方合并用 `diff` 5.2.2 的 `merge`**：已是 web 直接依赖，不新增包。
 13. **集成环境用 `develop/` compose 且首期跳过 clsi**：MCP 与 git 验证不需要编译 PDF，省掉 texlive 的 1 到 2 小时构建。
+14. **label 是里程碑，不是每次写入的回执**（R5，与项目负责人商定）。理由：Overleaf 的 label 就是"保存的版本"，也是 git-bridge 暴露的 commit；每次 agent 写入打一个会刷屏 Labels 视图并切碎 git 历史。改为：逐次改动的意图存在 origin 的 `message` 里并显示在历史面板作者行下面；`write_files` / `edit_file` / `suggest_edits` 默认不打 label，`label: true` 才打；`revert_to` / `merge_branch` 恒打；新增 `create_label` 让 agent 显式标里程碑。
+15. **内部服务的拒绝要带 code**（R5）。`fetch-utils` 的 `RequestFailedError` 只有一句 "request failed"，agent 无法据此决定重试还是重读；模块 `review` 统一翻译成带 `status` / `code` / `details` 的 typed error，`McpTools.errorResult` 透传。
