@@ -180,6 +180,55 @@ describe("MCP tools", () => {
     expect(result.structuredContent.code).toBe("error");
   });
 
+  it("returns labels and updates as distinct history entry types", async () => {
+    const { server } = setup({
+      LabelService: {
+        listLabels: vi.fn(async () => [
+          {
+            version: 4,
+            comment: "Agent change",
+            user_id: "user-1",
+            created_at: "2026-01-02T00:00:00Z",
+          },
+        ]),
+      },
+      fetchJson: vi.fn(async () => ({
+        updates: [
+          {
+            from_version: 3,
+            to_version: 4,
+            origin: { kind: "mcp" },
+            users: ["user-1"],
+            timestamp: "2026-01-01T00:00:00Z",
+            pathnames: ["main.tex"],
+          },
+        ],
+      })),
+      settings: { apis: { project_history: { url: "http://history" } } },
+    });
+    const result = await server._registeredTools.list_history.handler({
+      project: "a".repeat(24),
+    });
+    expect(result.structuredContent).toEqual([
+      {
+        type: "label",
+        version: 4,
+        comment: "Agent change",
+        user: "user-1",
+        created_at: "2026-01-02T00:00:00Z",
+      },
+      {
+        type: "update",
+        from_version: 3,
+        to_version: 4,
+        origin: { kind: "mcp" },
+        users: ["user-1"],
+        timestamp: "2026-01-01T00:00:00Z",
+        pathnames: ["main.tex"],
+      },
+    ]);
+  });
+
   it("returns version conflict payload for writes", async () => {
     const err = Object.assign(new Error("conflict"), {
       code: "version_conflict",
