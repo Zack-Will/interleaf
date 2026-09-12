@@ -70,6 +70,32 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 4. MCP：`claude mcp add --transport http overleaf http://localhost/mcp --header "Authorization: Bearer olp_…"`，依次 `list_projects` → `read_file` → `write_files` → 在编辑器历史面板确认 label 与 "(via Agent)"。
 5. 冲突路径：编辑器里改一行，agent 用过期的 `base_version` 写入，应返回 `version_conflict`。
 
+## 实测修正（2026-09-12 首次拉起）
+
+以上 runbook 按调研写成，实际拉起时踩到六个坑，修正如下，命令序列以本节为准：
+
+1. **镜像站极慢**：daemon 配置的 docker.1ms.run 等镜像站只有 60 KB/s，直连 Docker Hub 有 7 MB/s。用带完整主机名的地址绕过镜像站预拉基础镜像，再打回原名：
+   `docker pull registry-1.docker.io/library/node:24.14.1 && docker tag registry-1.docker.io/library/node:24.14.1 node:24.14.1`（mongo、redis、nginx 同理）。
+2. **并行构建打死机器**：`docker compose up --build` 会并行构建全部镜像，`COMPOSE_PARALLEL_LIMIT` 管不住 BuildKit，3 核 7.7 GiB 直接无响应重启。改为逐个 `nice -n 15 docker compose build <svc>`，10 个 Node 服务共约 15 分钟。
+3. **`ports` 覆盖要用 `!override`**：compose 对列表是合并而非替换，否则 6379 仍会被绑定。
+4. **MongoDB 8.0 / 8.3 在 6.19 以上内核拒绝启动**（SERVER-121912，tcmalloc rseq），本机 7.0 内核。`mongo:8.2` 与 `mongo:7` 可用，override 里固定 `image: mongo:8.2`。
+5. **`web` 依赖 `clsi`**：不构建 clsi 时 `up` 要加 `--no-deps`，先起 mongo、redis，再起其余服务。
+6. **`web-data` 卷是 root 属主而进程以 node 运行**：任何写 `data/dumpFolder` 的路径（上传、TPDS、我们的 `writeFiles`）都会 `EACCES`。首次启动后执行
+   `docker compose exec -u root web chown -R node:node /overleaf/services/web/data`。
+
+当前 `develop/docker-compose.override.yml`（未入库）：
+
+```yaml
+services:
+  redis:
+    ports: !override
+      - "127.0.0.1:6380:6379"
+  mongo:
+    image: mongo:8.2
+```
+
+**首次端到端结果**：`/oauth/token/info` 与 `/mcp` 无令牌均返回 401；用内部 API 建管理员、令牌与项目后，MCP 走通 `get_project → read_file → write_files(v2, label) → 过期 base_version 被拒(version_conflict, next_action) → edit_file(v3, diff) → revert_to(v4)`；project-history 里三次改动的 origin 均为 `{kind:'mcp'}` 并各带一个 label。暴露的协议缺陷：数组型 `structuredContent` 被 SDK 拒绝（`list_projects` / `list_history` / `get_outline` / `search`），需改为对象。
+
 ## 风险
 
 - 并行度 1 会拉长构建时间，但避免 7.7 GiB 内存下的 OOM。
