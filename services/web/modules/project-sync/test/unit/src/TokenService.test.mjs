@@ -3,6 +3,16 @@ import sinon from 'sinon'
 
 const modulePath = '../../../app/src/TokenService.mjs'
 
+async function expectRejection(promise, expected) {
+  let error
+  try {
+    await promise
+  } catch (caught) {
+    error = caught
+  }
+  expect(error).toMatchObject(expected)
+}
+
 describe('project-sync TokenService', () => {
   beforeEach(async ctx => {
     vi.resetModules()
@@ -74,14 +84,14 @@ describe('project-sync TokenService', () => {
   })
 
   it('rejects unknown, malformed, expired, and insufficient-scope tokens', async ctx => {
-    await expect(ctx.TokenService.promises.verifyToken('bad', 'git_bridge')).rejects.toMatchObject({ code: 'token_invalid' })
+    await expectRejection(ctx.TokenService.promises.verifyToken('bad', 'git_bridge'), { code: 'token_invalid' })
     const token = 'olp_1234567890abcdef'
     ctx.PersonalAccessToken.findOne.resolves(null)
-    await expect(ctx.TokenService.promises.verifyToken(token, 'git_bridge')).rejects.toMatchObject({ code: 'token_invalid' })
+    await expectRejection(ctx.TokenService.promises.verifyToken(token, 'git_bridge'), { code: 'token_invalid' })
     ctx.PersonalAccessToken.findOne.resolves({ _id: 'id', user_id: 'u', scopes: ['git_bridge'], expiresAt: new Date(Date.now() - 1000) })
-    await expect(ctx.TokenService.promises.verifyToken(token, 'git_bridge')).rejects.toMatchObject({ code: 'token_expired' })
+    await expectRejection(ctx.TokenService.promises.verifyToken(token, 'git_bridge'), { code: 'token_expired' })
     ctx.PersonalAccessToken.findOne.resolves({ _id: 'id', user_id: 'u', scopes: ['mcp'], expiresAt: null })
-    await expect(ctx.TokenService.promises.verifyToken(token, 'git_bridge')).rejects.toMatchObject({ code: 'insufficient_scope' })
+    await expectRejection(ctx.TokenService.promises.verifyToken(token, 'git_bridge'), { code: 'insufficient_scope' })
   })
 
   it('lists safe token fields and supports revocation', async ctx => {
