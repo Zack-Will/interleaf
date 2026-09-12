@@ -121,6 +121,7 @@ describe('review router', () => {
     expect(webRouter.post.callCount).toBe(6)
     expect(webRouter.delete.callCount).toBe(3)
     expect(webRouter.get.firstCall.args[1]).toBeDefined()
+    expect(webRouter.get.firstCall.args[2]).toBeDefined()
     expect(webRouter.get.firstCall.args[0]).toBe('/project/:project_id/threads')
   })
 })
