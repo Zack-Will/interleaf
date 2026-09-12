@@ -19,10 +19,16 @@ export interface Meta {
           | 'dropbox'
           | 'upload'
           | 'git-bridge'
-          | 'mcp'
           | 'github'
           | 'history-resync'
           | 'history-migration'
+      }
+    | {
+        // A write made by an agent through the MCP endpoint. `agent` is the
+        // name the MCP client reported, when it reported one.
+        kind: 'mcp'
+        agent?: string
+        message?: string
       }
     | {
         kind: 'file-restore'

@@ -7,6 +7,7 @@ const assert = require('check-types').assert
 let RestoreOrigin = null
 let RestoreFileOrigin = null
 let RestoreProjectOrigin = null
+let McpOrigin = null
 
 /**
  * An Origin records where a {@link Change} came from. The Origin class handles
@@ -37,6 +38,7 @@ class Origin {
       return RestoreFileOrigin.fromRaw(raw)
     if (raw.kind === RestoreProjectOrigin.KIND)
       return RestoreProjectOrigin.fromRaw(raw)
+    if (raw.kind === McpOrigin.KIND) return McpOrigin.fromRaw(raw)
     return new Origin(raw.kind)
   }
 
@@ -62,3 +64,4 @@ module.exports = Origin
 RestoreOrigin = require('./restore_origin')
 RestoreFileOrigin = require('./restore_file_origin')
 RestoreProjectOrigin = require('./restore_project_origin')
+McpOrigin = require('./mcp_origin')
