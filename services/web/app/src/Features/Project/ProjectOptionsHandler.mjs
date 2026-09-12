@@ -99,6 +99,29 @@ const ProjectOptionsHandler = {
     return db.projects.updateOne(conditions, update)
   },
 
+  async setTrackChanges(projectId, body) {
+    let trackChanges
+    if (typeof body.on === 'boolean') {
+      trackChanges = body.on
+    } else if (body.on_for != null) {
+      trackChanges = { ...body.on_for }
+    } else if (typeof body.on_for_guests === 'boolean') {
+      trackChanges = { __guests__: body.on_for_guests }
+    } else {
+      trackChanges = {}
+    }
+    if (
+      typeof body.on_for_guests === 'boolean' &&
+      typeof trackChanges === 'object'
+    ) {
+      trackChanges.__guests__ = body.on_for_guests
+    }
+    return Project.updateOne(
+      { _id: projectId },
+      { track_changes: trackChanges }
+    )
+  },
+
   async setOTMigrationStage(projectId, nextStage) {
     const project = await db.projects.findOneAndUpdate(
       { _id: new ObjectId(projectId) },
@@ -128,5 +151,6 @@ export default {
   setHistoryRangesSupport: callbackify(
     ProjectOptionsHandler.setHistoryRangesSupport
   ),
+  setTrackChanges: callbackify(ProjectOptionsHandler.setTrackChanges),
   promises: ProjectOptionsHandler,
 }

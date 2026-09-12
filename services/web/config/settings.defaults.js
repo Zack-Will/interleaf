@@ -495,6 +495,7 @@ module.exports = {
     : 'pdflatex',
   enableSubscriptions: false,
   enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
+  enableReviewPanel: process.env.REVIEW_PANEL_ENABLED === 'true',
   gitBridgePublicBaseUrl:
     process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
   restrictedCountries: [],
@@ -1139,6 +1140,7 @@ module.exports = {
     'project-sync',
     'mcp',
     'git-bridge',
+    'review',
   ],
   viewIncludes: {},
 

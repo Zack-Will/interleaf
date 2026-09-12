@@ -159,6 +159,7 @@ services:
       - NODE_ENV=development
       - OVERLEAF_ALLOW_PUBLIC_ACCESS=true
       - GIT_BRIDGE_ENABLED=true
+      - REVIEW_PANEL_ENABLED=true
       - GIT_BRIDGE_HOST=git-bridge
       - GIT_BRIDGE_PUBLIC_BASE_URL=http://localhost/git
       # How git-bridge reaches web for the signed blob URLs in snapshots.

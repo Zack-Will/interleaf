@@ -199,6 +199,12 @@ const settings = {
   // Git bridge (this fork): the web-side adapter in modules/git-bridge only
   // registers its routes when this is enabled.
   enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
+  enableReviewPanel: process.env.REVIEW_PANEL_ENABLED === 'true',
+  // Existing projects keep their current ranges support setting.
+  splitTestOverrides:
+    process.env.REVIEW_PANEL_ENABLED === 'true'
+      ? { 'history-ranges-support': 'enabled' }
+      : {},
   gitBridgePublicBaseUrl:
     process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
 
