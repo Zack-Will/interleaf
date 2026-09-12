@@ -84,6 +84,12 @@ class NotFoundAtVersionError extends OError {
     this.code = "not_found_at_version";
   }
 }
+class InvalidEditError extends OError {
+  constructor(message = "invalid edit", properties = {}) {
+    super(message, properties);
+    this.code = "invalid_edit";
+  }
+}
 export {
   InvalidTokenRequestError,
   TokenInvalidError,
@@ -98,6 +104,7 @@ export {
   AnchorNotFoundError,
   AnchorAmbiguousError,
   NotFoundAtVersionError,
+  InvalidEditError,
 };
 export default {
   InvalidTokenRequestError,
@@ -113,4 +120,5 @@ export default {
   AnchorNotFoundError,
   AnchorAmbiguousError,
   NotFoundAtVersionError,
+  InvalidEditError,
 };

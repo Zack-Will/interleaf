@@ -2,6 +2,7 @@
 // repository resolver cannot currently inspect. The import is valid at runtime.
 // eslint-disable-next-line import/no-unresolved -- subpath export
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import Settings from "@overleaf/settings";
 import { z } from "zod";
 // eslint-disable-next-line import/no-extraneous-dependencies -- diff is a web dependency
 import { createTwoFilesPatch } from "diff";
@@ -9,6 +10,7 @@ import {
   AnchorAmbiguousError,
   AnchorNotFoundError,
   FileTooLargeError,
+  InvalidEditError,
 } from "../../../project-sync/app/src/Errors.mjs";
 
 const textResult = (data, text = JSON.stringify(data)) => ({
@@ -355,7 +357,7 @@ export function registerTools(
     "Revert a project or file to a historical version",
     {
       project: z.string(),
-      version: z.number(),
+      version: z.number().int().nonnegative(),
       path: z.string().optional(),
       message: z.string().optional(),
       agent: z.string().optional(),
@@ -378,7 +380,7 @@ export function registerTools(
     {
       project: z.string(),
       path: z.string(),
-      base_version: z.number(),
+      base_version: z.number().int().nonnegative(),
       edits: z.array(
         z.object({
           type: z.string(),
@@ -412,7 +414,7 @@ export function registerTools(
               end > lines.length ||
               end < start - 1
             )
-              throw new Error("invalid line range");
+              throw new InvalidEditError("invalid line range");
             lines.splice(
               start - 1,
               Math.max(0, end - start + 1),
@@ -458,7 +460,8 @@ export function registerTools(
             ];
             const level = edit.level || "section";
             const levelIndex = levels.indexOf(level);
-            if (levelIndex < 0) throw new Error("invalid section level");
+            if (levelIndex < 0)
+              throw new InvalidEditError("invalid section level");
             const heading = new RegExp(
               "^\\\\(" +
                 levels.join("|") +
@@ -473,25 +476,29 @@ export function registerTools(
             let end = lines.length;
             for (let index = start + 1; index < lines.length; index += 1) {
               const match = lines[index].match(
-                /^\\\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\\*?\\{/,
+                /^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/,
               );
               if (match && levels.indexOf(match[1]) <= levelIndex) {
                 end = index;
                 break;
               }
-              if (/^\\\\end\{document\}/.test(lines[index])) {
+              if (/^\\end\{document\}/.test(lines[index])) {
                 end = index;
                 break;
               }
             }
             const replacementLines = split(edit.new_text);
             if (!heading.test(replacementLines[0] || ""))
-              throw new Error("replace_section new_text must include heading");
+              throw new InvalidEditError(
+                "replace_section new_text must include heading",
+              );
             lines.splice(start, end - start, ...replacementLines);
-          } else throw new Error(`unknown edit type ${edit.type}`);
+          } else throw new InvalidEditError(`unknown edit type ${edit.type}`);
         }
         const size = lines.reduce((total, line) => total + line.length + 1, 0);
-        if (size > (services.settings?.max_doc_length ?? 2000000))
+        if (
+          size > (services.settings?.max_doc_length ?? Settings.max_doc_length)
+        )
           throw new FileTooLargeError();
         const before = document.lines.join("\n");
         const content = lines.join("\n");

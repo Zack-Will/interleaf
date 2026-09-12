@@ -254,13 +254,20 @@ describe("MCP tools", () => {
 });
 
 describe("edit_file", () => {
-  const call = async (edit, overrides = {}) => {
+  const call = async (edit, overrides = {}, lines = ["one", "two"]) => {
     const writeFiles = vi.fn(async () => ({
       version: 5,
       label: { comment: "m" },
     }));
     const { server } = setup({
       settings: { max_doc_length: 1000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({
+          path: "main.tex",
+          lines,
+          totalLines: lines.length,
+        })),
+      },
       WriteService: { writeFiles },
       ...overrides,
     });
@@ -273,6 +280,7 @@ describe("edit_file", () => {
     });
     return { result, writeFiles };
   };
+
   it("replaces a line range", async () => {
     const { result, writeFiles } = await call({
       type: "replace_range",
@@ -289,20 +297,165 @@ describe("edit_file", () => {
       }),
     );
   });
-  it("replaces an anchor and section", async () => {
-    const { result } = await call({
-      type: "replace_anchor",
-      anchor: "one",
-      new_text: "ONE",
+
+  it("inserts with an empty line range", async () => {
+    const { writeFiles } = await call({
+      type: "replace_range",
+      start_line: 2,
+      end_line: 1,
+      new_text: "inserted",
     });
-    expect(result.structuredContent.diff).toContain("ONE");
-    const section = await call({
-      type: "replace_section",
-      title: "one",
-      new_text: "\\section{one}\nchanged",
-    });
-    expect(section.result.isError).toBe(true);
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [{ path: "main.tex", content: "one\ninserted\ntwo" }],
+      }),
+    );
   });
+
+  it("replaces the requested anchor occurrence", async () => {
+    const { writeFiles } = await call(
+      { type: "replace_anchor", anchor: "one", occurrence: 2, new_text: "ONE" },
+      {},
+      ["one one", "two one"],
+    );
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [{ path: "main.tex", content: "one ONE\ntwo one" }],
+      }),
+    );
+  });
+
+  it("replaces a middle section and keeps the next section", async () => {
+    const { writeFiles } = await call(
+      {
+        type: "replace_section",
+        title: "one",
+        new_text: "\\section{one}\nchanged",
+      },
+      {},
+      [
+        "\\section{one}",
+        "old body",
+        "\\section{two}",
+        "two body",
+        "\\end{document}",
+      ],
+    );
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [
+          {
+            path: "main.tex",
+            content:
+              "\\section{one}\nchanged\n\\section{two}\ntwo body\n\\end{document}",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("stops the last section at end document", async () => {
+    const { writeFiles } = await call(
+      {
+        type: "replace_section",
+        title: "last",
+        new_text: "\\section{last}\nnew body",
+      },
+      {},
+      ["\\section{last}", "old body", "\\end{document}"],
+    );
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [
+          {
+            path: "main.tex",
+            content: "\\section{last}\nnew body\n\\end{document}",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("stops a subsection at the next section or subsection", async () => {
+    const { writeFiles } = await call(
+      {
+        type: "replace_section",
+        title: "child",
+        level: "subsection",
+        new_text: "\\subsection{child}\nnew child",
+      },
+      {},
+      [
+        "\\section{parent}",
+        "\\subsection{child}",
+        "old child",
+        "\\section{next}",
+        "next body",
+        "\\subsection{later}",
+        "later body",
+      ],
+    );
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [
+          {
+            path: "main.tex",
+            content:
+              "\\section{parent}\n\\subsection{child}\nnew child\n\\section{next}\nnext body\n\\subsection{later}\nlater body",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("matches starred headings", async () => {
+    const { writeFiles } = await call(
+      {
+        type: "replace_section",
+        title: "x",
+        new_text: "\\section*{x}\nnew body",
+      },
+      {},
+      ["\\section*{x}", "old body", "\\section{next}", "next body"],
+    );
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [
+          {
+            path: "main.tex",
+            content: "\\section*{x}\nnew body\n\\section{next}\nnext body",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("rejects section replacement text without its heading", async () => {
+    const { result } = await call(
+      {
+        type: "replace_section",
+        title: "one",
+        new_text: "changed",
+      },
+      {},
+      ["\\section{one}", "old body", "\\end{document}"],
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.code).toBe("invalid_edit");
+  });
+
   it("reports ambiguous anchors and oversized files", async () => {
     const ambiguous = await call(
       { type: "replace_anchor", anchor: "o", new_text: "x" },
