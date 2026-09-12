@@ -745,6 +745,168 @@ describe('DocumentManager', function () {
     })
   })
 
+  describe('addComment', function () {
+    beforeEach(function () {
+      this.thread_id = '0123456789abcdef01234567'
+      this.commentLines = ['one', 'two', 'three']
+      this.newComment = {
+        id: this.thread_id,
+        op: { c: 'two', p: 4, t: this.thread_id },
+        metadata: { user_id: this.user_id, ts: new Date() },
+      }
+      this.DocumentManager.promises.flushDocIfLoaded = sinon.stub().resolves()
+      this.DocumentManager.promises.flushAndDeleteDoc = sinon.stub().resolves()
+      this.stubGetDoc = (before = {}, after = {}) => {
+        const getDoc = sinon.stub()
+        getDoc.onFirstCall().resolves({
+          lines: this.commentLines,
+          version: this.version,
+          ranges: {},
+          alreadyLoaded: true,
+          type: 'sharejs-text-ot',
+          ...before,
+        })
+        getDoc.onSecondCall().resolves({
+          lines: this.commentLines,
+          version: this.version + 1,
+          ranges: { comments: [this.newComment] },
+          alreadyLoaded: true,
+          type: 'sharejs-text-ot',
+          ...after,
+        })
+        this.DocumentManager.promises.getDoc = getDoc
+      }
+    })
+
+    describe('successfully', function () {
+      beforeEach(async function () {
+        this.stubGetDoc()
+        this.result = await this.DocumentManager.promises.addComment(
+          this.project_id,
+          this.doc_id,
+          { threadId: this.thread_id, position: 4, text: 'two' },
+          this.user_id
+        )
+      })
+
+      it('should apply a comment op at the requested position', function () {
+        this.UpdateManager.promises.applyUpdate.should.have.been.calledWith(
+          this.project_id,
+          this.doc_id,
+          {
+            doc: this.doc_id,
+            op: [{ c: 'two', p: 4, t: this.thread_id }],
+            v: this.version,
+            meta: {
+              user_id: this.user_id,
+              ts: Date.now(),
+              source: 'review-api',
+            },
+          }
+        )
+      })
+
+      it('should return the comment read back from the new ranges', function () {
+        expect(this.result).to.deep.equal({
+          comment: this.newComment,
+          version: this.version + 1,
+        })
+      })
+
+      it('should flush the doc that is already loaded', function () {
+        this.DocumentManager.promises.flushDocIfLoaded.should.have.been.calledWith(
+          this.project_id,
+          this.doc_id
+        )
+        this.DocumentManager.promises.flushAndDeleteDoc.called.should.equal(
+          false
+        )
+      })
+    })
+
+    describe('when the doc was not loaded', function () {
+      beforeEach(async function () {
+        this.stubGetDoc({ alreadyLoaded: false })
+        await this.DocumentManager.promises.addComment(
+          this.project_id,
+          this.doc_id,
+          { threadId: this.thread_id, position: 4, text: 'two' },
+          this.user_id
+        )
+      })
+
+      it('should evict the doc again and flush project history', function () {
+        this.DocumentManager.promises.flushAndDeleteDoc.should.have.been.calledWith(
+          this.project_id,
+          this.doc_id,
+          {}
+        )
+        this.HistoryManager.flushProjectChangesAsync.should.have.been.calledWith(
+          this.project_id
+        )
+      })
+    })
+
+    describe('when the text does not match the document', function () {
+      beforeEach(function () {
+        this.stubGetDoc()
+      })
+
+      it('should throw a CommentTextMismatchError carrying the actual text', async function () {
+        await expect(
+          this.DocumentManager.promises.addComment(
+            this.project_id,
+            this.doc_id,
+            { threadId: this.thread_id, position: 4, text: 'six' },
+            this.user_id
+          )
+        ).to.be.rejectedWith(Errors.CommentTextMismatchError)
+        this.UpdateManager.promises.applyUpdate.called.should.equal(false)
+      })
+
+      it('should report the text that is actually at the position', async function () {
+        const error = await this.DocumentManager.promises
+          .addComment(
+            this.project_id,
+            this.doc_id,
+            { threadId: this.thread_id, position: 4, text: 'six' },
+            this.user_id
+          )
+          .catch(error => error)
+        expect(error.info.actualText).to.equal('two')
+      })
+    })
+
+    describe('when the document uses history-ot', function () {
+      it('should throw an OTTypeMismatchError', async function () {
+        this.stubGetDoc({ type: 'history-ot', lines: { content: 'one' } })
+        await expect(
+          this.DocumentManager.promises.addComment(
+            this.project_id,
+            this.doc_id,
+            { threadId: this.thread_id, position: 4, text: 'two' },
+            this.user_id
+          )
+        ).to.be.rejectedWith(Errors.OTTypeMismatchError)
+        this.UpdateManager.promises.applyUpdate.called.should.equal(false)
+      })
+    })
+
+    describe('when the comment is missing from the new ranges', function () {
+      it('should throw a NotFoundError', async function () {
+        this.stubGetDoc({}, { ranges: { comments: [] } })
+        await expect(
+          this.DocumentManager.promises.addComment(
+            this.project_id,
+            this.doc_id,
+            { threadId: this.thread_id, position: 4, text: 'two' },
+            this.user_id
+          )
+        ).to.be.rejectedWith(Errors.NotFoundError)
+      })
+    })
+  })
+
   describe('acceptChanges', function () {
     beforeEach(function () {
       this.change_id = 'mock-change-id'

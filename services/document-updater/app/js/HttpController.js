@@ -392,6 +392,76 @@ async function rejectChanges(req, res) {
   res.json(response)
 }
 
+const THREAD_ID_REGEX = /^[0-9a-f]{24}$/
+
+function validateAddCommentBody({ threadId, position, text, userId }) {
+  if (typeof threadId !== 'string' || !THREAD_ID_REGEX.test(threadId)) {
+    return 'thread_id must be a 24 character hex string'
+  }
+  if (!Number.isInteger(position) || position < 0) {
+    return 'position must be a non-negative integer'
+  }
+  if (typeof text !== 'string' || text.length === 0) {
+    return 'text must be a non-empty string'
+  }
+  if (typeof userId !== 'string' || userId.length === 0) {
+    return 'user_id must be a non-empty string'
+  }
+  return null
+}
+
+async function addComment(req, res) {
+  const docId = req.params.doc_id
+  const projectId = req.params.project_id
+  const {
+    user_id: userId,
+    thread_id: threadId,
+    position,
+    text,
+  } = req.body || {}
+
+  const invalid = validateAddCommentBody({ threadId, position, text, userId })
+  if (invalid != null) {
+    return res.status(400).json({ code: 'invalid_request', message: invalid })
+  }
+
+  logger.debug(
+    { projectId, docId, threadId, position, userId },
+    'adding comment via http'
+  )
+  const timer = new Metrics.Timer('http.addComment')
+
+  let result
+  try {
+    result = await DocumentManager.promises.addCommentWithLock(
+      projectId,
+      docId,
+      { threadId, position, text },
+      userId
+    )
+  } catch (error) {
+    if (error instanceof Errors.CommentTextMismatchError) {
+      return res.status(400).json({
+        code: 'text_mismatch',
+        message: 'text does not match the document at this position',
+        position,
+        actual_text: error.info?.actualText ?? '',
+      })
+    }
+    if (error instanceof Errors.OTTypeMismatchError) {
+      return res.status(422).json({
+        code: 'ot_type_unsupported',
+        message: 'adding comments is only supported on sharejs documents',
+      })
+    }
+    throw error
+  }
+
+  timer.done()
+  logger.debug({ projectId, docId, threadId }, 'added comment via http')
+  res.json({ comment: result.comment, version: result.version })
+}
+
 async function resolveComment(req, res) {
   const {
     project_id: projectId,
@@ -560,6 +630,7 @@ module.exports = {
   deleteMultipleProjects: expressify(deleteMultipleProjects),
   acceptChanges: expressify(acceptChanges),
   rejectChanges: expressify(rejectChanges),
+  addComment: expressify(addComment),
   resolveComment: expressify(resolveComment),
   reopenComment: expressify(reopenComment),
   deleteComment: expressify(deleteComment),

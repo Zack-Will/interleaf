@@ -448,6 +448,84 @@ const DocumentManager = {
     return { rejectedChangeIds: changesToReject.map(c => c.id) }
   },
 
+  /**
+   * Anchor a comment thread to a range of the document.
+   *
+   * The editor does this over the websocket; this is the HTTP equivalent for
+   * callers such as the review API. Submitting a thread id that is already
+   * anchored moves the existing comment instead of creating a second one.
+   *
+   * @param {string} projectId
+   * @param {string} docId
+   * @param {{threadId: string, position: number, text: string}} comment
+   * @param {string} userId
+   * @return {Promise<{comment: Comment, version: number}>}
+   */
+  async addComment(projectId, docId, { threadId, position, text }, userId) {
+    // Circular dependency. Import at runtime.
+    const UpdateManager = require('./UpdateManager')
+
+    const { lines, version, alreadyLoaded, type } =
+      await DocumentManager.getDoc(projectId, docId)
+    if (lines == null || version == null) {
+      throw new Errors.NotFoundError(`document not found: ${docId}`)
+    }
+    if (type !== 'sharejs-text-ot') {
+      throw new Errors.OTTypeMismatchError(type, 'sharejs-text-ot')
+    }
+
+    // The comment op is rejected by the ranges tracker unless it quotes the
+    // document verbatim, so check it here and tell the caller what is actually
+    // there, allowing them to retry against the current content.
+    const currentText = lines.join('\n').slice(position, position + text.length)
+    if (currentText !== text) {
+      throw new Errors.CommentTextMismatchError('comment text mismatch', {
+        docId,
+        position,
+        actualText: currentText,
+      })
+    }
+
+    const update = {
+      doc: docId,
+      op: [{ c: text, p: position, t: threadId }],
+      v: version,
+      meta: {
+        user_id: userId,
+        ts: Date.now(),
+        source: 'review-api',
+      },
+    }
+    await UpdateManager.promises.applyUpdate(projectId, docId, update)
+
+    // Read the comment back rather than echoing the request: the op may have
+    // been transformed against updates that were pending when we took the lock.
+    const { ranges, version: newVersion } = await DocumentManager.getDoc(
+      projectId,
+      docId
+    )
+    const comment = (ranges?.comments || []).find(
+      comment => (comment.op?.t || comment.id) === threadId
+    )
+    if (comment == null) {
+      throw new Errors.NotFoundError(`comment not found: ${threadId}`)
+    }
+
+    // Same flushing rules as setDoc: leave a doc that an editor has open to the
+    // usual flush cycle, evict one we only loaded for this call.
+    if (alreadyLoaded) {
+      await DocumentManager.flushDocIfLoaded(projectId, docId)
+    } else {
+      try {
+        await DocumentManager.flushAndDeleteDoc(projectId, docId, {})
+      } finally {
+        HistoryManager.flushProjectChangesAsync(projectId)
+      }
+    }
+
+    return { comment, version: newVersion }
+  },
+
   async updateCommentState(projectId, docId, commentId, userId, resolved) {
     const { lines, version, pathname, historyRangesSupport } =
       await DocumentManager.getDoc(projectId, docId)
@@ -730,6 +808,17 @@ const DocumentManager = {
       projectId,
       docId,
       changeIds,
+      userId
+    )
+  },
+
+  async addCommentWithLock(projectId, docId, comment, userId) {
+    const UpdateManager = require('./UpdateManager')
+    return await UpdateManager.promises.lockUpdatesAndDo(
+      DocumentManager.addComment,
+      projectId,
+      docId,
+      comment,
       userId
     )
   },
