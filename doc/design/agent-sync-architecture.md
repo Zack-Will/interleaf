@@ -408,11 +408,12 @@ agent: archive_branch D
 |---|---|---|
 | **M1 令牌与鉴权** | PAT 模型与服务、`requireAccessToken`、`/oauth/token/info`、令牌管理 REST、单元测试 | ✅ 分支 `feat/project-sync-tokens`，13 提交，Vitest 16/16、eslint 通过 |
 | **M2a MCP 读 + `write_files`** | `ProjectRef`、`VersionService`、`SnapshotService`、`LabelService`、`WriteService`、MCP 传输、7 个读工具 + `write_files`、smoke 脚本、`AGENTS.md` | ✅ 分支 `feat/mcp-read`，26 提交，Vitest 26/26、eslint、prettier、smoke 全过 |
-| **M2b `edit_file` / `revert_to` / 前端标签** | 快照 blob 解析、`RevertService`、`edit_file` 三种定位、"(via Agent)" 三处改动 | 🔄 分支 `feat/mcp-write-revert`，进行中 |
-| **M2.5 本地集成环境** | `develop/` compose，跳过 clsi，Redis 端口改映射 | ⏳ 待拍板，runbook 见 `dev-environment.md` |
-| **M3 分支** | `SyncBranch` 模型 + 迁移、`BranchService`、五个分支工具、`diff.merge` 三方合并、自动标签 | |
-| **M4 git-bridge 适配器** | 四个只读端点、签名 blob URL、推送与 postback、settings / nginx / compose、删除通知 | |
-| **M5 可视化** | 设置页令牌区块、编辑器 Git 模态框、分支折叠与修改树视图 | 增量 |
+| **M2b `edit_file` / `revert_to` / 前端标签** | 快照 blob 解析、`RevertService`、`edit_file` 三种定位、"(via Agent)" 三处改动、`services/web/.prettierrc`、MCP 结果对象化 | ✅ `feat/mcp-write-revert`，实机验证：写入 → 冲突 → 编辑 → 回退 |
+| **M2.5 本地集成环境** | `develop/` compose，跳过 clsi | ✅ 运行中，实测修正见 `dev-environment.md` |
+| **M3 分支** | `SyncBranch` 模型 + 迁移、`BranchService`、五个分支工具、`diff.merge` + `applyPatch` 三方合并、自动标签 | ✅ `feat/branches`，实机验证：不相交合并成功、同行冲突报 hunk、归档 |
+| **M4 git-bridge 适配器** | 四个端点、签名 blob URL、推送与 postback、settings / nginx / compose / webpack 代理、`projectExpired` 删除通知 | ✅ `feat/git-bridge`（Opus），实机验证：官方容器 `git clone` / `push`，历史 origin `git-bridge` |
+| **集成** | `feat/agent-sync` = M3 + M4 + 设计文档，93 个单元测试 | ✅ 本地，未推送 |
+| **M5 可视化** | 设置页令牌区块、编辑器 Git & agents 卡片与模态框、历史面板来源徽章与 Storybook 固件 | 🔄 `feat/ui`（Opus），复用历史面板的标签视图与对比功能 |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
 
 M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent 读写并留下可回滚的 label。
@@ -433,7 +434,49 @@ M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent
 
 ---
 
-## 10. 决策记录
+## 10. 评论协作（模块 `review`）
+
+目标：复现"人在正文上留评论 → agent 逐条处理并回复 → 人复核"的工作流，且评论不随内容修改丢失。
+
+### 10.1 事实基础（调研自源码）
+
+- 评论是挂在字符范围上的 `ranges.comments[] = { id, op: { c: 原文, p: 偏移, t: 线程 id }, metadata }`，由 `@overleaf/ranges-tracker` 随每个编辑操作做 OT 变换：范围前插入整体后移，范围内插入伸长，与范围重叠的删除收缩。**被评论文本被整段删除时评论不消失**，退化为游离态（`c: ''`），线程与消息完好，面板仍显示。
+- 用同一 `t` 再提交一次评论 op 即为"移动"（`RangesTracker.addComment`），这是重新锚定的原语。
+- 我们的 `edit_file` 经 document-updater `setDoc` 做 diff 生成最小操作，评论随之伸缩而非游离。
+- 线程内容与解决状态只存在 chat 服务（`rooms` + messages）；document-updater 的 resolve/reopen 端点仅在 `rangesSupportEnabled` 时镜像到 history。
+- CE 缺的只有胶水：`ProjectEditorHandler.trackChangesAvailable: false` 一行常量隐藏了整个 review panel；`track-changes` 闭源模块不存在；11 条线程/范围 web 路由未注册（`GET /project/:id/threads`、`/ranges`、`thread/:t/messages`、`resolve`、`reopen`、`DELETE thread`、消息编辑删除、`changes/accept`、`track_changes`）。chat、document-updater 范围管理、docstore 持久化、31 个组件的 review panel 前端全部在开源树中。
+- 服务端没有"新增评论范围"的 HTTP 路径（编辑器经 websocket 提交 op）；document-updater 已有 resolve/reopen/delete comment 端点，缺 add。
+
+### 10.2 决策
+
+1. **在 document-updater 新增 `POST /project/:p/doc/:d/comment`**（约 60 行），复用 `setDoc` 的"构造 update → `UpdateManager.applyUpdate`"路径，自动广播给在线编辑器。不用无头 socket 客户端。
+2. **agent 以独立服务用户身份发言**：模块设置 `review.agentUser`（邮箱与显示名），首次对某项目使用时由令牌所属用户（需为 owner）把该用户加为读写协作者；评论、回复、解决记录在该用户名下，面板一眼可辨。
+3. **修订建议（tracked changes）放到 R4**：数据面全在（`meta.tc`、accept/reject 端点），但需补路由、开关与 `review` 权限，等评论闭环稳定后做。
+4. **新建项目默认 `rangesSupportEnabled`**：否则回滚版本时评论不随之恢复。通过 `Settings.splitTestOverrides['history-ranges-support'] = 'enabled'` 在 fork 的 CE 设置里打开；现有项目不动。
+
+### 10.3 工具面（MCP）
+
+| 工具 | 说明 |
+|---|---|
+| `list_comments(project, path?, include_resolved?)` | 每条含 `thread_id`、被评论原文、文件与行列、`detached`、消息列表与作者、解决状态 |
+| `get_review_queue(project)` | 未解决评论按文件分组，附前后各 3 行上下文，agent 一轮处理的入口 |
+| `reply_comment(project, thread_id, content)` | 只写 chat |
+| `resolve_comment` / `reopen_comment` | 写 chat；项目开了 `rangesSupportEnabled` 再镜像 document-updater |
+| `add_comment(project, path, anchor, content)` | `anchor` 为首尾片段加省略号（Notion 式）或行范围，服务端换算精确范围，原文必须逐字匹配 |
+| `reanchor_comment(project, thread_id, path, anchor)` | 把游离或漂移的评论移到新文本 |
+
+`edit_file` / `write_files` 返回增加 `comments_affected: [{thread_id, path, state: 'shrunk'|'grown'|'detached'|'moved'}]`；若 `replace_anchor` / `replace_section` 覆盖了某评论范围，写入后自动把该评论重新锚到替换后的文本。一轮评论处理对应一个 label，message 引用处理的线程 id。
+
+### 10.4 分期
+
+| 阶段 | 内容 |
+|---|---|
+| **R1** | 模块 `review`：`enableReviewPanel` 设置并覆盖 `trackChangesAvailable`；注册 11 条路由为 `ChatApiHandler` / `DocumentUpdaterHandler` 的薄代理，权限沿用上游（只读协作者可评论，匿名不可，token 用户不可）；写操作后经 `EditorRealTimeController` 广播 `new-comment` / `resolve-thread` / `reopen-thread` / `delete-thread`；`rangesSupportEnabled` 默认开。验收：浏览器里能选中文字加评论、回复、解决 |
+| **R2** | MCP 读、回复、解决、评论队列；服务用户机制；`comments_affected` |
+| **R3** | document-updater add-comment 端点；`add_comment` / `reanchor_comment`；写入后自动重锚 |
+| **R4** | 修订建议：agent 以 `meta.tc` 提交，人接受/拒绝；补 accept/reject 与 `track_changes` 路由 |
+
+## 11. 决策记录
 
 1. **不复用 `TpdsController` 私有 API**：共享密钥鉴权、无用户归属。
 2. **CAS 粒度用项目版本**：写入锁内校验，简单且与 git 一致；文档级版本不再单独暴露。
