@@ -1127,6 +1127,8 @@
   "history_download_this_version": "Download this version",
   "history_entry_origin_agent": "via Agent",
   "history_entry_origin_agent_named": "via __agent__",
+  "history_entry_origin_agent_suggestion": "via Agent, suggestion",
+  "history_entry_origin_agent_suggestion_named": "via __agent__, suggestion",
   "history_entry_origin_dropbox": "via Dropbox",
   "history_entry_origin_git": "via Git",
   "history_entry_origin_github": "via GitHub",

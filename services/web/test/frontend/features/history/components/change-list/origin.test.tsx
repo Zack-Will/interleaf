@@ -21,6 +21,32 @@ describe('<Origin />', function () {
     expect(suffix.textContent).to.equal('(via Agent)')
   })
 
+  it('says when the agent offered the change as a suggestion', async function () {
+    const suffix = await renderOrigin({
+      kind: 'mcp',
+      agent: 'Claude Code',
+      suggestion: true,
+    })
+
+    expect(suffix.textContent).to.equal('(via Claude Code, suggestion)')
+  })
+
+  it('says so for an unnamed agent too', async function () {
+    const suffix = await renderOrigin({ kind: 'mcp', suggestion: true })
+
+    expect(suffix.textContent).to.equal('(via Agent, suggestion)')
+  })
+
+  it('does not mention suggestions for an ordinary agent write', async function () {
+    const suffix = await renderOrigin({
+      kind: 'mcp',
+      agent: 'Claude Code',
+      suggestion: false,
+    })
+
+    expect(suffix.textContent).to.equal('(via Claude Code)')
+  })
+
   it('renders the git-bridge origin as "(via Git)"', async function () {
     const suffix = await renderOrigin({ kind: 'git-bridge' })
 

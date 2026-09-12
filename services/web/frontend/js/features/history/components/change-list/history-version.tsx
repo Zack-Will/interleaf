@@ -20,6 +20,7 @@ import CompareItems from './dropdown/menu-item/compare-items'
 import CompareVersionDropdown from './dropdown/compare-version-dropdown'
 import { CompareVersionDropdownContentAllHistory } from './dropdown/compare-version-dropdown-content'
 import FileRestoreChange from './file-restore-change'
+import HistoryVersionMessage from './history-version-message'
 import HistoryResyncChange from './history-resync-change'
 import ProjectRestoreChange from './project-restore-change'
 
@@ -177,6 +178,7 @@ function HistoryVersion({
                   currentUserId={currentUserId}
                 />
                 <Origin origin={update.meta.origin} />
+                <HistoryVersionMessage origin={update.meta.origin} />
               </>
             ) : null}
           </div>
