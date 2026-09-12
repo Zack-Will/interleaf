@@ -89,14 +89,16 @@ async function verifyToken(token, requiredScope) {
 
   // Token use should not delay the request or make authentication fail when the
   // audit timestamp update is temporarily unavailable.
-  Promise.resolve(
-    maybeExec(
-      PersonalAccessToken.updateOne(
-        { _id: record._id },
-        { $set: { lastUsedAt: new Date() } }
+  Promise.resolve()
+    .then(() =>
+      maybeExec(
+        PersonalAccessToken.updateOne(
+          { _id: record._id },
+          { $set: { lastUsedAt: new Date() } }
+        )
       )
     )
-  ).catch(() => {})
+    .catch(() => {})
 
   return {
     userId: idToString(record.user_id),
