@@ -30,6 +30,6 @@ describe('WriteService', () => {
     vi.doMock('../../../app/src/VersionService.mjs', () => ({ default: { promises: { getLatestVersion: sinon.stub().resolves({ version: 4 }) } } }))
     vi.doMock('../../../app/src/LabelService.mjs', () => ({ default: { promises: { createLabel: sinon.stub() } } }))
     const { default: WriteService } = await import('../../../app/src/WriteService.mjs')
-    await expect(WriteService.writeFiles('p', 'u', { baseVersion: 3, message: 'm', files: [] })).rejects.toMatchObject({ code: 'version_conflict', expectedVersion: 3, actualVersion: 4 })
+    let error; try { await WriteService.writeFiles('p', 'u', { baseVersion: 3, message: 'm', files: [] }) } catch (e) { error = e }; expect(error).toMatchObject({ code: 'version_conflict', expectedVersion: 3, actualVersion: 4 })
   })
 })
