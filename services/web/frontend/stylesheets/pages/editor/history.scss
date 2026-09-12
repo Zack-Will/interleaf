@@ -225,6 +225,13 @@ history-root {
       align-items: center;
       margin-right: var(--spacing-04);
     }
+
+    // The origin follows the users list as a suffix on the same line
+    // ("You (via Claude Code)"), so the last name keeps a word space rather
+    // than the wider gap that separates one author from the next.
+    > li:last-child {
+      margin-right: var(--spacing-01);
+    }
   }
 
   .history-version-changes {
@@ -285,12 +292,6 @@ history-root {
     .material-symbols {
       font-size: inherit;
     }
-  }
-
-  // Badge for machine-written versions (agent over MCP, push over git-bridge).
-  // Sits alongside the label badges, but without the label icon.
-  .history-version-origin-badge {
-    margin-right: var(--spacing-00);
   }
 
   .history-version-label {

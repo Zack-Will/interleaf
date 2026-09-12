@@ -50,16 +50,20 @@ const humanEdit: LoadedUpdate = {
   project_ops: [],
 }
 
-// An agent write through the MCP endpoint. The label comment is the message the
-// agent passed to write_files.
-const agentWrite: LoadedUpdate = {
+// An agent write through the MCP endpoint, by a client that named itself.
+// The label comment is the message the agent passed to write_files.
+const namedAgentWrite: LoadedUpdate = {
   fromV: 8,
   toV: 9,
   meta: {
     users: [human],
     start_ts: NOW - DAY,
     end_ts: NOW - DAY,
-    origin: { kind: 'mcp' },
+    origin: {
+      kind: 'mcp',
+      agent: 'Claude Code',
+      message: 'Rewrite the abstract for clarity',
+    },
   },
   labels: [
     label('label-mcp', 'Rewrite the abstract for clarity', 9, NOW - DAY),
@@ -68,18 +72,34 @@ const agentWrite: LoadedUpdate = {
   project_ops: [],
 }
 
-// A push through the git-bridge. Same shape, different origin.
-const gitPush: LoadedUpdate = {
+// The same write from a client that did not report a name, or stored before
+// the name was kept in history. It falls back to the generic wording.
+const anonymousAgentWrite: LoadedUpdate = {
   fromV: 7,
   toV: 8,
   meta: {
     users: [human],
     start_ts: NOW - 2 * DAY,
     end_ts: NOW - 2 * DAY,
+    origin: { kind: 'mcp' },
+  },
+  labels: [label('label-mcp-anon', 'Fix the bibliography', 8, NOW - 2 * DAY)],
+  pathnames: ['references.bib'],
+  project_ops: [],
+}
+
+// A push through the git-bridge. Same shape, different origin.
+const gitPush: LoadedUpdate = {
+  fromV: 6,
+  toV: 7,
+  meta: {
+    users: [human],
+    start_ts: NOW - 3 * DAY,
+    end_ts: NOW - 3 * DAY,
     origin: { kind: 'git-bridge' },
   },
   labels: [
-    label('label-git', 'Add figure 3 and its caption', 8, NOW - 2 * DAY),
+    label('label-git', 'Add figure 3 and its caption', 7, NOW - 3 * DAY),
   ],
   pathnames: ['figures/plot.tex'],
   project_ops: [{ add: { pathname: 'figures/plot.pdf' }, atV: 7 }],
@@ -87,15 +107,15 @@ const gitPush: LoadedUpdate = {
 
 // A revert, which our write service records as a normal forward version.
 const projectRestore: LoadedUpdate = {
-  fromV: 6,
-  toV: 7,
+  fromV: 5,
+  toV: 6,
   meta: {
     users: [human],
-    start_ts: NOW - 3 * DAY,
-    end_ts: NOW - 3 * DAY,
+    start_ts: NOW - 4 * DAY,
+    end_ts: NOW - 4 * DAY,
     origin: {
       kind: 'project-restore',
-      timestamp: NOW - 4 * DAY,
+      timestamp: NOW - 5 * DAY,
       version: 5,
     },
   },
@@ -104,7 +124,13 @@ const projectRestore: LoadedUpdate = {
   project_ops: [],
 }
 
-const updates = [humanEdit, agentWrite, gitPush, projectRestore]
+const updates = [
+  humanEdit,
+  namedAgentWrite,
+  anonymousAgentWrite,
+  gitPush,
+  projectRestore,
+]
 
 const noop = () => {}
 
