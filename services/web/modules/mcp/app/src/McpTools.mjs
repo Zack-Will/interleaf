@@ -1,3 +1,6 @@
+// The MCP SDK exposes this file through a package subpath export that the
+// repository resolver cannot currently inspect. The import is valid at runtime.
+// eslint-disable-next-line import/no-unresolved -- subpath export
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
