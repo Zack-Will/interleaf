@@ -252,3 +252,76 @@ describe("MCP tools", () => {
     expect(result.structuredContent.actual_version).toBe(2);
   });
 });
+
+describe("edit_file", () => {
+  const call = async (edit, overrides = {}) => {
+    const writeFiles = vi.fn(async () => ({
+      version: 5,
+      label: { comment: "m" },
+    }));
+    const { server } = setup({
+      settings: { max_doc_length: 1000 },
+      WriteService: { writeFiles },
+      ...overrides,
+    });
+    const result = await server._registeredTools.edit_file.handler({
+      project: "a".repeat(24),
+      path: "main.tex",
+      base_version: 4,
+      edits: [edit],
+      message: "edit",
+    });
+    return { result, writeFiles };
+  };
+  it("replaces a line range", async () => {
+    const { result, writeFiles } = await call({
+      type: "replace_range",
+      start_line: 1,
+      end_line: 1,
+      new_text: "new",
+    });
+    expect(result.structuredContent.project_version).toBe(5);
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        files: [{ path: "main.tex", content: "new\ntwo" }],
+      }),
+    );
+  });
+  it("replaces an anchor and section", async () => {
+    const { result } = await call({
+      type: "replace_anchor",
+      anchor: "one",
+      new_text: "ONE",
+    });
+    expect(result.structuredContent.diff).toContain("ONE");
+    const section = await call({
+      type: "replace_section",
+      title: "one",
+      new_text: "\\section{one}\nchanged",
+    });
+    expect(section.result.isError).toBe(true);
+  });
+  it("reports ambiguous anchors and oversized files", async () => {
+    const ambiguous = await call(
+      { type: "replace_anchor", anchor: "o", new_text: "x" },
+      {
+        SnapshotService: {
+          readDoc: vi.fn(async () => ({ lines: ["one", "two"] })),
+        },
+      },
+    );
+    expect(ambiguous.result.structuredContent.code).toBe("anchor_ambiguous");
+    const large = await call(
+      {
+        type: "replace_range",
+        start_line: 1,
+        end_line: 1,
+        new_text: "x".repeat(20),
+      },
+      { settings: { max_doc_length: 2 } },
+    );
+    expect(large.result.structuredContent.code).toBe("file_too_large");
+  });
+});

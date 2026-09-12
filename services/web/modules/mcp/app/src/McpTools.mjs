@@ -3,6 +3,13 @@
 // eslint-disable-next-line import/no-unresolved -- subpath export
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+// eslint-disable-next-line import/no-extraneous-dependencies -- diff is a web dependency
+import { createTwoFilesPatch } from "diff";
+import {
+  AnchorAmbiguousError,
+  AnchorNotFoundError,
+  FileTooLargeError,
+} from "../../../project-sync/app/src/Errors.mjs";
 
 const textResult = (data, text = JSON.stringify(data)) => ({
   content: [{ type: "text", text }],
@@ -21,6 +28,7 @@ const errorResult = (error, next = "check request") => ({
     ...(error.actualVersion != null
       ? { actual_version: error.actualVersion }
       : {}),
+    ...(error.candidateLines ? { candidate_lines: error.candidateLines } : {}),
     next_action: next,
   },
 });
@@ -342,6 +350,165 @@ export function registerTools(
       }
     },
   );
+  server.tool(
+    "revert_to",
+    "Revert a project or file to a historical version",
+    {
+      project: z.string(),
+      version: z.number(),
+      path: z.string().optional(),
+      message: z.string().optional(),
+      agent: z.string().optional(),
+    },
+    async ({ project, version, path, message, agent }) =>
+      run(async () => {
+        const id = projectId(project, services);
+        return services.RevertService.revertTo(id, userId, {
+          version,
+          path,
+          message,
+          agent: agent || clientName || "mcp",
+        });
+      }),
+  );
+
+  server.tool(
+    "edit_file",
+    "Apply structured edits to a text document",
+    {
+      project: z.string(),
+      path: z.string(),
+      base_version: z.number(),
+      edits: z.array(
+        z.object({
+          type: z.string(),
+          start_line: z.number().optional(),
+          end_line: z.number().optional(),
+          new_text: z.string().optional(),
+          anchor: z.string().optional(),
+          occurrence: z.number().optional(),
+          title: z.string().optional(),
+          level: z.string().optional(),
+        }),
+      ),
+      message: z.string(),
+      agent: z.string().optional(),
+    },
+    async ({ project, path, base_version, edits, message, agent }) =>
+      run(async () => {
+        const id = projectId(project, services);
+        await access(services, req, id, "write");
+        const document = await services.SnapshotService.readDoc(id, path);
+        let lines = [...document.lines];
+        const split = (text) => String(text ?? "").split(/\r\n|\n|\r/);
+        for (const edit of edits) {
+          if (edit.type === "replace_range") {
+            const start = edit.start_line;
+            const end = edit.end_line ?? start;
+            if (
+              !Number.isInteger(start) ||
+              !Number.isInteger(end) ||
+              start < 1 ||
+              end > lines.length ||
+              end < start - 1
+            )
+              throw new Error("invalid line range");
+            lines.splice(
+              start - 1,
+              Math.max(0, end - start + 1),
+              ...split(edit.new_text),
+            );
+          } else if (edit.type === "replace_anchor") {
+            const anchor = String(edit.anchor ?? "");
+            const text = lines.join("\n");
+            const positions = [];
+            let at = text.indexOf(anchor);
+            while (at >= 0) {
+              positions.push(at);
+              at = text.indexOf(anchor, at + 1);
+            }
+            if (!positions.length) throw new AnchorNotFoundError();
+            const candidateLines = positions.map(
+              (position) => text.slice(0, position).split("\n").length,
+            );
+            if (edit.occurrence != null) {
+              const selected = edit.occurrence - 1;
+              if (selected < 0 || selected >= positions.length)
+                throw new AnchorNotFoundError();
+              positions.splice(0, positions.length, positions[selected]);
+            } else if (positions.length > 1) {
+              throw new AnchorAmbiguousError("anchor is ambiguous", {
+                candidateLines,
+              });
+            }
+            const replacement =
+              text.slice(0, positions[0]) +
+              String(edit.new_text ?? "") +
+              text.slice(positions[0] + anchor.length);
+            lines = split(replacement);
+          } else if (edit.type === "replace_section") {
+            const levels = [
+              "part",
+              "chapter",
+              "section",
+              "subsection",
+              "subsubsection",
+              "paragraph",
+              "subparagraph",
+            ];
+            const level = edit.level || "section";
+            const levelIndex = levels.indexOf(level);
+            if (levelIndex < 0) throw new Error("invalid section level");
+            const heading = new RegExp(
+              "^\\\\(" +
+                levels.join("|") +
+                ")\\*?\\{" +
+                String(edit.title).replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&") +
+                "\\}",
+            );
+            const start = lines.findIndex(
+              (line) => heading.test(line) && line.match(heading)[1] === level,
+            );
+            if (start < 0) throw new AnchorNotFoundError("section not found");
+            let end = lines.length;
+            for (let index = start + 1; index < lines.length; index += 1) {
+              const match = lines[index].match(
+                /^\\\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\\*?\\{/,
+              );
+              if (match && levels.indexOf(match[1]) <= levelIndex) {
+                end = index;
+                break;
+              }
+              if (/^\\\\end\{document\}/.test(lines[index])) {
+                end = index;
+                break;
+              }
+            }
+            const replacementLines = split(edit.new_text);
+            if (!heading.test(replacementLines[0] || ""))
+              throw new Error("replace_section new_text must include heading");
+            lines.splice(start, end - start, ...replacementLines);
+          } else throw new Error(`unknown edit type ${edit.type}`);
+        }
+        const size = lines.reduce((total, line) => total + line.length + 1, 0);
+        if (size > (services.settings?.max_doc_length ?? 2000000))
+          throw new FileTooLargeError();
+        const before = document.lines.join("\n");
+        const content = lines.join("\n");
+        const result = await services.WriteService.writeFiles(id, userId, {
+          baseVersion: base_version,
+          message,
+          agent: agent || clientName || "mcp",
+          files: [{ path, content }],
+        });
+        return {
+          project_version: result.version,
+          label: result.label,
+          diff: createTwoFilesPatch(path, path, before, content),
+        };
+      }),
+  );
+
   return server;
 }
 

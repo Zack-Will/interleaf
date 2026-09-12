@@ -31,6 +31,17 @@ const services = {
       return { version: 3, timestamp: new Date().toISOString() };
     },
   },
+  RevertService: {
+    async revertTo() {
+      return { version: 4, project_version: 4, label: null };
+    },
+  },
+  WriteService: {
+    async writeFiles() {
+      return { version: 4, label: null };
+    },
+  },
+  settings: { max_doc_length: 2000000 },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = [
@@ -77,6 +88,11 @@ const read = await client.callTool(
   CallToolResultSchema,
 );
 
+const requiredTools = ["edit_file", "revert_to"];
+for (const name of requiredTools) {
+  if (!listed.tools.some((tool) => tool.name === name))
+    throw new Error(`missing tool: ${name}`);
+}
 console.log(`tools/list: ${listed.tools.map((tool) => tool.name).join(", ")}`);
 console.log(`read_file: ${JSON.stringify(read)}`);
 
