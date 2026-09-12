@@ -47,7 +47,7 @@ async function createPersonalAccessToken(req, res) {
   const { body } = parseReq(req, tokenCreateSchema)
   const userId = SessionManager.getLoggedInUserId(req.session)
   const { token, record } = await TokenService.promises.createToken(userId, body)
-  return res.status(201).json({ token, ...serializeToken(record) })
+  return res.json({ token, ...serializeToken(record) })
 }
 
 async function revokePersonalAccessToken(req, res) {
