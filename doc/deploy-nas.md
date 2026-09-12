@@ -130,6 +130,19 @@ the web service is listening. Then check, in order:
 A reverse proxy in front of the stack must pass `/git/` and `/mcp` through
 untouched, and needs a `client_max_body_size` large enough for a git push.
 
+## Things this rollout ran into
+
+- The image generation after 6.1.2 requires `OVERLEAF_INVITE_TOKEN_SECRET`.
+  Generate one and keep it stable; changing it invalidates issued share links.
+- The backup cannot be taken as the login user: MongoDB's data files belong to
+  the database container's user. Run `tar` inside a container that mounts the
+  toolkit directory instead.
+- The production image installs only `dependencies`, so anything imported at
+  runtime must not sit in `devDependencies`.
+- Migrations run on the first boot of the new image, before the application is
+  reachable. If that boot fails for another reason, the database has already
+  moved forward; fixing the image is safer than starting the old one again.
+
 ## 6. Rolling back
 
 ```bash
