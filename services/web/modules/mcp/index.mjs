@@ -42,8 +42,10 @@ export function registerTools(server, { services = defaults, req = {}, clientNam
     try { await svc.ProjectRef.requireAccess(userId, id, 'write'); permissions = 'write' } catch (e) { if (e?.code === 'not_found') throw e }
     let root
     if (p?.rootDoc_id) {
-      const paths = await svc.ProjectEntityHandler.promises.getAllDocPathsFromProjectById(id)
-      root = paths[String(p.rootDoc_id)] || paths[p.rootDoc_id]
+      try {
+        const paths = await svc.ProjectEntityHandler.promises.getAllDocPathsFromProjectById(id)
+        root = paths[String(p.rootDoc_id)] || paths[p.rootDoc_id]
+      } catch {}
     }
     root ||= tree.find(x=>x.kind==='doc')?.path
     return { project_id:id, url:svc.ProjectRef.urlFor(id), name:p?.name, root_doc_path:root, project_version:version.version, permissions, files:tree }
