@@ -3,17 +3,58 @@ import Settings from "@overleaf/settings";
 import { fetchJson } from "@overleaf/fetch-utils";
 import ProjectEntityHandler from "../../../../app/src/Features/Project/ProjectEntityHandler.mjs";
 import DocumentUpdaterHandler from "../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs";
+import HistoryManager from "../../../../app/src/Features/History/HistoryManager.mjs";
+import FileTypeManager from "../../../../app/src/Features/Uploads/FileTypeManager.mjs";
+import isUtf8 from "utf-8-validate";
 import { NotATextFileError } from "./Errors.mjs";
 
 const clean = (p) => String(p || "").replace(/^\/+/, "");
-async function getSnapshot(projectId, version) {
+async function streamBuffer(stream) {
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return { buffer: Buffer.concat(chunks), tooLarge: false };
+}
+async function resolveHash(projectId, path, hash) {
+  const response = await HistoryManager.promises.requestBlobWithProjectId(
+    projectId,
+    hash,
+  );
+  const loaded = await streamBuffer(response.stream);
+  if (loaded.buffer.length > Settings.max_doc_length * 3)
+    return {
+      path,
+      kind: "file",
+      hash,
+      size: loaded.buffer.length,
+      getBuffer: () => loaded.buffer,
+      buffer: loaded.buffer,
+    };
+  const text = loaded.buffer.toString("utf8");
+  const invalidUtf8 = !isUtf8(loaded.buffer);
+  if (!invalidUtf8 && FileTypeManager.isEditable(text, { filename: path })) {
+    return { path, kind: "doc", content: text, size: loaded.buffer.length };
+  }
+  return {
+    path,
+    kind: "file",
+    hash,
+    size: loaded.buffer.length,
+    getBuffer: () => loaded.buffer,
+    buffer: loaded.buffer,
+  };
+}
+async function getSnapshot(projectId, version, options = {}) {
   const body = await fetchJson(
     `${Settings.apis.project_history.url}/project/${projectId}/version/${version}`,
   );
   const files = [];
+  const pending = [];
   for (const [pathname, entry] of Object.entries(body.files || {})) {
     const path = clean(pathname);
     const data = entry?.data || {};
+    if (!entry || !entry.data) continue;
     if (data.content != null)
       files.push({
         path,
@@ -21,7 +62,20 @@ async function getSnapshot(projectId, version) {
         content: data.content,
         size: Buffer.byteLength(data.content),
       });
-    else files.push({ path, kind: "file", hash: data.hash, size: 0 });
+    else if (
+      data.hash &&
+      (options.includeBinary ||
+        FileTypeManager.isEditable("", { filename: path }))
+    )
+      pending.push({ path, hash: data.hash });
+  }
+  for (let index = 0; index < pending.length; index += 4) {
+    const batch = pending.slice(index, index + 4);
+    files.push(
+      ...(await Promise.all(
+        batch.map((item) => resolveHash(projectId, item.path, item.hash)),
+      )),
+    );
   }
   return { version: body.version ?? version, files };
 }

@@ -60,6 +60,30 @@ class NotATextFileError extends OError {
     this.code = "not_a_text_file";
   }
 }
+class FileTooLargeError extends OError {
+  constructor(message = "file is too large", properties = {}) {
+    super(message, properties);
+    this.code = "file_too_large";
+  }
+}
+class AnchorNotFoundError extends OError {
+  constructor(message = "anchor not found", properties = {}) {
+    super(message, properties);
+    this.code = "anchor_not_found";
+  }
+}
+class AnchorAmbiguousError extends OError {
+  constructor(message = "anchor is ambiguous", properties = {}) {
+    super(message, properties);
+    this.code = "anchor_ambiguous";
+  }
+}
+class NotFoundAtVersionError extends OError {
+  constructor(message = "path not found at version", properties = {}) {
+    super(message, properties);
+    this.code = "not_found_at_version";
+  }
+}
 export {
   InvalidTokenRequestError,
   TokenInvalidError,
@@ -70,6 +94,10 @@ export {
   ProjectNotFoundError,
   VersionConflictError,
   NotATextFileError,
+  FileTooLargeError,
+  AnchorNotFoundError,
+  AnchorAmbiguousError,
+  NotFoundAtVersionError,
 };
 export default {
   InvalidTokenRequestError,
@@ -81,4 +109,8 @@ export default {
   ProjectNotFoundError,
   VersionConflictError,
   NotATextFileError,
+  FileTooLargeError,
+  AnchorNotFoundError,
+  AnchorAmbiguousError,
+  NotFoundAtVersionError,
 };
