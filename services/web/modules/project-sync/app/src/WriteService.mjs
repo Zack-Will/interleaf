@@ -12,7 +12,14 @@ import { VersionConflictError } from './Errors.mjs'
 async function writeFiles(
   projectId,
   userId,
-  { baseVersion, message, agent, files = [], originExtra = {} }
+  {
+    baseVersion,
+    message,
+    agent,
+    files = [],
+    originExtra = {},
+    originKind = 'mcp',
+  }
 ) {
   return LockManager.promises.runWithLock(
     'project-sync',
@@ -27,7 +34,7 @@ async function writeFiles(
           expectedVersion: baseVersion,
           actualVersion: current.version,
         })
-      const origin = { ...originExtra, kind: 'mcp', agent, message }
+      const origin = { ...originExtra, kind: originKind, agent, message }
       const applied = []
       const failed = []
       const tempPaths = []
