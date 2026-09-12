@@ -2,10 +2,8 @@ import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import { fetchJson } from '@overleaf/fetch-utils'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
-import ProjectLocator from '../../../../app/src/Features/Project/ProjectLocator.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import { NotATextFileError } from './Errors.mjs'
-import VersionService from './VersionService.mjs'
 
 const clean = p => String(p || '').replace(/^\/+/, '')
 async function getSnapshot(projectId, version) {
