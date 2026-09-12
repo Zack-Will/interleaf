@@ -1064,7 +1064,12 @@ module.exports = {
     pythonRunner: [],
     langFeedbackLinkingWidgets: [],
     labsExperiments: [],
-    integrationLinkingWidgets: [],
+    integrationLinkingWidgets: [
+      Path.resolve(
+        __dirname,
+        '../modules/project-sync/frontend/js/components/personal-access-tokens-widget.tsx'
+      ),
+    ],
     referenceLinkingWidgets: [],
     importProjectFromGithubModalWrapper: [],
     importProjectFromGithubMenu: [],
@@ -1109,7 +1114,12 @@ module.exports = {
         '../modules/full-project-search/frontend/js/components/full-project-search.tsx'
       ),
     ],
-    integrationPanelComponents: [],
+    integrationPanelComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/git-bridge/frontend/js/components/git-and-agents-card.tsx'
+      ),
+    ],
     referenceSearchSetting: [],
     settingsModalEditorTabSections: [],
     settingsModalSpellcheckSections: [],
