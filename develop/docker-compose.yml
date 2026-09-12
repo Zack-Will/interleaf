@@ -164,6 +164,10 @@ services:
       - GIT_BRIDGE_PUBLIC_BASE_URL=http://localhost/git
       # How git-bridge reaches web for the signed blob URLs in snapshots.
       - GIT_BRIDGE_WEB_PUBLIC_URL=http://web:3000
+      - GITHUB_BACKUP_ENABLED=true
+      # Development only. This key encrypts the stored GitHub and git-bridge
+      # tokens; a real deployment must set its own and keep it secret.
+      - GITHUB_BACKUP_CIPHER_PASSWORD=dev-only-github-backup-cipher-password-change-me
     command: ["node", "app.mjs"]
     volumes:
       - sharelatex-data:/var/lib/overleaf

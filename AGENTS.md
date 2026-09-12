@@ -13,6 +13,7 @@ touching these modules.
 | `mcp` | `services/web/modules/mcp/` | Streamable HTTP MCP endpoint (`/mcp`) and its tools; depends on `project-sync` |
 | `review` | `services/web/modules/review/` | Enables the native review panel (comments) in CE: thread/ranges routes, realtime events, `ReviewService`, Agent service user |
 | `git-bridge` | `services/web/modules/git-bridge/` (planned) | Web side of the official Java git-bridge contract |
+| `github-backup` | `services/web/modules/github-backup/` | One-way mirror of a project's git history to a GitHub repository: fetch from git-bridge, fast-forward push to GitHub. Design: `doc/design/github-backup.md` |
 
 Everything new goes under these directories. Edits to upstream files must be minimal and justified
 in the commit message. Modules are registered in `moduleImportSequence` in
