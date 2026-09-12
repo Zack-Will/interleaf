@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { PersonalAccessToken } from './models/PersonalAccessToken.mjs'
 import {
   InsufficientScopeError,
+  InvalidTokenRequestError,
   TokenExpiredError,
   TokenInvalidError,
 } from './Errors.mjs'
@@ -30,21 +31,29 @@ function hashToken(token) {
 }
 
 function normalizeScopes(scopes) {
+  if (scopes != null && !Array.isArray(scopes)) {
+    throw new InvalidTokenRequestError('token scopes must be an array')
+  }
   const values = scopes == null ? ['git_bridge'] : [...new Set(scopes)]
-  if (!Array.isArray(values) || values.length === 0) {
-    throw new TypeError('at least one token scope is required')
+  if (values.length === 0) {
+    throw new InvalidTokenRequestError('at least one token scope is required')
   }
   if (values.some(scope => !ALLOWED_SCOPES.has(scope))) {
-    throw new TypeError('unsupported personal access token scope')
+    throw new InvalidTokenRequestError('unsupported personal access token scope')
   }
   return values
 }
 
 function expiresAtFromDays(expiresInDays) {
   if (expiresInDays == null || expiresInDays === '') return null
-  const days = Number(expiresInDays)
+  let days
+  try {
+    days = Number(expiresInDays)
+  } catch (error) {
+    throw new InvalidTokenRequestError('expiresInDays must be a positive number', { cause: error })
+  }
   if (!Number.isFinite(days) || days <= 0) {
-    throw new TypeError('expiresInDays must be a positive number')
+    throw new InvalidTokenRequestError('expiresInDays must be a positive number')
   }
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000)
 }

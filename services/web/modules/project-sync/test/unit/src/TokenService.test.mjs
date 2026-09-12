@@ -36,6 +36,26 @@ describe('project-sync TokenService', () => {
     expect(attrs.hashedToken).not.toBe(result.token)
   })
 
+  it('rejects invalid creation options with invalid_request errors', async ctx => {
+    const { InvalidTokenRequestError } = await import('../../../app/src/Errors.mjs')
+    for (const options of [
+      { scopes: [] },
+      { scopes: ['unknown'] },
+      { scopes: 'git_bridge' },
+      { expiresInDays: 0 },
+      { expiresInDays: Symbol('invalid') },
+    ]) {
+      try {
+        await ctx.TokenService.promises.createToken('user-1', options)
+        throw new Error('expected token creation to reject')
+      } catch (error) {
+        expect(error).toBeInstanceOf(InvalidTokenRequestError)
+        expect(error).toMatchObject({ code: 'invalid_request' })
+      }
+    }
+    sinon.assert.notCalled(ctx.PersonalAccessToken.create)
+  })
+
   it('verifies a token and records last use asynchronously', async ctx => {
     const rec = {
       _id: 'tok-1',

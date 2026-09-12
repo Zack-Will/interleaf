@@ -1,5 +1,12 @@
 import OError from '@overleaf/o-error'
 
+class InvalidTokenRequestError extends OError {
+  constructor(message = 'invalid personal access token request', properties = {}) {
+    super(message, properties)
+    this.code = 'invalid_request'
+  }
+}
+
 class TokenInvalidError extends OError {
   constructor(message = 'invalid personal access token', properties = {}) {
     super(message, properties)
@@ -21,9 +28,15 @@ class InsufficientScopeError extends OError {
   }
 }
 
-export { TokenInvalidError, TokenExpiredError, InsufficientScopeError }
+export {
+  InvalidTokenRequestError,
+  TokenInvalidError,
+  TokenExpiredError,
+  InsufficientScopeError,
+}
 
 export default {
+  InvalidTokenRequestError,
   TokenInvalidError,
   TokenExpiredError,
   InsufficientScopeError,
