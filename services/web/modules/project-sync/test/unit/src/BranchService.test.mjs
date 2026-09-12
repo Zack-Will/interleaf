@@ -277,7 +277,13 @@ describe('BranchService mergeBranch', () => {
     expect(result.conflicts).toEqual([
       {
         path: '/image.png',
-        conflicts: [{ reason: 'deleted_in_branch_modified_in_parent' }],
+        conflicts: [
+          {
+            mine: [],
+            theirs: [],
+            reason: 'deleted_in_branch_modified_in_parent',
+          },
+        ],
       },
     ])
   })

@@ -229,7 +229,10 @@ async function mergeBranch(
           reason = 'deleted_in_branch_modified_in_parent'
         else if (branchFile && !parentFile)
           reason = 'modified_in_branch_deleted_in_parent'
-        conflicts.push({ path, conflicts: [{ reason }] })
+        conflicts.push({
+          path,
+          conflicts: [{ mine: [], theirs: [], reason }],
+        })
       }
     }
   }
