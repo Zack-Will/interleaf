@@ -1,4 +1,5 @@
 const sinon = require('sinon')
+const { expect } = require('chai')
 const modulePath = '../../../../app/js/HttpController.js'
 const SandboxedModule = require('sandboxed-module')
 const Errors = require('../../../../app/js/Errors.js')
@@ -404,12 +405,21 @@ describe('HttpController', function () {
           this.source,
           this.user_id,
           this.undoing,
-          true
+          true,
+          false
         )
       })
 
       it('should return a json response with the document rev from web', function () {
         this.res.json.calledWithMatch({ rev: '123' }).should.equal(true)
+      })
+
+      it('should not report any change ids', function () {
+        // the body is built inside the sandboxed module, so it does not carry
+        // chai's `should` getter: assert on it with `expect` instead
+        expect(this.res.json.firstCall.args[0]).to.not.have.property(
+          'change_ids'
+        )
       })
 
       it('should log the request', function () {
@@ -422,6 +432,7 @@ describe('HttpController', function () {
               source: this.source,
               userId: this.user_id,
               undoing: this.undoing,
+              trackChanges: false,
             },
             'setting doc via http'
           )
@@ -461,6 +472,62 @@ describe('HttpController', function () {
 
       it('should not call setDocWithLock', function () {
         this.DocumentManager.promises.setDocWithLock.should.not.have.been.called
+      })
+    })
+
+    describe('with track_changes', function () {
+      beforeEach(function () {
+        this.req.body.track_changes = true
+      })
+
+      describe('successfully', function () {
+        beforeEach(async function () {
+          this.DocumentManager.promises.setDocWithLock.resolves({
+            rev: '123',
+            changeIds: ['change-1', 'change-2'],
+          })
+          await this.HttpController.setDoc(this.req, this.res, this.next)
+        })
+
+        it('should ask for the diff to be tracked', function () {
+          this.DocumentManager.promises.setDocWithLock.should.have.been.calledWith(
+            this.project_id,
+            this.doc_id,
+            this.lines,
+            this.source,
+            this.user_id,
+            this.undoing,
+            true,
+            true
+          )
+        })
+
+        it('should return the ids of the tracked changes it created', function () {
+          this.res.json.should.have.been.calledWith({
+            rev: '123',
+            change_ids: ['change-1', 'change-2'],
+          })
+        })
+      })
+
+      describe('when the document is a history-ot document', function () {
+        beforeEach(async function () {
+          this.DocumentManager.promises.setDocWithLock.rejects(
+            new Errors.OTTypeMismatchError('history-ot', 'sharejs-text-ot')
+          )
+          await this.HttpController.setDoc(this.req, this.res, this.next)
+        })
+
+        it('should send back a 422 response', function () {
+          this.res.status.should.have.been.calledWith(422)
+          this.res.json.should.have.been.calledWithMatch({
+            code: 'ot_type_unsupported',
+          })
+        })
+
+        it('should not call next with the error', function () {
+          this.next.called.should.equal(false)
+        })
       })
     })
   })

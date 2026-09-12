@@ -11,9 +11,76 @@ const RangesManager = require('./RangesManager')
 const { extractOriginOrSource } = require('./Utils')
 const { getTotalSizeOfLines } = require('./Limits')
 const Settings = require('@overleaf/settings')
+const RangesTracker = require('@overleaf/ranges-tracker')
 const { StringFileData } = require('overleaf-editor-core')
 
 const MAX_UNFLUSHED_AGE = Settings.maxUnflushedAgeMs // document should be flushed to mongo this time after a change
+
+/**
+ * @import { Ranges, TrackedChange } from './types'
+ */
+
+/**
+ * The text a tracked change covers, which is the inserted text for a tracked
+ * insert and the deleted text for a tracked delete.
+ *
+ * @param {TrackedChange} change
+ * @return {string}
+ */
+function getTrackedChangeText(change) {
+  const op = change.op || {}
+  if (typeof op.i === 'string') {
+    return `i:${op.i}`
+  }
+  if (typeof op.d === 'string') {
+    return `d:${op.d}`
+  }
+  return ''
+}
+
+/**
+ * The tracked changes a single update produced.
+ *
+ * A change the update created has an id built from the update's id seed
+ * (`RangesTracker.newId()` is `idSeed` plus a counter), which is exact.  An
+ * update can also grow a tracked change that was already there, when it edits
+ * right up against an existing tracked change of the same user: those are
+ * merged into the old change and keep its id, so they are recognised by their
+ * text having changed.  Position alone is not enough — every change after an
+ * edit is shifted along without being part of it — and the timestamp is not
+ * enough either, because a merge keeps the *older* of the two (`pickTimestamp`
+ * in `libraries/ranges-tracker/index.cjs`).  Server-side change metadata only
+ * carries `user_id`, so the ownership test is on that alone.
+ *
+ * @param {Ranges | undefined} rangesBefore
+ * @param {Ranges | undefined} rangesAfter
+ * @param {string} idSeed
+ * @param {string} userId
+ * @return {string[]}
+ */
+function findTrackedChangeIds(rangesBefore, rangesAfter, idSeed, userId) {
+  const textBefore = new Map(
+    (rangesBefore?.changes || []).map(change => [
+      change.id,
+      getTrackedChangeText(change),
+    ])
+  )
+  const ids = []
+  for (const change of rangesAfter?.changes || []) {
+    if (String(change.id).startsWith(idSeed)) {
+      ids.push(change.id)
+      continue
+    }
+    if (String(change.metadata?.user_id ?? '') !== String(userId ?? '')) {
+      continue
+    }
+    const before = textBefore.get(change.id)
+    if (before != null && before !== getTrackedChangeText(change)) {
+      ids.push(change.id)
+    }
+  }
+  return ids
+}
 
 const DocumentManager = {
   /**
@@ -169,7 +236,8 @@ const DocumentManager = {
     originOrSource,
     userId,
     undoing,
-    external
+    external,
+    trackChanges = false
   ) {
     if (newLines == null) {
       throw new Error('No lines were provided to setDoc')
@@ -182,9 +250,16 @@ const DocumentManager = {
     const {
       lines: oldLines,
       version,
+      ranges: oldRanges,
       alreadyLoaded,
       type,
     } = await DocumentManager.getDoc(projectId, docId)
+
+    // Tracked changes only exist on sharejs documents: `RangesManager` is not
+    // part of the history-ot path at all, so there is nothing to attach them to.
+    if (trackChanges && type === 'history-ot') {
+      throw new Errors.OTTypeMismatchError(type, 'sharejs-text-ot')
+    }
 
     logger.debug(
       { docId, projectId, oldLines, newLines },
@@ -230,6 +305,13 @@ const DocumentManager = {
     } else if (source) {
       update.meta.source = source
     }
+    // `meta.tc` is what the websocket path carries when a user edits with track
+    // changes on: `RangesManager.applyUpdate` reads it, turns tracking on for
+    // this update and seeds the ids of the changes it records.
+    const idSeed = trackChanges ? RangesTracker.generateIdSeed() : null
+    if (idSeed) {
+      update.meta.tc = idSeed
+    }
     // Keep track of external updates, whether they are for live documents
     // (flush) or unloaded documents (evict), and whether the update is a no-op.
     Metrics.inc('external-update', 1, {
@@ -251,21 +333,40 @@ const DocumentManager = {
       }
     }
 
+    // Read the tracked changes back from the ranges rather than deriving them
+    // from the ops we sent: the update is transformed against whatever was
+    // queued ahead of it, and adjacent changes of the same user are merged.
+    let changeIds = null
+    if (idSeed && op.length === 0) {
+      changeIds = []
+    } else if (idSeed) {
+      const { ranges: newRanges } = await DocumentManager.getDoc(
+        projectId,
+        docId
+      )
+      changeIds = findTrackedChangeIds(oldRanges, newRanges, idSeed, userId)
+    }
+
     // If the document was loaded already, then someone has it open
     // in a project, and the usual flushing mechanism will happen.
     // Otherwise we should remove it immediately since nothing else
     // is using it.
+    let result
     if (alreadyLoaded) {
-      return await DocumentManager.flushDocIfLoaded(projectId, docId)
+      result = await DocumentManager.flushDocIfLoaded(projectId, docId)
     } else {
       try {
-        return await DocumentManager.flushAndDeleteDoc(projectId, docId, {})
+        result = await DocumentManager.flushAndDeleteDoc(projectId, docId, {})
       } finally {
         // There is no harm in flushing project history if the previous
         // call failed and sometimes it is required
         HistoryManager.flushProjectChangesAsync(projectId)
       }
     }
+    if (changeIds == null) {
+      return result
+    }
+    return { ...(result || {}), changeIds }
   },
 
   async flushDocIfLoaded(projectId, docId) {
@@ -744,7 +845,8 @@ const DocumentManager = {
     source,
     userId,
     undoing,
-    external
+    external,
+    trackChanges = false
   ) {
     const UpdateManager = require('./UpdateManager')
     return await UpdateManager.promises.lockUpdatesAndDo(
@@ -755,7 +857,8 @@ const DocumentManager = {
       source,
       userId,
       undoing,
-      external
+      external,
+      trackChanges
     )
   },
 

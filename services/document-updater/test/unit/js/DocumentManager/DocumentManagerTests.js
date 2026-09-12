@@ -56,6 +56,10 @@ describe('DocumentManager', function () {
       acceptChanges: sinon.stub(),
       deleteComment: sinon.stub(),
     }
+    this.idSeed = 'abcdef0123456789ab'
+    this.RangesTracker = {
+      generateIdSeed: sinon.stub().returns(this.idSeed),
+    }
     this.Settings = {
       max_doc_length: 2 * 1024 * 1024, // 2mb
       maxUnflushedAgeMs: 300 * 1000, // 5 minutes
@@ -74,6 +78,7 @@ describe('DocumentManager', function () {
         './RangesManager': this.RangesManager,
         './Errors': Errors,
         '@overleaf/settings': this.Settings,
+        '@overleaf/ranges-tracker': this.RangesTracker,
       },
     })
     this.project_id = 'project-id-123'
@@ -740,6 +745,175 @@ describe('DocumentManager', function () {
               },
             })
             .should.equal(true)
+        })
+      })
+
+      describe('with the trackChanges flag', function () {
+        beforeEach(function () {
+          this.changeBefore = {
+            id: '111111111111111111000001',
+            op: { i: 'old', p: 0 },
+            metadata: { user_id: this.user_id },
+          }
+          this.createdChange = {
+            id: `${this.idSeed}000001`,
+            op: { i: 'foo', p: 4 },
+            metadata: { user_id: this.user_id },
+          }
+          this.stubGetDocForTracking = (before, after) => {
+            const getDoc = sinon.stub()
+            getDoc.onFirstCall().resolves({
+              lines: this.beforeLines,
+              version: this.version,
+              ranges: before,
+              alreadyLoaded: true,
+              type: 'sharejs-text-ot',
+            })
+            getDoc.onSecondCall().resolves({
+              lines: this.afterLines,
+              version: this.version + 1,
+              ranges: after,
+              alreadyLoaded: true,
+              type: 'sharejs-text-ot',
+            })
+            this.DocumentManager.promises.getDoc = getDoc
+          }
+          this.setDocTracked = () =>
+            this.DocumentManager.promises.setDoc(
+              this.project_id,
+              this.doc_id,
+              this.afterLines,
+              this.source,
+              this.user_id,
+              false,
+              true,
+              true
+            )
+        })
+
+        it('should seed the update with meta.tc so the ops are tracked', async function () {
+          this.stubGetDocForTracking({}, { changes: [this.createdChange] })
+          await this.setDocTracked()
+          this.UpdateManager.promises.applyUpdate.should.have.been.calledWith(
+            this.project_id,
+            this.doc_id,
+            {
+              doc: this.doc_id,
+              v: this.version,
+              op: this.ops,
+              meta: {
+                type: 'external',
+                source: this.source,
+                user_id: this.user_id,
+                tc: this.idSeed,
+              },
+            }
+          )
+        })
+
+        it('should return the ids of the changes it created', async function () {
+          this.stubGetDocForTracking(
+            { changes: [this.changeBefore] },
+            { changes: [this.changeBefore, this.createdChange] }
+          )
+          const result = await this.setDocTracked()
+          expect(result.changeIds).to.deep.equal([this.createdChange.id])
+        })
+
+        it('should include a change of the same user that this update grew', async function () {
+          const grown = {
+            id: this.changeBefore.id,
+            op: { i: 'older', p: 0 },
+            metadata: { user_id: this.user_id },
+          }
+          this.stubGetDocForTracking(
+            { changes: [this.changeBefore] },
+            { changes: [grown] }
+          )
+          const result = await this.setDocTracked()
+          expect(result.changeIds).to.deep.equal([grown.id])
+        })
+
+        it('should ignore a change of the same user that only shifted along', async function () {
+          const shifted = {
+            id: this.changeBefore.id,
+            op: { i: 'old', p: 30 },
+            metadata: { user_id: this.user_id },
+          }
+          this.stubGetDocForTracking(
+            { changes: [this.changeBefore] },
+            { changes: [shifted, this.createdChange] }
+          )
+          const result = await this.setDocTracked()
+          expect(result.changeIds).to.deep.equal([this.createdChange.id])
+        })
+
+        it('should ignore untouched changes of other users', async function () {
+          const other = {
+            id: '222222222222222222000001',
+            op: { i: 'theirs', p: 90 },
+            metadata: { user_id: 'someone-else' },
+          }
+          this.stubGetDocForTracking(
+            { changes: [other] },
+            { changes: [other, this.createdChange] }
+          )
+          const result = await this.setDocTracked()
+          expect(result.changeIds).to.deep.equal([this.createdChange.id])
+        })
+
+        it('should refuse a history-ot document', async function () {
+          this.DocumentManager.promises.getDoc = sinon.stub().resolves({
+            lines: this.beforeLines,
+            version: this.version,
+            ranges: {},
+            alreadyLoaded: true,
+            type: 'history-ot',
+          })
+          await expect(this.setDocTracked()).to.be.rejectedWith(
+            Errors.OTTypeMismatchError
+          )
+          this.UpdateManager.promises.applyUpdate.called.should.equal(false)
+        })
+      })
+
+      describe('without the trackChanges flag', function () {
+        beforeEach(async function () {
+          await this.DocumentManager.promises.setDoc(
+            this.project_id,
+            this.doc_id,
+            this.afterLines,
+            this.source,
+            this.user_id,
+            false,
+            true
+          )
+        })
+
+        it('should not put meta.tc on the update', function () {
+          const [, , update] =
+            this.UpdateManager.promises.applyUpdate.firstCall.args
+          expect(update.meta).to.not.have.property('tc')
+        })
+
+        it('should not read the ranges back', function () {
+          this.DocumentManager.promises.getDoc.callCount.should.equal(1)
+        })
+
+        it('should return the flush result unchanged', async function () {
+          this.DocumentManager.promises.flushDocIfLoaded = sinon
+            .stub()
+            .resolves({ rev: 7, modified: true })
+          const result = await this.DocumentManager.promises.setDoc(
+            this.project_id,
+            this.doc_id,
+            this.afterLines,
+            this.source,
+            this.user_id,
+            false,
+            true
+          )
+          expect(result).to.deep.equal({ rev: 7, modified: true })
         })
       })
     })

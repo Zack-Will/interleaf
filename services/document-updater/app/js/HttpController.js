@@ -200,6 +200,9 @@ async function setDoc(req, res) {
   const docId = req.params.doc_id
   const projectId = req.params.project_id
   const { lines, source, user_id: userId, undoing } = req.body
+  // Opt in to turning the diff into tracked changes ("suggestions") that a
+  // human accepts or rejects, instead of plain edits.
+  const trackChanges = Boolean(req.body.track_changes)
   const lineSize = getTotalSizeOfLines(lines)
 
   if (lineSize > Settings.max_doc_length) {
@@ -210,27 +213,45 @@ async function setDoc(req, res) {
     return res.sendStatus(406)
   }
   logger.debug(
-    { projectId, docId, lines, source, userId, undoing },
+    { projectId, docId, lines, source, userId, undoing, trackChanges },
     'setting doc via http'
   )
   const timer = new Metrics.Timer('http.setDoc')
 
-  const result = await DocumentManager.promises.setDocWithLock(
-    projectId,
-    docId,
-    lines,
-    source,
-    userId,
-    undoing,
-    true
-  )
+  let result
+  try {
+    result = await DocumentManager.promises.setDocWithLock(
+      projectId,
+      docId,
+      lines,
+      source,
+      userId,
+      undoing,
+      true,
+      trackChanges
+    )
+  } catch (error) {
+    if (trackChanges && error instanceof Errors.OTTypeMismatchError) {
+      return res.status(422).json({
+        code: 'ot_type_unsupported',
+        message: 'tracked changes are only supported on sharejs documents',
+      })
+    }
+    throw error
+  }
   timer.done()
   logger.debug({ projectId, docId }, 'set doc via http')
 
   // If the document is unchanged and hasn't been updated, `result` will be
   // undefined, which leads to an invalid JSON response, so we send an empty
   // object instead.
-  res.json(result || {})
+  const { changeIds, ...rest } = result || {}
+  // The ids of the tracked changes this call created, so the caller can point a
+  // human at them without diffing the ranges itself.
+  if (!trackChanges) {
+    return res.json(rest)
+  }
+  res.json({ ...rest, change_ids: changeIds || [] })
 }
 
 async function appendToDoc(req, res) {
