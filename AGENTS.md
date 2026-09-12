@@ -11,6 +11,7 @@ touching these modules.
 |---|---|---|
 | `project-sync` | `services/web/modules/project-sync/` | Personal access tokens, token auth middleware, project reference parsing, version / snapshot / label / write services |
 | `mcp` | `services/web/modules/mcp/` | Streamable HTTP MCP endpoint (`/mcp`) and its tools; depends on `project-sync` |
+| `review` | `services/web/modules/review/` | Enables the native review panel (comments) in CE: thread/ranges routes, realtime events, `ReviewService`, Agent service user |
 | `git-bridge` | `services/web/modules/git-bridge/` (planned) | Web side of the official Java git-bridge contract |
 
 Everything new goes under these directories. Edits to upstream files must be minimal and justified
