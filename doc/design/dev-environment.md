@@ -83,6 +83,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 6. **`web-data` 卷是 root 属主而进程以 node 运行**：任何写 `data/dumpFolder` 的路径（上传、TPDS、我们的 `writeFiles`）都会 `EACCES`。首次启动后执行
    `docker compose exec -u root web chown -R node:node /overleaf/services/web/data`。
 
+7. **单文件绑定挂载在 git 切换分支后会失效**：`document-updater/app.js`、`webpack.config.dev-env.js` 等以单文件挂载进容器；git checkout/merge 替换了宿主文件的 inode 后容器仍看到旧内容（表现为新路由 404、`node --watch` 也不会触发）。改动这些文件后必须 `docker compose up -d --no-deps --force-recreate <svc>`。目录挂载（`app/`、`modules/`）没有这个问题。
+8. **`libraries/*` 没有挂载进任何容器**：改动 `overleaf-editor-core` 等共享库后需重建 web、project-history、history-v1 镜像（逐个 `nice` 构建约 3 分钟）。
+
 当前 `develop/docker-compose.override.yml`（未入库）：
 
 ```yaml
