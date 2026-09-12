@@ -277,6 +277,8 @@ const queue = await client.callTool(
 const queued = queue.structuredContent.files?.[0]?.comments?.[0]
 if (!queued || queued.line !== 2 || queued.column !== 1)
   throw new Error('get_review_queue did not place the comment on line 2')
+if (!queue.content[0].text.includes('call create_label'))
+  throw new Error('get_review_queue did not say when to mark a milestone')
 const reply = await client.callTool(
   {
     name: 'reply_comment',
@@ -434,6 +436,7 @@ console.log(`list_suggestions: ${listedSuggestions.content[0].text}`)
 console.log(`accept_suggestions: ${accepted.content[0].text}`)
 console.log(`reject_suggestions: ${rejected.content[0].text}`)
 console.log(`reject_suggestions without ids: ${unspecified.content[0].text}`)
+console.log(`create_label: ${marked.content[0].text}`)
 
 await client.close()
 await server.close()
