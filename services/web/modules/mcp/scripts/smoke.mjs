@@ -22,6 +22,9 @@ const services = {
     },
     async requireAccess() {},
   },
+  VersionService: {
+    async getLatestVersion() { return { version: 3, timestamp: new Date().toISOString() } },
+  },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = ['\\section{Introduction}', 'Hello from the smoke test.', 'Done.']
