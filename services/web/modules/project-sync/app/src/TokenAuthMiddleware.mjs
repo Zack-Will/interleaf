@@ -13,15 +13,17 @@ function respond(res, status, error, errorCode) {
 }
 
 function getToken(req) {
-  const authorization = req.get('authorization')
+  const authorization =
+    (typeof req.get === 'function' ? req.get('authorization') : undefined) ??
+    req.headers?.authorization
   if (typeof authorization !== 'string' || authorization.trim() === '') {
     return { errorCode: 'token_malformed' }
   }
 
-  const bearerMatch = authorization.match(/^Bearer\\s+(\\S+)$/i)
+  const bearerMatch = authorization.match(/^Bearer\s+(\S+)$/i)
   if (bearerMatch) return { token: bearerMatch[1] }
 
-  if (/^Basic\\s+/i.test(authorization)) {
+  if (/^Basic\s+/i.test(authorization)) {
     const credentials = basicAuth(req)
     if (!credentials || credentials.name !== 'git' || !credentials.pass) {
       return { errorCode: 'token_malformed' }
