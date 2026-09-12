@@ -73,7 +73,8 @@ export function registerTools(server, { services = defaults, req = {}, clientNam
   server.tool('list_history', 'List project history', { project: z.string(), limit: z.number().optional() }, async ({ project, limit=50 }) => run(async () => {
     const id=projectId(project,svc); await access(svc,req,id); const labels=await svc.LabelService.listLabels(id); const updates=await fetchJson(`${Settings.apis.project_history.url}/project/${id}/updates?min_count=${limit}`); const arr=Array.isArray(updates)?updates:(updates?.updates||[])
     const normalizedLabels = (labels || []).map(l => ({ version:l.version, comment:l.comment, label:l, users:l.user_id ? [l.user_id] : (l.user ? [l.user] : []), timestamp:l.timestamp || l.createdAt, origin:l.origin || { kind:'label' } }))
-    return [...normalizedLabels, ...arr].sort((a,b)=>new Date(b.timestamp||0)-new Date(a.timestamp||0)).slice(0,limit)
+    const normalizedUpdates = arr.map(u => ({ ...u, origin: u.origin || { kind: u.kind || 'unknown' }, users: u.users || (u.user_id ? [u.user_id] : []), comment: u.comment || u.message }))
+    return [...normalizedLabels, ...normalizedUpdates].sort((a,b)=>new Date(b.timestamp||0)-new Date(a.timestamp||0)).slice(0,limit)
   }))
 
   server.tool('diff', 'Compare project versions', { project: z.string(), from_version: z.number(), to_version: z.number(), path: z.string().optional() }, async ({ project, from_version, to_version, path }) => run(async () => { const id=projectId(project,svc); await access(svc,req,id); const url=path?`${Settings.apis.project_history.url}/project/${id}/diff?pathname=${encodeURIComponent(path)}&from=${from_version}&to=${to_version}`:`${Settings.apis.project_history.url}/project/${id}/filetree/diff?from=${from_version}&to=${to_version}`; return await fetchJson(url) }))
