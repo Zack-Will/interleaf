@@ -1,14 +1,11 @@
 import { expressify } from '@overleaf/promise-utils'
 import ChatApiHandler from '../../../../app/src/Features/Chat/ChatApiHandler.mjs'
-import ChatManager from '../../../../app/src/Features/Chat/ChatManager.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import DocstoreManager from '../../../../app/src/Features/Docstore/DocstoreManager.mjs'
 import EditorRealTimeController from '../../../../app/src/Features/Editor/EditorRealTimeController.mjs'
-import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectOptionsHandler from '../../../../app/src/Features/Project/ProjectOptionsHandler.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
-import UserInfoController from '../../../../app/src/Features/User/UserInfoController.mjs'
-import UserInfoManager from '../../../../app/src/Features/User/UserInfoManager.mjs'
+import { createReviewService } from './ReviewService.mjs'
 
 function getUserId(req, sessionManager = SessionManager) {
   return sessionManager.getLoggedInUserId(req.session)
@@ -22,20 +19,16 @@ function requireLoggedInUser(req, res, sessionManager) {
 
 function createHandlers(services = {}) {
   const chatApi = services.ChatApiHandler || ChatApiHandler
-  const chatManager = services.ChatManager || ChatManager
   const documentUpdater =
     services.DocumentUpdaterHandler || DocumentUpdaterHandler
   const docstore = services.DocstoreManager || DocstoreManager
   const realtime = services.EditorRealTimeController || EditorRealTimeController
-  const projectGetter = services.ProjectGetter || ProjectGetter
   const projectOptions = services.ProjectOptionsHandler || ProjectOptionsHandler
   const sessionManager = services.SessionManager || SessionManager
-  const userInfoManager = services.UserInfoManager || UserInfoManager
-  const userInfoController = services.UserInfoController || UserInfoController
+  const reviewService = services.ReviewService || createReviewService(services)
 
   async function getThreads(req, res) {
-    const threads = await chatApi.promises.getThreads(req.params.project_id)
-    await chatManager.promises.injectUserInfoIntoThreads(threads)
+    const threads = await reviewService.listThreads(req.params.project_id)
     res.json(threads)
   }
 
@@ -55,15 +48,12 @@ function createHandlers(services = {}) {
     if (!requireLoggedInUser(req, res, sessionManager)) return
     const projectId = req.params.project_id
     const userId = sessionManager.getLoggedInUserId(req.session)
-    const message = await chatApi.promises.sendComment(
+    await reviewService.sendComment(
       projectId,
       req.params.thread_id,
       userId,
       req.body.content
     )
-    const user = await userInfoManager.promises.getPersonalInfo(message.user_id)
-    message.user = userInfoController.formatPersonalInfo(user)
-    realtime.emitToRoom(projectId, 'new-comment', req.params.thread_id, message)
     res.sendStatus(204)
   }
 
@@ -139,25 +129,7 @@ function createHandlers(services = {}) {
       thread_id: threadId,
     } = req.params
     const userId = sessionManager.getLoggedInUserId(req.session)
-    await chatApi.promises.resolveThread(projectId, threadId, userId)
-    const project = await projectGetter.promises.getProject(projectId, {
-      'overleaf.history.rangesSupportEnabled': 1,
-    })
-    if (project?.overleaf?.history?.rangesSupportEnabled) {
-      await documentUpdater.promises.resolveThread(
-        projectId,
-        docId,
-        threadId,
-        userId
-      )
-    }
-    const user = await userInfoManager.promises.getPersonalInfo(userId)
-    realtime.emitToRoom(
-      projectId,
-      'resolve-thread',
-      threadId,
-      userInfoController.formatPersonalInfo(user)
-    )
+    await reviewService.resolveThread(projectId, docId, threadId, userId)
     res.sendStatus(204)
   }
 
@@ -169,19 +141,7 @@ function createHandlers(services = {}) {
       thread_id: threadId,
     } = req.params
     const userId = sessionManager.getLoggedInUserId(req.session)
-    await chatApi.promises.reopenThread(projectId, threadId)
-    const project = await projectGetter.promises.getProject(projectId, {
-      'overleaf.history.rangesSupportEnabled': 1,
-    })
-    if (project?.overleaf?.history?.rangesSupportEnabled) {
-      await documentUpdater.promises.reopenThread(
-        projectId,
-        docId,
-        threadId,
-        userId
-      )
-    }
-    realtime.emitToRoom(projectId, 'reopen-thread', threadId)
+    await reviewService.reopenThread(projectId, docId, threadId, userId)
     res.sendStatus(204)
   }
 
@@ -192,14 +152,7 @@ function createHandlers(services = {}) {
       thread_id: threadId,
     } = req.params
     const userId = getUserId(req, sessionManager)
-    await documentUpdater.promises.deleteThread(
-      projectId,
-      docId,
-      threadId,
-      userId
-    )
-    await chatApi.promises.deleteThread(projectId, threadId)
-    realtime.emitToRoom(projectId, 'delete-thread', threadId)
+    await reviewService.deleteThread(projectId, docId, threadId, userId)
     res.sendStatus(204)
   }
 
