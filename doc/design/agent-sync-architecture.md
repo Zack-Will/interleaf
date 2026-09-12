@@ -468,6 +468,12 @@ M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent
 | `resolve_comment` / `reopen_comment` | 写 chat；项目开了 `rangesSupportEnabled` 再镜像 document-updater |
 | `add_comment(project, path, anchor, content)` | `anchor` 为首尾片段加省略号（Notion 式）或行范围，服务端换算精确范围，原文必须逐字匹配 |
 | `reanchor_comment(project, thread_id, path, anchor)` | 把游离或漂移的评论移到新文本 |
+| `suggest_edits(project, path, base_version, edits, message, agent?, act_as_agent?)` | `edits` 与锚点语义同 `edit_file`，但结果作为 tracked changes 落盘，等人接受或拒绝；返回 `{ project_version, label, change_ids, suggestions: [{change_id, type, line, text}], diff }` |
+| `list_suggestions(project, path?)` | 待处理的修订建议按文件分组，每条含 `change_id`、`insert`/`delete`、原文、行列与作者 |
+| `accept_suggestions(project, path, change_ids \| all)` / `reject_suggestions(...)` | 需写权限；以令牌用户（而非 agent 服务用户）身份落定——这是人的决定，工具只是让 agent 能按明确指令代劳——返回该文件剩余条数 |
+
+`get_review_queue` 的摘要另附 `pending_suggestions`（取自它已经读过的 ranges，不额外多读一遍文档），
+让 agent 知道上一轮建议人还没处理。
 
 `edit_file` / `write_files` 返回增加 `comments_affected: [{thread_id, path, state: 'shrunk'|'grown'|'detached'|'moved'}]`；若 `replace_anchor` / `replace_section` 覆盖了某评论范围，写入后自动把该评论重新锚到替换后的文本。一轮评论处理对应一个 label，message 引用处理的线程 id。
 
@@ -478,7 +484,25 @@ M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent
 | **R1** | 模块 `review`：`enableReviewPanel` 设置并覆盖 `trackChangesAvailable`；注册 11 条路由为 `ChatApiHandler` / `DocumentUpdaterHandler` 的薄代理，权限沿用上游（只读协作者可评论，匿名不可，token 用户不可）；写操作后经 `EditorRealTimeController` 广播 `new-comment` / `resolve-thread` / `reopen-thread` / `delete-thread`；`rangesSupportEnabled` 默认开。验收：浏览器里能选中文字加评论、回复、解决 |
 | **R2** | MCP 读、回复、解决、评论队列；服务用户机制；`comments_affected` |
 | **R3** | document-updater add-comment 端点；`add_comment` / `reanchor_comment`；写入后自动重锚 |
-| **R4** | 修订建议：agent 以 `meta.tc` 提交，人接受/拒绝；补 accept/reject 与 `track_changes` 路由 |
+| **R4** | 修订建议：document-updater `setDoc` 增加 `track_changes` 开关；`SuggestionService`；MCP `suggest_edits` / `list_suggestions` / `accept_suggestions` / `reject_suggestions` |
+
+**R4 落地：tracked `setDoc` 契约。** `POST /project/:project_id/doc/:doc_id`（document-updater）的请求体
+多认一个可选字段 `track_changes: true`。置位时 `DocumentManager.setDoc` 给它构造的 update 挂上
+`meta.tc = RangesTracker.generateIdSeed()`——这正是编辑器开着"修订模式"打字时 websocket 路径所带的字段，
+`RangesManager.applyUpdate` 读到它就为这一条 update 打开 `track_changes` 并用它作为新建 change 的 id 种子——
+于是 diff 出来的操作变成待处理的 tracked changes 而不是直接落盘的编辑。响应在原有字段之外增加
+`change_ids: []`，即这次调用产生的 change id；history-ot 文档没有 ranges，按 R3 的做法回
+`422 { code: 'ot_type_unsupported' }`。`change_ids` 是从更新后的 ranges 里读回来的，不是从我们发出去的
+op 推出来的：update 会与排队中的更新做 OT 变换。判定规则是「id 以本次 idSeed 开头」（新建的 change，
+`RangesTracker.newId()` 就是 idSeed 加计数），外加「同一用户的既有 change 文本发生了变化」（相邻编辑被
+并入旧 change，id 不变）。位置不能用作判据（这次编辑之后的每条 change 都会整体后移），时间戳也不能
+（合并时 `pickTimestamp` 留的是**较早**的那个）。
+
+web 侧 `SuggestionService`（模块 `review`）在此之上：`suggestDocContent` 借用
+`WriteService.withProjectWriteLock`，与普通写入同一把 `project-sync` 锁、同一套 `base_version` 校验，
+成功后打一条 `Suggest: <message>` 的 history label（没产生任何建议就不打）；`listSuggestions` 从实时
+ranges 读回，与人在 review panel 里看到的一致；`acceptSuggestions` / `rejectSuggestions` 走
+`DocumentUpdaterHandler.acceptChanges` / `rejectChanges`，并拒绝不在待处理列表里的 id。
 
 ### 10.5 add-comment 端点契约（R3 落地）
 
