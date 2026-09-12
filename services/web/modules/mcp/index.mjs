@@ -38,7 +38,8 @@ export function registerTools(server, { services = defaults, req = {}, clientNam
     const id = projectId(project, svc); await access(svc, req, id)
     const p = await svc.ProjectGetter.promises.getProject(id, { name: 1, rootDoc_id: 1 })
     const tree = await svc.SnapshotService.getFileTree(id); const version = await svc.VersionService.getLatestVersion(id)
-    const permissions = await svc.ProjectRef.requireAccess(userId, id, 'write').then(()=>'write').catch(()=>'read')
+    let permissions = 'read'
+    try { await svc.ProjectRef.requireAccess(userId, id, 'write'); permissions = 'write' } catch (e) { if (e?.code === 'not_found') throw e }
     let root
     if (p?.rootDoc_id) {
       const paths = await svc.ProjectEntityHandler.promises.getAllDocPathsFromProjectById(id)
