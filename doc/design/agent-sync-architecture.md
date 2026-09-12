@@ -1,7 +1,7 @@
 # Overleaf CE 内建 MCP 与 git-bridge 共存架构设计
 
 - 基线：`overleaf/overleaf@28ad3b0`（fork：`Zack-Will/overleaf`）
-- 状态：v1.1（2026-09-12，按评审反馈修订）
+- 状态：v1.2（2026-09-12，补入 UI / 环境 / 内部接口三份调研结论）
 - 范围：在 Community Edition 上，不依赖 Server Pro 闭源模块，同时提供
   1. 面向 AI agent 的内建 MCP（Model Context Protocol）端点
   2. 与官方 Java git-bridge 完全兼容的 Git 集成
@@ -18,6 +18,17 @@
 | 修改树 = 历史 label + 最小分支链接记录，不再新建节点集合 | 原生接口优先；历史面板天然可视化 label 并支持一键回退 |
 | 里程碑重排：MCP 读写与分支先于 git-bridge 适配器 | agent 侧收益最大，git 侧已有外置桥过渡 |
 | Web UI 可视化列为增量目标 | 先铺基础能力 |
+
+### v1.2 相对 v1.1 的变化
+
+| 变化 | 原因 |
+|---|---|
+| `revert_to` 不走 `RestoreManager`，改为"取历史快照 + `writeFiles`" | `RestoreManager` 依赖 `rangesSupportEnabled`，CE 项目默认关闭；且它删了重建实体，id 变化、事件风暴 |
+| 快照服务必须解析 `{data:{hash}}` 条目 | project-history 只给"本 chunk 内改过的文本"内容，未改动的文本与二进制都只给 hash |
+| 分支项目用自动标签 `branch: <父项目名>` 分组 | 项目列表没有任何模块扩展点，标签是零前端改动的方案 |
+| agent 名字暂不进历史 origin，只显示 "(via Agent)" | `Origin.toRaw()` 只序列化 `kind`，要保留 `agent` 需改共享库 `overleaf-editor-core` |
+| 明确 UI 接入路径与两处门控 | 设置页同步区块与编辑器 Integrations 标签在 CE 下默认隐藏 |
+| 本地集成环境定为 `develop/` compose（跳过 clsi） | 见 `doc/design/dev-environment.md` |
 
 ---
 
@@ -191,7 +202,15 @@ async function getLatestVersion(projectId) {
 
 ### 4.4 快照服务
 
-`getSnapshot(projectId, version)` → project-history `GET /project/:id/version/:version`，返回 `{files: {path: {data:{content}} | {data:{hash}}}}`。文本直接给内容；二进制给 blob hash，对外经 web 提供 HMAC 签名的短时 URL（供 git-bridge 无鉴权头拉取，见 6.1）。对文件数与总字节设上限，超限返回 `413`。
+`getSnapshot(projectId, version)` → project-history `GET /project/:id/version/:version`，返回 `{files: {path: {data:{content}} | {data:{hash}}}}`。
+
+注意 `SnapshotManager._loadFilesLimit`（`services/project-history/app/js/SnapshotManager.js:261-271`）只为"本 chunk 内有文本操作的可编辑文件"返回内容；**未改动的文本文件与二进制文件一律只给 hash**。因此快照服务必须：
+
+- 对每个 `{data:{hash}}` 条目用 `HistoryManager.promises.requestBlobWithProjectId(projectId, hash)` 拉 blob（并发上限 4），用 `FileTypeManager` 判断文本还是二进制；文本超过 `Settings.max_doc_length`（2 MB）按二进制处理。
+- 读取前先经 `VersionService.getLatestVersion` 触发 flush，否则"最新"快照落后于编辑器。
+- hash 是内容的 git blob SHA-1，跨项目可比较；但 blob 存储按项目隔离，必须用"看到这个 hash 的那个项目"的 history id 去取，跨项目写入前要先 `HistoryManager.copyBlob`。
+
+二进制对外经 web 提供 HMAC 签名的短时 URL（供 git-bridge 无鉴权头拉取，见 6.1）。对文件数与总字节设上限，超限返回 `413`。
 
 ### 4.5 写服务与修改树
 
@@ -226,6 +245,10 @@ async function writeFiles(projectId, userId, {baseVersion, message, agent, upser
 - `deleteUpdate` 目前吞错误只打 warn（`UpdateMerger.mjs:137-142`），封装层要显式收集失败并返回。
 - 单文件写只是 `upserts` 长度为 1 的特例，不单独实现一套。
 
+**回退（`revert_to`）不走 `RestoreManager`。** 原因有三：`revertProject` / `revertFile` 要求 `project.overleaf.history.rangesSupportEnabled`，而 CE 项目默认关闭（`ProjectCreationHandler.mjs:275-286`，split test 在非 SaaS 下恒为 default）；它们先删后建实体，实体 id 全部变化，socket 事件风暴；它们不打 label。我们的实现是"取目标版本快照（含 blob 解析）→ 构造 `writeFiles` 的 upsert 与 delete 列表 → 锁内应用 → label `Revert to version N`"，origin 为 `{kind:'mcp', agent, message, revert:{from,to}}`。这样回退本身也是修改树上的一个普通节点，实体 id 稳定，且不依赖任何功能开关。
+
+**`edit_file` 走同一条路。** 从 document-updater 读实时内容，在服务端按 `replace_range` / `replace_anchor` / `replace_section` 算出新内容，预检 `Σ(line.length+1) ≤ Settings.max_doc_length`（否则 document-updater 返回 406），再交给 `writeFiles`。document-updater 的 `setDoc` 对新旧内容做 diff 生成 OT 操作，并发的人工输入不会被覆盖。
+
 ### 4.6 分支服务
 
 Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。原生的 `ProjectDuplicator.duplicate` 已经能复制全部内容，缺的只是"这个副本是谁的分支、基于哪个版本"这条关系。
@@ -249,7 +272,17 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 
 冲突策略：**只返回冲突，不自动应用**。agent 拿到冲突 hunk 后在分支上解决再重新 merge，或让人在编辑器里处理。
 
-分支项目会出现在用户项目列表里，名字带 `[branch: …]` 后缀。这是原生行为，也让人随时能打开分支看内容。后续 UI 可以把它们折叠到父项目下。
+分支项目会出现在用户项目列表里，名字带 `[branch: …]` 后缀。这是原生行为，也让人随时能打开分支看内容。
+
+实现细节（来自内部接口调研）：
+
+- `ProjectDuplicator.duplicate` 只需要 `owner._id`，用 `cloneHistory: false`（`true` 在 CE 里是坏的，blob 批量复制从未实现）。副本从空历史开始，所以 `baseVersion` 必须记父项目 fork 时的版本，不能从分支自身推导。
+- 项目名上限 150 字符，禁止 `/`、`\` 和首尾空白，不要求唯一。拼后缀前先把父项目名截到 `150 - 后缀长度`，再过 `ProjectDetailsHandler.fixProjectName`。
+- **分组用标签，不改前端。** 项目列表没有任何模块扩展点；fork 时经 `TagsHandler` 给分支项目挂标签 `branch: <父项目名>`，侧栏筛选和行内徽章天然可用。真正的嵌套视图需要改 5 个核心文件，列为 M5 的可选项。
+- 归档走 `ProjectDeleter.promises.archiveProject(projectId, userId)`，只是按用户的可见性标记，项目仍可通过 URL 访问、历史保留。
+- 三方合并用仓库已有的 `diff` 5.2.2（`services/web` 的直接依赖）的 `merge(mine, theirs, base)`，冲突 hunk 带 `conflict: true`。不引入 `node-diff3`。
+- 跨项目写入二进制前必须 `HistoryManager.copyBlob(sourceHistoryId, targetHistoryId, hash)`，blob 存储按项目隔离。
+- 新集合 `syncBranches` 需要一份 `tools/migrations/` 迁移创建索引（`autoIndex` 关闭，schema 上的 `index: true` 不会生效），tags 用 `['server-ce','server-pro','saas']`。
 
 ---
 
@@ -294,7 +327,22 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 ### 5.3 归属与可见性
 
 - origin `{kind:'mcp', agent:'<MCP client name>', message}`。
-- 前端 `origin.tsx` 增加 `mcp` → "(via Agent)"；`editor-manager-context.tsx:238` 的 `source === 'git-bridge'` 判断扩展为包含 `mcp`。
+- 前端 `origin.tsx` 增加 `mcp` → "(via Agent)"；`editor-manager-context.tsx:238` 的 `source === 'git-bridge'` 判断扩展为包含 `mcp`。词条 `history_entry_origin_agent` 加进 `locales/en.json` 后需 `npm run extract-translations`。
+- **agent 名字暂不进历史。** `libraries/overleaf-editor-core/lib/origin/index.js` 的 `Origin.toRaw()` 只序列化 `kind`，`origin.agent` 写入 history-v1 时会被丢弃。要显示具体 agent 名需新增 `McpOrigin` 子类并在共享库注册，影响 history-v1 与 project-history。agent 名已写在 label 的 message 里，M5 再评估是否值得动共享库。
+- project-history 的 `SummarizedUpdatesManager` 会在 `origin.kind` 变化处切分条目，所以 agent 改动天然与人工编辑分开显示。
+
+### 5.4 UI 接入路径（M5）
+
+前端调研结论，供 M5 直接执行：
+
+| 目标 | 机制 | 必须的核心改动 |
+|---|---|---|
+| 设置页令牌管理 | 组件放 `modules/project-sync/frontend/js/components/`，登记到 `settings.defaults.js` 的 `overleafModuleImports.integrationLinkingWidgets` | 该区块以 `isSaas \|\| gitBridgeEnabled` 为显示条件（`linking-section.tsx:45`）；M4 设置 `enableGitBridge` 后自然打开，或改用新槽位 + `PatSection` |
+| 编辑器 "Connect agent / Git" 面板 | `integrationPanelComponents` 槽位 + `integration-card.tsx` 复用，模态框用 `OLModal` 系列 | Integrations 标签以同一条件隐藏（`rail.tsx:122`） |
+| 历史面板 "(via Agent)" | 三处追加式改动 | `shared.ts` 类型联合、`origin.tsx`、`en.json` |
+| 项目列表分支分组 | 自动标签 | 无 |
+
+约束：槽位登记永远是核心文件改动，模块不能自注册；槽位组件不接收 props，数据靠 `getMeta()` 或自行 fetch（`fetch-json.ts` 自动带 CSRF）；模块 pug 不能新增 `ol-*` meta（`Views.mjs:78-88` 启动即抛错）。mocha、Cypress、Storybook 都已自动收录 `modules/*`，不需要新建测试配置。现成可复用的 8 条 `git_bridge_modal_*` 词条是闭源模块遗留，无消费者。
 
 ---
 
@@ -358,9 +406,11 @@ agent: archive_branch D
 
 | 阶段 | 交付 | 状态 |
 |---|---|---|
-| **M1 令牌与鉴权** | PAT 模型与服务、`requireAccessToken`、`/oauth/token/info`、令牌管理 REST、单元测试 | 代码已在分支 `feat/project-sync-tokens`（8 个提交），待跑测试与评审修正 |
-| **M2 MCP 读写** | `ProjectRef`、`VersionService`、`SnapshotService`、`WriteService`（含 label）、MCP 传输、工具 `list_projects` / `get_project` / `read_file` / `get_outline` / `search` / `write_files` / `edit_file` / `list_history` / `diff` / `revert_to`、"(via Agent)" 前端标签 | 下一步 |
-| **M3 分支** | `SyncBranch` 模型、`BranchService`、五个分支工具、三方合并 | |
+| **M1 令牌与鉴权** | PAT 模型与服务、`requireAccessToken`、`/oauth/token/info`、令牌管理 REST、单元测试 | ✅ 分支 `feat/project-sync-tokens`，13 提交，Vitest 16/16、eslint 通过 |
+| **M2a MCP 读 + `write_files`** | `ProjectRef`、`VersionService`、`SnapshotService`、`LabelService`、`WriteService`、MCP 传输、7 个读工具 + `write_files`、smoke 脚本、`AGENTS.md` | ✅ 分支 `feat/mcp-read`，26 提交，Vitest 26/26、eslint、prettier、smoke 全过 |
+| **M2b `edit_file` / `revert_to` / 前端标签** | 快照 blob 解析、`RevertService`、`edit_file` 三种定位、"(via Agent)" 三处改动 | 🔄 分支 `feat/mcp-write-revert`，进行中 |
+| **M2.5 本地集成环境** | `develop/` compose，跳过 clsi，Redis 端口改映射 | ⏳ 待拍板，runbook 见 `dev-environment.md` |
+| **M3 分支** | `SyncBranch` 模型 + 迁移、`BranchService`、五个分支工具、`diff.merge` 三方合并、自动标签 | |
 | **M4 git-bridge 适配器** | 四个只读端点、签名 blob URL、推送与 postback、settings / nginx / compose、删除通知 | |
 | **M5 可视化** | 设置页令牌区块、编辑器 Git 模态框、分支折叠与修改树视图 | 增量 |
 | **M6 加固** | 速率限制、大项目上限、指标、最小 OAuth（如有客户端需要） | |
@@ -393,3 +443,8 @@ M2 完成即可端到端使用：拿令牌、把项目链接贴给 agent、agent
 6. **冲突只报不合**。
 7. **不实现 OAuth2 授权服务器**：git-bridge 的 `Oauth2Filter` 实际只做 bearer 校验。
 8. **模块三分**：便于按需启用与向 upstream 贡献。
+9. **回退用自有原语而非 `RestoreManager`**：绕开 `rangesSupportEnabled` 开关，保持实体 id 稳定，回退也成为带 label 的普通节点。
+10. **分支分组用标签**：项目列表无扩展点，标签零改动；嵌套视图列为 M5 可选。
+11. **agent 名字不进 origin**：避免为显示名改共享库 `overleaf-editor-core`；名字留在 label message 里。
+12. **三方合并用 `diff` 5.2.2 的 `merge`**：已是 web 直接依赖，不新增包。
+13. **集成环境用 `develop/` compose 且首期跳过 clsi**：MCP 与 git 验证不需要编译 PDF，省掉 texlive 的 1 到 2 小时构建。
