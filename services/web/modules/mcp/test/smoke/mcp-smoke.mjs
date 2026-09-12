@@ -41,6 +41,13 @@ const services = {
       return { version: 4, label: null }
     },
   },
+  ProjectGetter: {
+    promises: {
+      async findAllUsersProjects() {
+        return { owned: [{ _id: projectId, name: 'Smoke project' }] }
+      },
+    },
+  },
   settings: { max_doc_length: 2000000 },
   SnapshotService: {
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
@@ -93,8 +100,19 @@ for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
     throw new Error(`missing tool: ${name}`)
 }
+const projects = await client.callTool(
+  { name: 'list_projects', arguments: {} },
+  CallToolResultSchema
+)
+if (
+  Array.isArray(projects.structuredContent) ||
+  !Array.isArray(projects.structuredContent.projects) ||
+  projects.structuredContent.count !== 1
+)
+  throw new Error('list_projects returned an invalid structuredContent shape')
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
-console.log(`read_file: ${JSON.stringify(read)}`)
+console.log(`read_file: ${read.structuredContent.path}`)
+console.log(`list_projects: ${projects.structuredContent.count} projects`)
 
 await client.close()
 await server.close()

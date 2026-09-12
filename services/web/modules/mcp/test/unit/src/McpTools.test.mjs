@@ -25,6 +25,11 @@ function setup(overrides = {}) {
     WriteService: {
       writeFiles: vi.fn(async () => ({ version: 5, applied: [], failed: [] })),
     },
+    RevertService: {
+      revertTo: vi.fn(async () => ({ version: 5, applied: [], failed: [] })),
+    },
+    fetchJson: vi.fn(async () => ({ updates: [] })),
+    settings: { apis: { project_history: { url: 'http://history' } } },
     ProjectGetter: {
       promises: {
         findAllUsersProjects: vi.fn(async () => ({})),
@@ -98,7 +103,8 @@ describe('MCP tools', () => {
       },
     })
     const result = await server._registeredTools.list_projects.handler({})
-    expect(result.structuredContent).toEqual([
+    expect(result.structuredContent.count).toBe(4)
+    expect(result.structuredContent.projects).toEqual([
       expect.objectContaining({ project_id: 'owned', permissions: 'write' }),
       expect.objectContaining({ project_id: 'review', permissions: 'read' }),
       expect.objectContaining({
@@ -130,7 +136,8 @@ describe('MCP tools', () => {
     const result = await server._registeredTools.get_outline.handler({
       project: 'a'.repeat(24),
     })
-    expect(result.structuredContent).toEqual([
+    expect(result.structuredContent.count).toBe(2)
+    expect(result.structuredContent.headings).toEqual([
       { path: 'main.tex', line: 1, level: 'section', title: 'Root' },
       {
         path: 'parts/intro.tex',
@@ -161,12 +168,16 @@ describe('MCP tools', () => {
       query: '^beta$',
       regex: true,
     })
-    expect(plain.structuredContent).toEqual([
-      { path: 'main.tex', line: 1, text: 'alpha 123' },
-    ])
-    expect(regex.structuredContent).toEqual([
-      { path: 'main.tex', line: 2, text: 'beta' },
-    ])
+    expect(plain.structuredContent).toMatchObject({
+      count: 1,
+      truncated: false,
+      matches: [{ path: 'main.tex', line: 1, text: 'alpha 123' }],
+    })
+    expect(regex.structuredContent).toMatchObject({
+      count: 1,
+      truncated: false,
+      matches: [{ path: 'main.tex', line: 2, text: 'beta' }],
+    })
   })
 
   it('returns a structured error for an invalid regular expression', async () => {
@@ -209,24 +220,95 @@ describe('MCP tools', () => {
     const result = await server._registeredTools.list_history.handler({
       project: 'a'.repeat(24),
     })
-    expect(result.structuredContent).toEqual([
-      {
-        type: 'label',
-        version: 4,
-        comment: 'Agent change',
-        user: 'user-1',
-        created_at: '2026-01-02T00:00:00Z',
+    expect(result.structuredContent).toEqual({
+      count: 2,
+      entries: [
+        {
+          type: 'label',
+          version: 4,
+          comment: 'Agent change',
+          user: 'user-1',
+          created_at: '2026-01-02T00:00:00Z',
+        },
+        {
+          type: 'update',
+          from_version: 3,
+          to_version: 4,
+          origin: { kind: 'mcp' },
+          users: ['user-1'],
+          timestamp: '2026-01-01T00:00:00Z',
+          pathnames: ['main.tex'],
+        },
+      ],
+    })
+  })
+
+  it('returns an error when every requested write fails', async () => {
+    const { server } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 5,
+          label: null,
+          applied: [],
+          failed: [{ path: 'main.tex', error: 'EACCES' }],
+        })),
       },
-      {
-        type: 'update',
-        from_version: 3,
-        to_version: 4,
-        origin: { kind: 'mcp' },
-        users: ['user-1'],
-        timestamp: '2026-01-01T00:00:00Z',
-        pathnames: ['main.tex'],
-      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'main.tex', content: 'x' }],
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('write_failed')
+    expect(result.structuredContent.failed).toEqual([
+      { path: 'main.tex', error: 'EACCES' },
     ])
+    expect(result.structuredContent.next_action).toContain('no label')
+  })
+
+  it('keeps partial write failures as successful results', async () => {
+    const { server } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 5,
+          label: { comment: 'm' },
+          applied: ['main.tex'],
+          failed: [{ path: 'fig.png', error: 'EACCES' }],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [
+        { path: 'main.tex', content: 'x' },
+        { path: 'fig.png', content: 'y' },
+      ],
+    })
+    expect(result.isError).toBe(false)
+    expect(result.structuredContent.failed).toEqual([
+      { path: 'fig.png', error: 'EACCES' },
+    ])
+  })
+
+  it('returns an error when every revert file fails', async () => {
+    const { server } = setup({
+      RevertService: {
+        revertTo: vi.fn(async () => ({
+          version: 5,
+          label: null,
+          applied: [],
+          failed: [{ path: 'main.tex', error: 'EACCES' }],
+        })),
+      },
+    })
+    const result = await server._registeredTools.revert_to.handler({
+      project: 'a'.repeat(24),
+      version: 1,
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('write_failed')
   })
 
   it('returns version conflict payload for writes', async () => {
@@ -250,6 +332,33 @@ describe('MCP tools', () => {
     })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.actual_version).toBe(2)
+  })
+  it('returns plain-object structured content for every tool', async () => {
+    const { server } = setup()
+    const project = 'a'.repeat(24)
+    const argumentsByTool = {
+      list_projects: {},
+      get_project: { project },
+      read_file: { project, path: 'main.tex' },
+      get_outline: { project },
+      search: { project, query: 'one' },
+      list_history: { project },
+      diff: { project, from_version: 1, to_version: 2 },
+      write_files: { project, message: 'm', files: [] },
+      revert_to: { project, version: 1 },
+      edit_file: {
+        project,
+        path: 'main.tex',
+        base_version: 4,
+        edits: [],
+        message: 'm',
+      },
+    }
+    for (const [name, tool] of Object.entries(server._registeredTools)) {
+      const result = await tool.handler(argumentsByTool[name])
+      expect(typeof result.structuredContent).toBe('object')
+      expect(Array.isArray(result.structuredContent)).toBe(false)
+    }
   })
 })
 
@@ -468,6 +577,18 @@ describe('edit_file', () => {
       }
     )
     expect(ambiguous.result.structuredContent.code).toBe('anchor_ambiguous')
+    expect(ambiguous.result.structuredContent.next_action).toContain(
+      'unique anchor'
+    )
+    const missing = await call({
+      type: 'replace_anchor',
+      anchor: 'missing',
+      new_text: 'x',
+    })
+    expect(missing.result.structuredContent.code).toBe('anchor_not_found')
+    expect(missing.result.structuredContent.next_action).toContain(
+      'current content'
+    )
     const large = await call(
       {
         type: 'replace_range',

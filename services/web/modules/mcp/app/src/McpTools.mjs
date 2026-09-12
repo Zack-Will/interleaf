@@ -13,12 +13,104 @@ import {
   InvalidEditError,
 } from '../../../project-sync/app/src/Errors.mjs'
 
-const textResult = (data, text = JSON.stringify(data)) => ({
+function normalizeStructuredContent(data) {
+  if (Array.isArray(data)) return { items: data, count: data.length }
+  if (data && typeof data === 'object') return data
+  return { value: data }
+}
+
+function writeSummary(data) {
+  const applied = Array.isArray(data.applied) ? data.applied : []
+  const failed = Array.isArray(data.failed) ? data.failed : []
+  const parts = [
+    `${applied.length} file${applied.length === 1 ? '' : 's'} applied`,
+  ]
+  if (failed.length)
+    parts.push(`${failed.length} file${failed.length === 1 ? '' : 's'} failed`)
+  const version = data.project_version ?? data.version
+  if (version != null) parts.unshift(`project version ${version}`)
+  if (data.label?.comment) parts.push(`label: ${data.label.comment}`)
+  if (data.code === 'write_failed') parts.unshift('No files were written')
+  return parts.join('; ')
+}
+
+function summaryText(data) {
+  if (Array.isArray(data)) return `${data.length} items`
+  if (!data || typeof data !== 'object')
+    return String(data ?? 'Operation completed')
+  if (Array.isArray(data.projects)) return `${data.count} projects`
+  if (Array.isArray(data.entries)) return `${data.count} history entries`
+  if (Array.isArray(data.headings)) return `${data.count} headings`
+  if (Array.isArray(data.matches)) {
+    const lines = data.matches
+      .slice(0, 39)
+      .map(match => `${match.path}:${match.line}: ${match.text}`)
+    const heading = `${data.count} matches${data.truncated ? ' (truncated)' : ''}`
+    return [heading, ...lines].join('\n')
+  }
+  if (Array.isArray(data.applied) || Array.isArray(data.failed))
+    return writeSummary(data)
+  if (Array.isArray(data.diff))
+    return `${data.count ?? data.diff.length} diff entries`
+  if (data.path && data.project_version != null)
+    return `${data.path}; project version ${data.project_version}; document version ${data.doc_version ?? 'unknown'}`
+  if (data.project_id && data.project_version != null) {
+    const fileCount = Array.isArray(data.files)
+      ? `; ${data.files.length} files`
+      : ''
+    return `Project ${data.name || data.project_id} at version ${data.project_version}${fileCount}; ${data.permissions || 'read'} access`
+  }
+  if (data.reverted_from_version != null)
+    return `Reverted from version ${data.reverted_from_version} to ${data.reverted_to_version}`
+  if (data.project_version != null) {
+    const label = data.label?.comment ? `; label: ${data.label.comment}` : ''
+    return `Project updated to version ${data.project_version}${label}`
+  }
+  if (data.message) return data.message
+  return 'Operation completed'
+}
+
+const textResult = (data, text = summaryText(data)) => ({
   content: [{ type: 'text', text }],
-  structuredContent: data,
+  structuredContent: normalizeStructuredContent(data),
 })
 
-const errorResult = (error, next = 'check request') => ({
+function writeResult(data, requestedCount = null) {
+  const structured = normalizeStructuredContent(data)
+  const applied = Array.isArray(structured.applied) ? structured.applied : []
+  const failed = Array.isArray(structured.failed) ? structured.failed : []
+  const allFailed =
+    (requestedCount != null ? requestedCount > 0 : failed.length > 0) &&
+    applied.length === 0
+  if (!allFailed) return { isError: false, ...textResult(structured) }
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text',
+        text: writeSummary({ ...structured, code: 'write_failed' }),
+      },
+    ],
+    structuredContent: {
+      ...structured,
+      code: 'write_failed',
+      message: 'No files were written and no label was created',
+      next_action:
+        'Fix the failed files and retry; nothing was written and no label was created',
+    },
+  }
+}
+
+function nextAction(error, next) {
+  if (next) return next
+  if (error.code === 'anchor_ambiguous')
+    return 're-read the file and pick a unique anchor; candidate_lines lists the matches'
+  if (error.code === 'anchor_not_found')
+    return 're-read the file and choose an anchor present in the current content'
+  return 'check request'
+}
+
+const errorResult = (error, next) => ({
   isError: true,
   content: [{ type: 'text', text: error.message || String(error) }],
   structuredContent: {
@@ -31,7 +123,7 @@ const errorResult = (error, next = 'check request') => ({
       ? { actual_version: error.actualVersion }
       : {}),
     ...(error.candidateLines ? { candidate_lines: error.candidateLines } : {}),
-    next_action: next,
+    next_action: nextAction(error, next),
   },
 })
 
@@ -78,7 +170,7 @@ export function registerTools(
           })
         }
       }
-      return output
+      return { projects: output, count: output.length }
     })
   )
 
@@ -214,7 +306,7 @@ export function registerTools(
             })
           } catch {}
         }
-        return output
+        return { headings: output, count: output.length }
       })
   )
 
@@ -234,6 +326,7 @@ export function registerTools(
         const tree = await services.SnapshotService.getFileTree(id)
         const expression = regex ? new RegExp(query) : null
         const output = []
+        let totalMatches = 0
         for (const file of tree.filter(item => item.kind === 'doc')) {
           const document = await services.SnapshotService.readDoc(
             id,
@@ -241,15 +334,18 @@ export function registerTools(
             {}
           )
           document.lines.forEach((text, index) => {
-            if (
-              output.length < max_results &&
-              (expression ? expression.test(text) : text.includes(query))
-            ) {
-              output.push({ path: file.path, line: index + 1, text })
+            if (expression ? expression.test(text) : text.includes(query)) {
+              totalMatches += 1
+              if (output.length < max_results)
+                output.push({ path: file.path, line: index + 1, text })
             }
           })
         }
-        return output
+        return {
+          matches: output,
+          count: totalMatches,
+          truncated: totalMatches > output.length,
+        }
       })
   )
 
@@ -284,13 +380,14 @@ export function registerTools(
           timestamp: update.timestamp,
           pathnames: update.pathnames || update.paths,
         }))
-        return [...normalizedLabels, ...normalizedUpdates]
+        const entries = [...normalizedLabels, ...normalizedUpdates]
           .sort(
             (left, right) =>
               new Date(right.created_at || right.timestamp || 0) -
               new Date(left.created_at || left.timestamp || 0)
           )
           .slice(0, limit)
+        return { entries, count: entries.length }
       })
   )
 
@@ -310,7 +407,10 @@ export function registerTools(
         const url = path
           ? `${services.settings.apis.project_history.url}/project/${id}/diff?pathname=${encodeURIComponent(path)}&from=${from_version}&to=${to_version}`
           : `${services.settings.apis.project_history.url}/project/${id}/filetree/diff?from=${from_version}&to=${to_version}`
-        return services.fetchJson(url)
+        const result = await services.fetchJson(url)
+        return Array.isArray(result)
+          ? { diff: result, count: result.length }
+          : result
       })
   )
 
@@ -341,7 +441,7 @@ export function registerTools(
           agent: agent || clientName || 'mcp',
           files,
         })
-        return textResult(result)
+        return writeResult(result, files.length)
       } catch (error) {
         return errorResult(
           error,
@@ -362,16 +462,20 @@ export function registerTools(
       message: z.string().optional(),
       agent: z.string().optional(),
     },
-    async ({ project, version, path, message, agent }) =>
-      run(async () => {
+    async ({ project, version, path, message, agent }) => {
+      try {
         const id = projectId(project, services)
-        return services.RevertService.revertTo(id, userId, {
+        const result = await services.RevertService.revertTo(id, userId, {
           version,
           path,
           message,
           agent: agent || clientName || 'mcp',
         })
-      })
+        return writeResult(result)
+      } catch (error) {
+        return errorResult(error)
+      }
+    }
   )
 
   server.tool(
@@ -509,6 +613,7 @@ export function registerTools(
           files: [{ path, content }],
         })
         return {
+          path,
           project_version: result.version,
           label: result.label,
           diff: createTwoFilesPatch(path, path, before, content),
