@@ -130,6 +130,34 @@ the web service is listening. Then check, in order:
 A reverse proxy in front of the stack must pass `/git/` and `/mcp` through
 untouched, and needs a `client_max_body_size` large enough for a git push.
 
+## TeX Live
+
+The published base image carries only `scheme-basic`, which is missing packages
+that most conference templates need, so the workflow's `texlive_scheme` input
+defaults to `scheme-full` and the install is the **first** layer of the image.
+Two things follow from that:
+
+- The TeX environment is part of the image, not state to be preserved. Rolling
+  back to an older tag gives you exactly the TeX Live that tag was built with.
+- Because the layer sits above the base image and below every source layer, a
+  rebuild that only changes application code reuses it, and the host pulling the
+  new tag downloads only the small layers.
+
+Packages added by hand inside a running container are still lost on the next
+recreate, as they always were. For those, keep a site-local tree on the host and
+mount it at `TEXMFLOCAL`, using the toolkit's override file:
+
+```yaml
+# config/docker-compose.override.yml
+services:
+  sharelatex:
+    volumes:
+      - "/absolute/path/to/toolkit/data/texmf-local:/usr/local/texlive/texmf-local"
+```
+
+Drop `.cls` and `.sty` files under `data/texmf-local/tex/latex/<name>/`, then run
+`docker exec sharelatex mktexlsr`. That tree is untouched by image updates.
+
 ## Things this rollout ran into
 
 - The image generation after 6.1.2 requires `OVERLEAF_INVITE_TOKEN_SECRET`.
