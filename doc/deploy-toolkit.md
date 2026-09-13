@@ -1,8 +1,7 @@
-# Deploying this fork with the Overleaf Toolkit
+# Deploying Interleaf with the Overleaf Toolkit
 
 This runbook replaces a running Overleaf Community Edition instance managed by
-the [Overleaf Toolkit](https://github.com/overleaf/toolkit) with the image built
-from this fork, keeping the existing projects, users and history.
+the [Overleaf Toolkit](https://github.com/overleaf/toolkit) with the Interleaf image, keeping the existing projects, users and history.
 
 The fork is Community Edition plus five web modules: `project-sync` (personal
 access tokens and the write path), `mcp` (the agent endpoint), `git-bridge` (the
@@ -14,7 +13,7 @@ See `doc/agent-sync-usage.md` and `doc/github-backup.md` for what they do.
 
 | Item | Stock | Here |
 |---|---|---|
-| Image | `sharelatex/sharelatex:<version>` | `ghcr.io/<owner>/overleaf:<version>`, built by `.github/workflows/build-image.yml` |
+| Image | `sharelatex/sharelatex:<version>` | `ghcr.io/<owner>/interleaf:<version>`, built by `.github/workflows/build-image.yml` |
 | git-bridge | Server Pro only | Works on CE, but the toolkit refuses to start it unless one gate is patched |
 | Image tag | An Overleaf release | Must still look like `X.Y.Z`: the toolkit validates it and derives the git-bridge tag from it |
 
@@ -29,7 +28,7 @@ In the fork, run the **Build CE image** workflow (Actions tab, or
 `server-ce/Dockerfile` on the published `sharelatex/sharelatex-base:6.1.0` and
 pushes two packages:
 
-- `ghcr.io/<owner>/overleaf:<version>` — this fork
+- `ghcr.io/<owner>/interleaf:<version>` — this fork
 - `ghcr.io/<owner>/git-bridge:<version>` — the official git-bridge, re-tagged so
   that the toolkit's `<image>:<version>` convention resolves
 
@@ -78,7 +77,7 @@ Re-apply it after every `bin/upgrade` of the toolkit itself.
 `config/overleaf.rc`:
 
 ```
-OVERLEAF_IMAGE_NAME=ghcr.io/<owner>/overleaf
+OVERLEAF_IMAGE_NAME=ghcr.io/<owner>/interleaf
 GIT_BRIDGE_IMAGE=ghcr.io/<owner>/git-bridge
 GIT_BRIDGE_ENABLED=true
 GIT_BRIDGE_ALLOW_CE=true
