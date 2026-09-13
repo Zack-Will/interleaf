@@ -1,0 +1,30 @@
+// Styles for the project-sync / git-bridge / mcp modules: the personal access
+// token widget on the settings page and the "Git and agents" editor panel.
+// Deliberately mirrors the `.access-token` treatment used by the share modal so
+// that copyable commands look the same everywhere.
+
+.command-snippet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-04);
+  background-color: var(--neutral-10);
+  border: 1px solid var(--neutral-30);
+  padding: var(--spacing-03) var(--spacing-05);
+
+  code {
+    overflow-wrap: anywhere;
+  }
+}
+
+.personal-access-tokens-table {
+  margin-bottom: var(--spacing-05);
+
+  code {
+    white-space: nowrap;
+  }
+}
+
+.personal-access-token-scope {
+  margin-right: var(--spacing-02);
+}

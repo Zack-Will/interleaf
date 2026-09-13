@@ -6,6 +6,31 @@
 ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
+# Extra TeX Live on top of the base image's scheme-basic. Kept as the first
+# layer so that a source change never invalidates a multi-gigabyte download,
+# and empty by default so the stock build is unchanged. The base image turned
+# off doc and source files, so a full scheme stays around 5 GB.
+ARG TEXLIVE_SCHEME=
+# The rolling tlnet mirrors now serve TeX Live 2026 while the base image has
+# 2025 installed, and every package checksum then mismatches. Point at the
+# frozen 2025 tree instead, which also makes the layer reproducible.
+ARG TEXLIVE_MIRROR=https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final
+# `fmtutil` runs with --strict in tlmgr's post actions, and one Polish format
+# (utf8mex) does not build here, which would abort an otherwise complete
+# install. Disable that format and finish the install; the kpsewhich checks are
+# what decides whether this layer succeeded.
+RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
+      tlmgr option repository "$TEXLIVE_MIRROR" \
+      &&  { tlmgr install $TEXLIVE_SCHEME \
+            || { fmtutil-sys --disablefmt utf8mex || true; \
+                 tlmgr install $TEXLIVE_SCHEME; } ; } \
+      &&  tlmgr path add \
+      &&  rm -rf /usr/local/texlive/*/tlpkg/backups \
+      &&  kpsewhich xkeyval.sty \
+      &&  kpsewhich acmart.cls \
+      &&  kpsewhich IEEEtran.cls ; \
+    fi
+
 WORKDIR /overleaf
 
 # Add required source files for yarn install

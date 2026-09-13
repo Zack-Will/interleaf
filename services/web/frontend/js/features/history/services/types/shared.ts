@@ -12,7 +12,7 @@ export interface Meta {
   start_ts: number
   end_ts: number
   type?: 'external' // TODO
-  source?: 'git-bridge' // TODO
+  source?: 'git-bridge' | 'mcp' // TODO
   origin?:
     | {
         kind:
@@ -22,6 +22,16 @@ export interface Meta {
           | 'github'
           | 'history-resync'
           | 'history-migration'
+      }
+    | {
+        // A write made by an agent through the MCP endpoint. `agent` is the
+        // name the MCP client reported, when it reported one, and `message`
+        // says why the change was made. `suggestion` marks a change the agent
+        // offered as tracked changes rather than one it applied.
+        kind: 'mcp'
+        agent?: string
+        message?: string
+        suggestion?: boolean
       }
     | {
         kind: 'file-restore'

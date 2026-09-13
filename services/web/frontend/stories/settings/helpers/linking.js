@@ -55,18 +55,20 @@ export function setDefaultMeta() {
 }
 
 export function setPersonalAccessTokensMeta() {
-  function generateToken(_id) {
+  function generateToken(index) {
     const oneYearFromNow = new Date()
     oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1)
 
-    const tokenHasBeenUsed = Math.random() > 0.5
+    const tokenHasBeenUsed = index % 2 === 0
 
     return {
-      _id,
-      accessTokenPartial: 'olp_abc' + _id,
-      createdAt: new Date(),
-      accessTokenExpiresAt: oneYearFromNow,
-      lastUsedAt: tokenHasBeenUsed ? new Date() : undefined,
+      id: `token-${index}`,
+      tokenPrefix: `olp_abc${index}`,
+      scopes: index % 3 === 0 ? ['git_bridge', 'mcp'] : ['git_bridge'],
+      label: `Token ${index}`,
+      createdAt: new Date().toISOString(),
+      expiresAt: index % 2 === 0 ? oneYearFromNow.toISOString() : null,
+      lastUsedAt: tokenHasBeenUsed ? new Date().toISOString() : null,
     }
   }
   const tokens = []

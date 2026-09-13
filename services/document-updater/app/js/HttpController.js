@@ -200,6 +200,9 @@ async function setDoc(req, res) {
   const docId = req.params.doc_id
   const projectId = req.params.project_id
   const { lines, source, user_id: userId, undoing } = req.body
+  // Opt in to turning the diff into tracked changes ("suggestions") that a
+  // human accepts or rejects, instead of plain edits.
+  const trackChanges = Boolean(req.body.track_changes)
   const lineSize = getTotalSizeOfLines(lines)
 
   if (lineSize > Settings.max_doc_length) {
@@ -210,27 +213,45 @@ async function setDoc(req, res) {
     return res.sendStatus(406)
   }
   logger.debug(
-    { projectId, docId, lines, source, userId, undoing },
+    { projectId, docId, lines, source, userId, undoing, trackChanges },
     'setting doc via http'
   )
   const timer = new Metrics.Timer('http.setDoc')
 
-  const result = await DocumentManager.promises.setDocWithLock(
-    projectId,
-    docId,
-    lines,
-    source,
-    userId,
-    undoing,
-    true
-  )
+  let result
+  try {
+    result = await DocumentManager.promises.setDocWithLock(
+      projectId,
+      docId,
+      lines,
+      source,
+      userId,
+      undoing,
+      true,
+      trackChanges
+    )
+  } catch (error) {
+    if (trackChanges && error instanceof Errors.OTTypeMismatchError) {
+      return res.status(422).json({
+        code: 'ot_type_unsupported',
+        message: 'tracked changes are only supported on sharejs documents',
+      })
+    }
+    throw error
+  }
   timer.done()
   logger.debug({ projectId, docId }, 'set doc via http')
 
   // If the document is unchanged and hasn't been updated, `result` will be
   // undefined, which leads to an invalid JSON response, so we send an empty
   // object instead.
-  res.json(result || {})
+  const { changeIds, ...rest } = result || {}
+  // The ids of the tracked changes this call created, so the caller can point a
+  // human at them without diffing the ranges itself.
+  if (!trackChanges) {
+    return res.json(rest)
+  }
+  res.json({ ...rest, change_ids: changeIds || [] })
 }
 
 async function appendToDoc(req, res) {
@@ -390,6 +411,76 @@ async function rejectChanges(req, res) {
     `rejected ${changeIds.length} changes via http`
   )
   res.json(response)
+}
+
+const THREAD_ID_REGEX = /^[0-9a-f]{24}$/
+
+function validateAddCommentBody({ threadId, position, text, userId }) {
+  if (typeof threadId !== 'string' || !THREAD_ID_REGEX.test(threadId)) {
+    return 'thread_id must be a 24 character hex string'
+  }
+  if (!Number.isInteger(position) || position < 0) {
+    return 'position must be a non-negative integer'
+  }
+  if (typeof text !== 'string' || text.length === 0) {
+    return 'text must be a non-empty string'
+  }
+  if (typeof userId !== 'string' || userId.length === 0) {
+    return 'user_id must be a non-empty string'
+  }
+  return null
+}
+
+async function addComment(req, res) {
+  const docId = req.params.doc_id
+  const projectId = req.params.project_id
+  const {
+    user_id: userId,
+    thread_id: threadId,
+    position,
+    text,
+  } = req.body || {}
+
+  const invalid = validateAddCommentBody({ threadId, position, text, userId })
+  if (invalid != null) {
+    return res.status(400).json({ code: 'invalid_request', message: invalid })
+  }
+
+  logger.debug(
+    { projectId, docId, threadId, position, userId },
+    'adding comment via http'
+  )
+  const timer = new Metrics.Timer('http.addComment')
+
+  let result
+  try {
+    result = await DocumentManager.promises.addCommentWithLock(
+      projectId,
+      docId,
+      { threadId, position, text },
+      userId
+    )
+  } catch (error) {
+    if (error instanceof Errors.CommentTextMismatchError) {
+      return res.status(400).json({
+        code: 'text_mismatch',
+        message: 'text does not match the document at this position',
+        position,
+        actual_text: error.info?.actualText ?? '',
+      })
+    }
+    if (error instanceof Errors.OTTypeMismatchError) {
+      return res.status(422).json({
+        code: 'ot_type_unsupported',
+        message: 'adding comments is only supported on sharejs documents',
+      })
+    }
+    throw error
+  }
+
+  timer.done()
+  logger.debug({ projectId, docId, threadId }, 'added comment via http')
+  res.json({ comment: result.comment, version: result.version })
 }
 
 async function resolveComment(req, res) {
@@ -560,6 +651,7 @@ module.exports = {
   deleteMultipleProjects: expressify(deleteMultipleProjects),
   acceptChanges: expressify(acceptChanges),
   rejectChanges: expressify(rejectChanges),
+  addComment: expressify(addComment),
   resolveComment: expressify(resolveComment),
   reopenComment: expressify(reopenComment),
   deleteComment: expressify(deleteComment),

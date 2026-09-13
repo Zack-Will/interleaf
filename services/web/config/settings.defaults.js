@@ -281,6 +281,14 @@ module.exports = {
     webpack: {
       url: `http://${process.env.WEBPACK_HOST || '127.0.0.1'}:3808`,
     },
+    gitBridge: {
+      url: `http://${process.env.GIT_BRIDGE_HOST || 'git-bridge'}:${
+        process.env.GIT_BRIDGE_PORT || '8000'
+      }`,
+      // Absolute base URL that the git-bridge container uses to reach web, for
+      // the self-authenticating blob URLs handed out in snapshots.
+      webPublicUrl: process.env.GIT_BRIDGE_WEB_PUBLIC_URL,
+    },
     wiki: {
       url: process.env.WIKI_URL || 'https://learnwiki.overleaf.com',
       maxCacheAge: parseInt(process.env.WIKI_MAX_CACHE_AGE || 5 * minutes, 10),
@@ -486,6 +494,40 @@ module.exports = {
     ? process.env.DEFAULT_LATEX_COMPILER
     : 'pdflatex',
   enableSubscriptions: false,
+  enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
+  enableReviewPanel: process.env.REVIEW_PANEL_ENABLED === 'true',
+  // The service account the MCP comment tools speak as, so that replies and
+  // resolutions made by an agent are attributable in the review panel.
+  review: {
+    agentUser: {
+      email: process.env.REVIEW_AGENT_USER_EMAIL || 'agent@overleaf.local',
+      firstName: 'Agent',
+      lastName: process.env.REVIEW_AGENT_USER_NAME || 'MCP',
+    },
+  },
+  gitBridgePublicBaseUrl:
+    process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
+  // One-way mirror of a project's git history to a GitHub repository. It reads
+  // the history from the git-bridge container, so it needs git-bridge enabled.
+  githubBackup: {
+    enabled: process.env.GITHUB_BACKUP_ENABLED === 'true',
+    intervalSeconds: intFromEnv('GITHUB_BACKUP_INTERVAL_SECONDS', 600),
+    reposDir:
+      process.env.GITHUB_BACKUP_REPOS_DIR ||
+      Path.resolve(__dirname, '../data/github-backup'),
+    apiBaseUrl:
+      process.env.GITHUB_BACKUP_API_BASE_URL || 'https://api.github.com',
+    gitTimeoutMs: intFromEnv('GITHUB_BACKUP_GIT_TIMEOUT_MS', 5 * minutes),
+    // The GitHub token and the internal git-bridge token are stored encrypted
+    // with this key. Rotating it makes every existing link unusable, so the
+    // owner has to connect the repository again.
+    accessTokenEncryptor: {
+      cipherLabel: '2026.1-v3',
+      cipherPasswords: {
+        '2026.1-v3': process.env.GITHUB_BACKUP_CIPHER_PASSWORD,
+      },
+    },
+  },
   restrictedCountries: [],
   enableOnboardingEmails: process.env.ENABLE_ONBOARDING_EMAILS === 'true',
 
@@ -1053,7 +1095,12 @@ module.exports = {
     pythonRunner: [],
     langFeedbackLinkingWidgets: [],
     labsExperiments: [],
-    integrationLinkingWidgets: [],
+    integrationLinkingWidgets: [
+      Path.resolve(
+        __dirname,
+        '../modules/project-sync/frontend/js/components/personal-access-tokens-widget.tsx'
+      ),
+    ],
     referenceLinkingWidgets: [],
     importProjectFromGithubModalWrapper: [],
     importProjectFromGithubMenu: [],
@@ -1098,7 +1145,16 @@ module.exports = {
         '../modules/full-project-search/frontend/js/components/full-project-search.tsx'
       ),
     ],
-    integrationPanelComponents: [],
+    integrationPanelComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/git-bridge/frontend/js/components/git-and-agents-card.tsx'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/github-backup/frontend/js/components/github-backup-card.tsx'
+      ),
+    ],
     referenceSearchSetting: [],
     settingsModalEditorTabSections: [],
     settingsModalSpellcheckSections: [],
@@ -1115,6 +1171,11 @@ module.exports = {
     'launchpad',
     'server-ce-scripts',
     'user-activate',
+    'project-sync',
+    'mcp',
+    'git-bridge',
+    'review',
+    'github-backup',
   ],
   viewIncludes: {},
 

@@ -225,6 +225,13 @@ history-root {
       align-items: center;
       margin-right: var(--spacing-04);
     }
+
+    // The origin follows the users list as a suffix on the same line
+    // ("You (via Claude Code)"), so the last name keeps a word space rather
+    // than the wider gap that separates one author from the next.
+    > li:last-child {
+      margin-right: var(--spacing-01);
+    }
   }
 
   .history-version-changes {
@@ -251,9 +258,19 @@ history-root {
   .history-version-day,
   .history-version-change-action,
   .history-version-metadata-users,
+  .history-version-message,
   .history-version-origin,
   .history-version-saved-by {
     color: var(--content-secondary-themed);
+  }
+
+  // The message an agent sent with a write, on its own line under the author
+  // line. Messages are free text, so keep the entry one line tall and leave
+  // the whole message to the tooltip.
+  .history-version-message {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .history-version-change-action {
