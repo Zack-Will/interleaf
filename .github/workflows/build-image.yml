@@ -1,12 +1,13 @@
-# Builds the Community Edition image of this fork (Overleaf CE plus the
-# project-sync, mcp, git-bridge, review and github-backup modules) and pushes it
-# to the GitHub Container Registry, so that a NAS or any other small host can
-# deploy it with a plain `docker pull` instead of building TeX Live locally.
+# Builds the two images a deployment needs and pushes them to the GitHub
+# Container Registry, so that a small host can deploy with a plain `docker pull`
+# instead of compiling TeX Live and Java locally:
+#
+#   interleaf   Overleaf Community Edition plus this fork's modules
+#   git-bridge  the MIT-licensed Java bridge from services/git-bridge
 #
 # The Overleaf Toolkit insists on a version-shaped tag (`X.Y.Z`) and derives the
-# git-bridge tag from the same string, so the workflow also mirrors the official
-# git-bridge image under the same tag in this namespace.
-name: Build CE image
+# git-bridge tag from the same string, so both images carry the same tag.
+name: Build Interleaf images
 
 on:
   workflow_dispatch:
@@ -15,10 +16,6 @@ on:
         description: 'Image tag, must look like X.Y.Z for the Overleaf Toolkit'
         required: true
         default: '6.2.0'
-      git_bridge_source:
-        description: 'Official git-bridge image to mirror under the same tag'
-        required: true
-        default: 'quay.io/sharelatex/git-bridge:6.2.0'
       base_image:
         description: 'Published Overleaf base image to build on'
         required: true
@@ -73,7 +70,7 @@ jobs:
       - name: Stage the build context
         run: cp server-ce/.dockerignore .dockerignore
 
-      - name: Build and push the CE image
+      - name: Build and push the Interleaf image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -88,18 +85,25 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           tags: |
-            ghcr.io/${{ env.OWNER }}/overleaf:${{ inputs.version }}
-            ghcr.io/${{ env.OWNER }}/overleaf:${{ github.sha }}
+            ghcr.io/${{ env.OWNER }}/interleaf:${{ inputs.version }}
+            ghcr.io/${{ env.OWNER }}/interleaf:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Copied manifest-to-manifest, so the bytes are never pulled onto the
-      # runner and the digest stays identical to the official image.
-      - name: Mirror the git-bridge image under the same tag
-        run: |
-          docker buildx imagetools create \
-            --tag ghcr.io/${{ env.OWNER }}/git-bridge:${{ inputs.version }} \
-            ${{ inputs.git_bridge_source }}
-          docker buildx imagetools inspect \
-            ghcr.io/${{ env.OWNER }}/git-bridge:${{ inputs.version }} \
-            | head -20
+      # Built from the MIT-licensed source in this repository rather than
+      # republishing someone else's binary. Its build context is the service
+      # directory, not the monorepo root.
+      - name: Build and push the git-bridge image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/git-bridge
+          file: services/git-bridge/Dockerfile
+          push: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+          tags: |
+            ghcr.io/${{ env.OWNER }}/git-bridge:${{ inputs.version }}
+          cache-from: type=gha,scope=git-bridge
+          cache-to: type=gha,mode=max,scope=git-bridge
