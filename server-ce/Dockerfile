@@ -17,15 +17,30 @@ ARG TEXLIVE_SCHEME=
 ARG TEXLIVE_MIRROR=https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final
 # `fmtutil` runs with --strict in tlmgr's post actions, and one Polish format
 # (utf8mex) does not build here, which would abort an otherwise complete
-# install. Disable that format and finish the install; the kpsewhich checks are
-# what decides whether this layer succeeded.
+# install. Disable that format and finish the install.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      '[ -n "$TEXLIVE_SCHEME" ] || exit 0' \
+      'tlmgr option repository "$TEXLIVE_MIRROR" >/dev/null' \
+      'tlmgr install "$@" || { fmtutil-sys --disablefmt utf8mex || true; tlmgr install "$@"; }' \
+      'tlmgr path add >/dev/null' \
+      'rm -rf /usr/local/texlive/*/tlpkg/backups' \
+      > /usr/local/bin/tl-install \
+ && chmod +x /usr/local/bin/tl-install
+
+# Installed in groups rather than one `scheme-full` step, so that the result is
+# a handful of moderate layers instead of a single multi-gigabyte blob. A host
+# on a slow or lossy link retries one group at a time, and an image rebuild that
+# only changes application code re-downloads none of them.
+RUN tl-install scheme-small
+RUN tl-install collection-latexrecommended collection-fontsrecommended
+RUN tl-install collection-latexextra
+RUN tl-install collection-fontsextra
+RUN tl-install collection-mathscience collection-bibtexextra collection-pictures
+RUN tl-install collection-langeuropean collection-langcjk collection-langother
 RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
-      tlmgr option repository "$TEXLIVE_MIRROR" \
-      &&  { tlmgr install $TEXLIVE_SCHEME \
-            || { fmtutil-sys --disablefmt utf8mex || true; \
-                 tlmgr install $TEXLIVE_SCHEME; } ; } \
-      &&  tlmgr path add \
-      &&  rm -rf /usr/local/texlive/*/tlpkg/backups \
+      tl-install "$TEXLIVE_SCHEME" \
       &&  kpsewhich xkeyval.sty \
       &&  kpsewhich acmart.cls \
       &&  kpsewhich IEEEtran.cls ; \
