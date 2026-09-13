@@ -27,6 +27,10 @@ on:
         description: 'Extra TeX Live to install, e.g. scheme-full. Empty keeps the base scheme-basic'
         required: false
         default: 'scheme-full'
+      texlive_mirror:
+        description: 'TeX Live repository, must serve the same release as the base image'
+        required: false
+        default: 'https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final'
 
 permissions:
   contents: read
@@ -78,6 +82,7 @@ jobs:
           build-args: |
             OVERLEAF_BASE_TAG=${{ inputs.base_image }}
             TEXLIVE_SCHEME=${{ inputs.texlive_scheme }}
+            TEXLIVE_MIRROR=${{ inputs.texlive_mirror }}
           labels: |
             com.overleaf.ce.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

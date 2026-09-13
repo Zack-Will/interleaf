@@ -11,7 +11,10 @@ FROM $OVERLEAF_BASE_TAG
 # and empty by default so the stock build is unchanged. The base image turned
 # off doc and source files, so a full scheme stays around 5 GB.
 ARG TEXLIVE_SCHEME=
-ARG TEXLIVE_MIRROR=https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet
+# The rolling tlnet mirrors now serve TeX Live 2026 while the base image has
+# 2025 installed, and every package checksum then mismatches. Point at the
+# frozen 2025 tree instead, which also makes the layer reproducible.
+ARG TEXLIVE_MIRROR=https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final
 # `fmtutil` runs with --strict in tlmgr's post actions, and one Polish format
 # (utf8mex) does not build here, which would abort an otherwise complete
 # install. Disable that format and finish the install; the kpsewhich checks are
