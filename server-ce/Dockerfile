@@ -12,11 +12,20 @@ FROM $OVERLEAF_BASE_TAG
 # off doc and source files, so a full scheme stays around 5 GB.
 ARG TEXLIVE_SCHEME=
 ARG TEXLIVE_MIRROR=https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet
+# `fmtutil` runs with --strict in tlmgr's post actions, and one Polish format
+# (utf8mex) does not build here, which would abort an otherwise complete
+# install. Disable that format and finish the install; the kpsewhich checks are
+# what decides whether this layer succeeded.
 RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
       tlmgr option repository "$TEXLIVE_MIRROR" \
-      &&  tlmgr install $TEXLIVE_SCHEME \
+      &&  { tlmgr install $TEXLIVE_SCHEME \
+            || { fmtutil-sys --disablefmt utf8mex || true; \
+                 tlmgr install $TEXLIVE_SCHEME; } ; } \
       &&  tlmgr path add \
-      &&  rm -rf /usr/local/texlive/*/tlpkg/backups ; \
+      &&  rm -rf /usr/local/texlive/*/tlpkg/backups \
+      &&  kpsewhich xkeyval.sty \
+      &&  kpsewhich acmart.cls \
+      &&  kpsewhich IEEEtran.cls ; \
     fi
 
 WORKDIR /overleaf
