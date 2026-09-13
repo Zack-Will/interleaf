@@ -6,6 +6,19 @@
 ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
+# Extra TeX Live on top of the base image's scheme-basic. Kept as the first
+# layer so that a source change never invalidates a multi-gigabyte download,
+# and empty by default so the stock build is unchanged. The base image turned
+# off doc and source files, so a full scheme stays around 5 GB.
+ARG TEXLIVE_SCHEME=
+ARG TEXLIVE_MIRROR=https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet
+RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
+      tlmgr option repository "$TEXLIVE_MIRROR" \
+      &&  tlmgr install $TEXLIVE_SCHEME \
+      &&  tlmgr path add \
+      &&  rm -rf /usr/local/texlive/*/tlpkg/backups ; \
+    fi
+
 WORKDIR /overleaf
 
 # Add required source files for yarn install
