@@ -1,6 +1,6 @@
 # Overleaf CE 内建 MCP 与 git-bridge 共存架构设计
 
-- 基线：`overleaf/overleaf@28ad3b0`（fork：`Zack-Will/overleaf`）
+- 基线：`overleaf/overleaf@28ad3b0`（本项目：Interleaf）
 - 状态：v1.2（2026-09-12，补入 UI / 环境 / 内部接口三份调研结论）
 - 范围：在 Community Edition 上，不依赖 Server Pro 闭源模块，同时提供
   1. 面向 AI agent 的内建 MCP（Model Context Protocol）端点

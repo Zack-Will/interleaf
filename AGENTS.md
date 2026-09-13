@@ -1,6 +1,6 @@
 # AGENTS.md — guidance for coding agents working in this fork
 
-This is a fork of the Overleaf monorepo (`Zack-Will/overleaf`, upstream `overleaf/overleaf`).
+This is Interleaf, a fork of the Overleaf monorepo (upstream `overleaf/overleaf`).
 The fork adds three web modules that make Overleaf Community Edition usable by AI agents and
 by Git without Server Pro. Design: `doc/design/agent-sync-architecture.md`. Read it before
 touching these modules. `doc/agent-sync-usage.md` is the user-facing guide to the same

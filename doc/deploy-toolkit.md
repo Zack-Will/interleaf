@@ -29,8 +29,9 @@ In the fork, run the **Build CE image** workflow (Actions tab, or
 pushes two packages:
 
 - `ghcr.io/<owner>/interleaf:<version>` — this fork
-- `ghcr.io/<owner>/git-bridge:<version>` — the official git-bridge, re-tagged so
-  that the toolkit's `<image>:<version>` convention resolves
+- `ghcr.io/<owner>/git-bridge:<version>` — the MIT-licensed Java bridge, built
+  from `services/git-bridge` in this repository and tagged to match, because the
+  toolkit derives the bridge tag from the same version string
 
 Both packages must be **public**, or the NAS needs `docker login ghcr.io` with a
 token that has `read:packages`.
