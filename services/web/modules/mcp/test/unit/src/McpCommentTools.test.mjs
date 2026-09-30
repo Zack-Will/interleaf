@@ -750,3 +750,53 @@ describe('edit_file re-anchoring', () => {
     expect(result.structuredContent.reanchored).toBeUndefined()
   })
 })
+
+describe('project_version on comment and suggestion writes', () => {
+  it('returns the version the project is at after the operation', async () => {
+    const suggestionAction = vi.fn(async () => ({
+      change_ids: ['ch-1'],
+      remaining: 0,
+    }))
+    const { server } = setup({
+      services: {
+        VersionService: {
+          getLatestVersion: vi.fn(async () => ({ version: 12 })),
+        },
+        SuggestionService: {
+          acceptSuggestions: suggestionAction,
+          rejectSuggestions: suggestionAction,
+        },
+      },
+    })
+    const tools = server._registeredTools
+    const calls = {
+      add_comment: {
+        project: projectId,
+        path: 'main.tex',
+        anchor: { exact: 'Gamma' },
+        content: 'Why?',
+      },
+      reanchor_comment: {
+        project: projectId,
+        thread_id: 't-detached',
+        path: 'main.tex',
+        anchor: { exact: 'delta' },
+      },
+      reply_comment: {
+        project: projectId,
+        thread_id: 't-alpha',
+        content: 'ok',
+      },
+      resolve_comment: { project: projectId, thread_id: 't-alpha' },
+      reopen_comment: { project: projectId, thread_id: 't-beta' },
+      accept_suggestions: { project: projectId, path: 'main.tex', all: true },
+      reject_suggestions: { project: projectId, path: 'main.tex', all: true },
+    }
+    for (const [name, args] of Object.entries(calls)) {
+      const result = await tools[name].handler(args)
+      expect(result.isError, name).not.toBe(true)
+      expect(result.structuredContent.project_version, name).toBe(12)
+      expect(result.content[0].text, name).toContain('project_version: 12')
+    }
+  })
+})

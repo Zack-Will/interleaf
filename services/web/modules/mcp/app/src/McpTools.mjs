@@ -133,9 +133,15 @@ function suggestionListSummary(data) {
   return parts.join('\n')
 }
 
+function versionSuffix(data) {
+  return data.project_version == null
+    ? ''
+    : `; project_version: ${data.project_version}`
+}
+
 function suggestionActionSummary(data) {
   const verb = data.action === 'accept' ? 'Accepted' : 'Rejected'
-  return `${verb} ${plural(data.change_ids.length, 'suggestion')} in ${data.path}; ${plural(data.remaining, 'suggestion')} still pending there`
+  return `${verb} ${plural(data.change_ids.length, 'suggestion')} in ${data.path}; ${plural(data.remaining, 'suggestion')} still pending there${versionSuffix(data)}`
 }
 
 function labelSummary(data) {
@@ -157,14 +163,14 @@ function backupSummary(data) {
 function commentPlacementSummary(data) {
   const action = data.reanchored ? 'Re-anchored' : 'Added'
   const place = `${data.path}:${data.line}:${data.column}`
-  return `${action} comment ${data.thread_id} at ${place} as ${data.acted_as}`
+  return `${action} comment ${data.thread_id} at ${place} as ${data.acted_as}${versionSuffix(data)}`
 }
 
 function commentActionSummary(data) {
   if (data.message_id)
-    return `Replied to thread ${data.thread_id} as ${data.acted_as}`
+    return `Replied to thread ${data.thread_id} as ${data.acted_as}${versionSuffix(data)}`
   const state = data.resolved ? 'Resolved' : 'Reopened'
-  return `${state} thread ${data.thread_id} as ${data.acted_as}`
+  return `${state} thread ${data.thread_id} as ${data.acted_as}${versionSuffix(data)}`
 }
 
 function summaryText(data) {
@@ -220,8 +226,17 @@ const textResult = (data, text = summaryText(data)) => ({
   structuredContent: normalizeStructuredContent(data),
 })
 
+// Every write tool names the version it left the project at `project_version`,
+// the name base_version is compared against.  WriteService calls it `version`,
+// which write_files keeps returning as a deprecated alias for one release.
+function withProjectVersion(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data
+  if (data.project_version != null || data.version == null) return data
+  return { ...data, project_version: data.version }
+}
+
 function writeResult(data, requestedCount = null) {
-  const structured = normalizeStructuredContent(data)
+  const structured = normalizeStructuredContent(withProjectVersion(data))
   const applied = Array.isArray(structured.applied) ? structured.applied : []
   const failed = Array.isArray(structured.failed) ? structured.failed : []
   const allFailed =
@@ -849,6 +864,23 @@ async function assertNoSilentOverwrite(services, id, files, overwrite) {
   throw error
 }
 
+// The version a write that does not go through WriteService left the project
+// at: comment and suggestion operations move the project history too, and the
+// caller needs the new version for its next base_version.  Best effort; the
+// operation itself has already happened.
+async function currentProjectVersion(services, id) {
+  if (!services.VersionService?.getLatestVersion) return undefined
+  try {
+    return (await services.VersionService.getLatestVersion(id))?.version
+  } catch {
+    return undefined
+  }
+}
+
+function withVersion(data, version) {
+  return version == null ? data : { ...data, project_version: version }
+}
+
 function requestedChangeIds(changeIds, all) {
   if (all) return null
   if (Array.isArray(changeIds) && changeIds.length) return changeIds
@@ -1185,7 +1217,7 @@ export function registerTools(
 
   server.tool(
     'write_files',
-    `Create, replace or delete whole project files in one atomic write (text in content, binary in contentBase64, delete:true to remove). A path that already exists is refused unless you pass overwrite:true; new files and deletes need nothing. Pass base_version too when overwriting, so a concurrent edit is refused instead of lost; to change part of a text file prefer edit_file. ${LABEL_GUIDANCE}`,
+    `Create, replace or delete whole project files in one atomic write (text in content, binary in contentBase64, delete:true to remove). A path that already exists is refused unless you pass overwrite:true; new files and deletes need nothing. Pass base_version too when overwriting, so a concurrent edit is refused instead of lost; to change part of a text file prefer edit_file. Returns project_version, the version the project is at after the write (the older name version is a deprecated alias, kept for one release), and the files applied, unchanged or failed. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       message: z.string(),
@@ -1373,7 +1405,7 @@ export function registerTools(
           message,
           agent: agent || clientName || 'mcp',
         })
-        return { isError: false, ...textResult(result) }
+        return { isError: false, ...textResult(withProjectVersion(result)) }
       } catch (error) {
         return errorResult(error)
       }
@@ -1474,13 +1506,16 @@ export function registerTools(
           actor.userId,
           content
         )
-        return {
-          thread_id,
-          path: comment.path,
-          message_id: message?.id,
-          acted_as: actor.acted_as,
-          ...(actor.reason ? { reason: actor.reason } : {}),
-        }
+        return withVersion(
+          {
+            thread_id,
+            path: comment.path,
+            message_id: message?.id,
+            acted_as: actor.acted_as,
+            ...(actor.reason ? { reason: actor.reason } : {}),
+          },
+          await currentProjectVersion(services, id)
+        )
       })
   )
 
@@ -1503,13 +1538,16 @@ export function registerTools(
             ? services.ReviewService.resolveThread
             : services.ReviewService.reopenThread
           await apply(id, comment.doc_id, thread_id, actor.userId)
-          return {
-            thread_id,
-            path: comment.path,
-            resolved,
-            acted_as: actor.acted_as,
-            ...(actor.reason ? { reason: actor.reason } : {}),
-          }
+          return withVersion(
+            {
+              thread_id,
+              path: comment.path,
+              resolved,
+              acted_as: actor.acted_as,
+              ...(actor.reason ? { reason: actor.reason } : {}),
+            },
+            await currentProjectVersion(services, id)
+          )
         })
     )
 
@@ -1554,6 +1592,7 @@ export function registerTools(
         return commentPlacement(lines, doc.path, result, range, actor, {
           doc_id: doc.docId,
           message_id: result.message?.id,
+          project_version: await currentProjectVersion(services, id),
         })
       })
   )
@@ -1590,6 +1629,7 @@ export function registerTools(
         return commentPlacement(lines, doc.path, result, range, actor, {
           doc_id: doc.docId,
           reanchored: true,
+          project_version: await currentProjectVersion(services, id),
         })
       })
   )
@@ -1715,13 +1755,16 @@ export function registerTools(
                   ids,
                   userId
                 )
-          return {
-            action,
-            path: doc.path,
-            doc_id: doc.docId,
-            change_ids: result.change_ids,
-            remaining: result.remaining,
-          }
+          return withVersion(
+            {
+              action,
+              path: doc.path,
+              doc_id: doc.docId,
+              change_ids: result.change_ids,
+              remaining: result.remaining,
+            },
+            await currentProjectVersion(services, id)
+          )
         })
     )
 

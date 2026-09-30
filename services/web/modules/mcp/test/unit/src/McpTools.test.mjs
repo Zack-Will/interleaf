@@ -608,6 +608,47 @@ describe('MCP tools', () => {
   })
 })
 
+describe('project_version on file writes', () => {
+  const project = 'a'.repeat(24)
+
+  it('write_files returns project_version and keeps version as an alias', async () => {
+    const { server } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 8,
+          applied: ['new.tex'],
+          failed: [],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project,
+      message: 'm',
+      files: [{ path: 'new.tex', content: 'x' }],
+    })
+    expect(result.structuredContent.project_version).toBe(8)
+    expect(result.structuredContent.version).toBe(8)
+  })
+
+  it('merge_branch returns project_version after a merge', async () => {
+    const { server } = setup({
+      BranchService: {
+        mergeBranch: vi.fn(async () => ({
+          mergeable: true,
+          files: [],
+          conflicts: [],
+          version: 11,
+        })),
+      },
+    })
+    const result = await server._registeredTools.merge_branch.handler({
+      branch: 'b'.repeat(24),
+      dry_run: false,
+    })
+    expect(result.structuredContent.project_version).toBe(11)
+  })
+})
+
 describe('github backup tools', () => {
   it('reports the linked repository and can ask for a backup', async () => {
     const { server, services } = setup()
