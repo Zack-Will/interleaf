@@ -701,6 +701,66 @@ describe('read_file and pending suggestions', () => {
   })
 })
 
+describe('diff', () => {
+  const project = 'a'.repeat(24)
+
+  it('returns a unified diff with 3 lines of context for a path', async () => {
+    const unchangedTop = 'l1\nl2\nl3\nl4\nl5\n'
+    const fetchJson = vi.fn(async () => ({
+      diff: [
+        { u: unchangedTop },
+        { d: 'old\n', meta: {} },
+        { i: 'new\n', meta: {} },
+        { u: 'l7\nl8\nl9\nl10\nl11\n' },
+      ],
+    }))
+    const { server } = setup({ fetchJson })
+    const result = await server._registeredTools.diff.handler({
+      project,
+      from_version: 3,
+      to_version: 5,
+      path: '/main.tex',
+    })
+    expect(fetchJson).toHaveBeenCalledWith(
+      `http://history/project/${project}/diff?pathname=main.tex&from=3&to=5`
+    )
+    const diff = result.structuredContent.diff
+    expect(diff).toContain('@@ -3,7 +3,7 @@')
+    expect(diff).toContain('-old\n+new')
+    expect(diff).not.toContain('l1\n')
+    expect(diff).not.toContain('l11')
+    expect(result.content[0].text).toContain('main.tex, versions 3-5:')
+    expect(result.content[0].text).toContain('-old')
+  })
+
+  it('lists only the changed files without a path', async () => {
+    const fetchJson = vi.fn(async () => ({
+      diff: [
+        { pathname: 'main.tex', operation: 'edited' },
+        { pathname: 'refs.bib' },
+        { pathname: 'a.tex', newPathname: 'b.tex', operation: 'renamed' },
+      ],
+    }))
+    const { server } = setup({ fetchJson })
+    const result = await server._registeredTools.diff.handler({
+      project,
+      from_version: 3,
+      to_version: 5,
+    })
+    expect(result.structuredContent).toEqual({
+      from_version: 3,
+      to_version: 5,
+      files: [
+        { path: 'main.tex', operation: 'edited' },
+        { path: 'b.tex', operation: 'renamed', previous_path: 'a.tex' },
+      ],
+      count: 2,
+      unchanged_count: 1,
+    })
+    expect(result.content[0].text).toContain('renamed: b.tex (from a.tex)')
+  })
+})
+
 describe('tool descriptions', () => {
   it('lists projects newest first with their last update time', async () => {
     const { server } = setup({

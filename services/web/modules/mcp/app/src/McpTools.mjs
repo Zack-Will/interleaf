@@ -124,6 +124,53 @@ function suggestEditsSummary(data) {
   return [parts.join('; '), ...editReportLines(data)].join('\n')
 }
 
+// Unified diffs everywhere use the same 3 lines of context, so the output of
+// diff, diff_branch and edit_file reads alike.
+function unifiedDiff(path, before, after) {
+  return createTwoFilesPatch(path, path, before, after, undefined, undefined, {
+    context: 3,
+  })
+}
+
+// project-history answers a file diff as the whole document cut into
+// unchanged (u), inserted (i) and deleted (d) parts.
+function historyDiffTexts(parts) {
+  let before = ''
+  let after = ''
+  for (const part of Array.isArray(parts) ? parts : []) {
+    if (part.u != null) {
+      before += part.u
+      after += part.u
+    } else if (part.i != null) after += part.i
+    else if (part.d != null) before += part.d
+  }
+  return { before, after }
+}
+
+function fileTreeChange(entry) {
+  const renamed = entry.newPathname && entry.newPathname !== entry.pathname
+  return {
+    path: cleanPath(renamed ? entry.newPathname : entry.pathname),
+    operation: entry.operation,
+    ...(renamed ? { previous_path: cleanPath(entry.pathname) } : {}),
+  }
+}
+
+function diffSummary(data) {
+  const range = `versions ${data.from_version}-${data.to_version}`
+  if (data.path) {
+    if (data.binary) return `${data.path}, ${range}: binary file`
+    if (!data.changed) return `${data.path}, ${range}: no change`
+    return `${data.path}, ${range}:\n${data.diff}`
+  }
+  const lines = [`${plural(data.count, 'file')} changed, ${range}`]
+  for (const file of data.files) {
+    const from = file.previous_path ? ` (from ${file.previous_path})` : ''
+    lines.push(`${file.operation}: ${file.path}${from}`)
+  }
+  return lines.join('\n')
+}
+
 function readFileSummary(data) {
   const lines = [
     `${data.path}; project_version: ${data.project_version}; ${data.total_lines} lines`,
@@ -212,8 +259,6 @@ function summaryText(data) {
   }
   if (Array.isArray(data.applied) || Array.isArray(data.failed))
     return writeSummary(data)
-  if (Array.isArray(data.diff))
-    return `${data.count ?? data.diff.length} diff entries`
   if (Array.isArray(data.branches))
     return `${data.count ?? data.branches.length} branches`
   if (Array.isArray(data.conflicts))
@@ -1471,7 +1516,7 @@ export function registerTools(
 
   server.tool(
     'diff',
-    'Compare two project versions (from_version and to_version, as list_history gives them). With path: the changes to that file. Without path: the files that were added, edited, renamed or removed.',
+    'Compare two project versions (from_version and to_version, as list_history gives them). With path: a unified diff of that file with 3 lines of context. Without path: the files that were added, edited, renamed or removed between the two versions.',
     {
       project: z.string(),
       from_version: z.number(),
@@ -1479,16 +1524,39 @@ export function registerTools(
       path: z.string().optional(),
     },
     async ({ project, from_version, to_version, path }) =>
-      run(async () => {
+      runSummarised(diffSummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
-        const url = path
-          ? `${services.settings.apis.project_history.url}/project/${id}/diff?pathname=${encodeURIComponent(path)}&from=${from_version}&to=${to_version}`
-          : `${services.settings.apis.project_history.url}/project/${id}/filetree/diff?from=${from_version}&to=${to_version}`
-        const result = await services.fetchJson(url)
-        return Array.isArray(result)
-          ? { diff: result, count: result.length }
-          : result
+        const history = services.settings.apis.project_history.url
+        const versions = { from_version, to_version }
+        if (path) {
+          const target = cleanPath(path)
+          const result = await services.fetchJson(
+            `${history}/project/${id}/diff?pathname=${encodeURIComponent(target)}&from=${from_version}&to=${to_version}`
+          )
+          if (result?.diff?.binary)
+            return { path: target, ...versions, binary: true }
+          const { before, after } = historyDiffTexts(result?.diff)
+          return {
+            path: target,
+            ...versions,
+            changed: before !== after,
+            diff: unifiedDiff(target, before, after),
+          }
+        }
+        const result = await services.fetchJson(
+          `${history}/project/${id}/filetree/diff?from=${from_version}&to=${to_version}`
+        )
+        const entries = Array.isArray(result) ? result : result?.diff || []
+        const files = entries
+          .filter(entry => entry.operation)
+          .map(fileTreeChange)
+        return {
+          ...versions,
+          files,
+          count: files.length,
+          unchanged_count: entries.length - files.length,
+        }
       })
   )
 
@@ -1660,7 +1728,7 @@ export function registerTools(
           ...(failed.length ? { reanchor_failed: failed } : {}),
           edits: reports,
           ...(warnings.length ? { warnings } : {}),
-          diff: createTwoFilesPatch(path, path, before, content),
+          diff: unifiedDiff(path, before, content),
         }
       })
   )
@@ -2053,7 +2121,7 @@ export function registerTools(
           ...(actor.reason ? { reason: actor.reason } : {}),
           edits: reports,
           ...(warnings.length ? { warnings } : {}),
-          diff: createTwoFilesPatch(path, path, before, content),
+          diff: unifiedDiff(path, before, content),
         }
       })
   )
