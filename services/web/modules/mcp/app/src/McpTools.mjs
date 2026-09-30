@@ -610,6 +610,78 @@ function pendingSuggestions(lines, changes) {
     .sort((left, right) => left.line - right.line || left.column - right.column)
 }
 
+// Timestamps leave the MCP as ISO 8601 strings, whatever the service that
+// stored them used: milliseconds, a Date or a string.
+function isoTime(value) {
+  if (value == null || value === '') return undefined
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+}
+
+function userIdOf(user) {
+  if (user == null) return null
+  if (typeof user === 'object') return String(user.id ?? user._id ?? '')
+  return String(user)
+}
+
+// One history entry, in the same shape for labels and updates, so either can
+// be handed straight to diff (from_version, to_version) or revert_to.
+function updateHistoryEntry(update) {
+  const meta = update.meta || {}
+  const origin = meta.origin || update.origin
+  const users = meta.users || update.users || []
+  return {
+    type: 'update',
+    from_version: update.fromV ?? update.from_version ?? update.fromVersion,
+    to_version: update.toV ?? update.to_version ?? update.toVersion,
+    created_at: isoTime(meta.end_ts ?? update.timestamp),
+    authors: users.map(userIdOf).filter(Boolean),
+    ...(origin?.agent ? { agent: origin.agent } : {}),
+    ...(origin?.message ? { message: origin.message } : {}),
+    ...(origin ? { origin } : {}),
+    pathnames: update.pathnames || update.paths || [],
+  }
+}
+
+function labelHistoryEntry(label) {
+  const author = userIdOf(label.user_id ?? label.user)
+  return {
+    type: 'label',
+    from_version: label.version,
+    to_version: label.version,
+    version: label.version,
+    created_at: isoTime(label.created_at ?? label.createdAt ?? label.timestamp),
+    authors: author ? [author] : [],
+    message: label.comment,
+    comment: label.comment,
+  }
+}
+
+function newestHistoryEntryFirst(left, right) {
+  const byVersion = (right.to_version ?? -1) - (left.to_version ?? -1)
+  if (byVersion) return byVersion
+  // A label sits on the version its update produced; list it above that
+  // update, as the history panel does.
+  const rank = entry => (entry.type === 'label' ? 0 : 1)
+  return rank(left) - rank(right)
+}
+
+function historySummary(data) {
+  const lines = [
+    `${data.count} history ${data.count === 1 ? 'entry' : 'entries'}`,
+  ]
+  for (const entry of data.entries) {
+    const versions =
+      entry.type === 'label'
+        ? `label at version ${entry.to_version}`
+        : `versions ${entry.from_version}-${entry.to_version}`
+    const who = entry.agent ? ` via ${entry.agent}` : ''
+    const what = entry.message ? `: ${entry.message}` : ''
+    lines.push(`${entry.created_at ?? 'unknown time'} ${versions}${who}${what}`)
+  }
+  return lines.join('\n')
+}
+
 function formatUser(user, fallbackId) {
   const id = user?.id || (user?._id != null ? String(user._id) : fallbackId)
   if (!user) return id ? { id: String(id) } : undefined
@@ -1350,10 +1422,10 @@ export function registerTools(
 
   server.tool(
     'list_history',
-    'List project history',
+    'List the history of a project, newest first: updates (from_version, to_version, created_at, authors, and the agent and message a write recorded) and labels (saved versions). Pass from_version and to_version of an update to diff to see what it changed, or a version to revert_to.',
     { project: z.string(), limit: z.number().optional() },
     async ({ project, limit = 50 }) =>
-      run(async () => {
+      runSummarised(historySummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
         const labels = await services.LabelService.listLabels(id)
@@ -1363,28 +1435,11 @@ export function registerTools(
         const updates = Array.isArray(updatesResponse)
           ? updatesResponse
           : updatesResponse?.updates || []
-        const normalizedLabels = (labels || []).map(label => ({
-          type: 'label',
-          version: label.version,
-          comment: label.comment,
-          user: label.user || label.user_id,
-          created_at: label.created_at || label.createdAt || label.timestamp,
-        }))
-        const normalizedUpdates = updates.map(update => ({
-          type: 'update',
-          from_version: update.from_version ?? update.fromVersion,
-          to_version: update.to_version ?? update.toVersion,
-          origin: update.origin,
-          users: update.users || (update.user_id ? [update.user_id] : []),
-          timestamp: update.timestamp,
-          pathnames: update.pathnames || update.paths,
-        }))
-        const entries = [...normalizedLabels, ...normalizedUpdates]
-          .sort(
-            (left, right) =>
-              new Date(right.created_at || right.timestamp || 0) -
-              new Date(left.created_at || left.timestamp || 0)
-          )
+        const entries = [
+          ...(labels || []).map(labelHistoryEntry),
+          ...updates.map(updateHistoryEntry),
+        ]
+          .sort(newestHistoryEntryFirst)
           .slice(0, limit)
         return { entries, count: entries.length }
       })

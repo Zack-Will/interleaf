@@ -285,7 +285,7 @@ describe('MCP tools', () => {
     expect(result.structuredContent.code).toBe('error')
   })
 
-  it('returns labels and updates as distinct history entry types', async () => {
+  it('returns versions, times and origin for every history entry', async () => {
     const { server } = setup({
       LabelService: {
         listLabels: vi.fn(async () => [
@@ -300,12 +300,22 @@ describe('MCP tools', () => {
       fetchJson: vi.fn(async () => ({
         updates: [
           {
-            from_version: 3,
-            to_version: 4,
-            origin: { kind: 'mcp' },
-            users: ['user-1'],
-            timestamp: '2026-01-01T00:00:00Z',
+            fromV: 3,
+            toV: 4,
+            meta: {
+              users: ['user-1'],
+              start_ts: 1767225500000,
+              end_ts: 1767225600000,
+              origin: { kind: 'mcp', agent: 'Claude', message: 'Tighten' },
+            },
+            labels: [],
             pathnames: ['main.tex'],
+          },
+          {
+            fromV: 1,
+            toV: 3,
+            meta: { users: [{ id: 'user-2' }], end_ts: 1767225000000 },
+            pathnames: [],
           },
         ],
       })),
@@ -315,26 +325,46 @@ describe('MCP tools', () => {
       project: 'a'.repeat(24),
     })
     expect(result.structuredContent).toEqual({
-      count: 2,
+      count: 3,
       entries: [
         {
           type: 'label',
+          from_version: 4,
+          to_version: 4,
           version: 4,
+          created_at: '2026-01-02T00:00:00.000Z',
+          authors: ['user-1'],
+          message: 'Agent change',
           comment: 'Agent change',
-          user: 'user-1',
-          created_at: '2026-01-02T00:00:00Z',
         },
         {
           type: 'update',
           from_version: 3,
           to_version: 4,
-          origin: { kind: 'mcp' },
-          users: ['user-1'],
-          timestamp: '2026-01-01T00:00:00Z',
+          created_at: '2026-01-01T00:00:00.000Z',
+          authors: ['user-1'],
+          agent: 'Claude',
+          message: 'Tighten',
+          origin: { kind: 'mcp', agent: 'Claude', message: 'Tighten' },
           pathnames: ['main.tex'],
+        },
+        {
+          type: 'update',
+          from_version: 1,
+          to_version: 3,
+          created_at: '2025-12-31T23:50:00.000Z',
+          authors: ['user-2'],
+          pathnames: [],
         },
       ],
     })
+    for (const entry of result.structuredContent.entries) {
+      expect(Number.isInteger(entry.from_version)).toBe(true)
+      expect(Number.isInteger(entry.to_version)).toBe(true)
+    }
+    expect(result.content[0].text).toContain(
+      '2026-01-01T00:00:00.000Z versions 3-4 via Claude: Tighten'
+    )
   })
 
   it('returns an error when every requested write fails', async () => {
