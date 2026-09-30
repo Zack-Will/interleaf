@@ -671,6 +671,121 @@ describe('read_file and pending suggestions', () => {
   })
 })
 
+describe('project and branch references', () => {
+  const parentId = 'a'.repeat(24)
+  const branchId = 'b'.repeat(24)
+  const strictRef = {
+    parse: vi.fn(ref => {
+      if (/^[0-9a-f]{24}$/.test(ref)) return { projectId: ref }
+      throw Object.assign(new Error('invalid project reference'), {
+        code: 'invalid_project_ref',
+      })
+    }),
+    urlFor: id => `/project/${id}`,
+    requireAccess: vi.fn(async () => {}),
+  }
+
+  it('asks for an id or URL and lists same-named projects for a name', async () => {
+    const { server } = setup({
+      ProjectRef: strictRef,
+      ProjectGetter: {
+        promises: {
+          findAllUsersProjects: vi.fn(async () => ({
+            owned: [
+              { _id: 'c'.repeat(24), name: 'CrossMem' },
+              { _id: 'd'.repeat(24), name: 'Other' },
+            ],
+            readAndWrite: [{ _id: 'e'.repeat(24), name: 'crossmem ' }],
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.get_project.handler({
+      project: 'CrossMem',
+    })
+    expect(result.structuredContent.code).toBe('invalid_project_ref')
+    expect(result.structuredContent.message).toBe(
+      '"CrossMem" is not a project id or URL; pass a project id or URL'
+    )
+    expect(result.structuredContent.candidates).toEqual([
+      { project_id: 'c'.repeat(24), name: 'CrossMem' },
+      { project_id: 'e'.repeat(24), name: 'crossmem ' },
+    ])
+    expect(result.content[0].text).toContain('candidates:')
+  })
+
+  it('takes a branch by name together with its parent project', async () => {
+    const diffBranch = vi.fn(async () => ({ files: [] }))
+    const { server, services } = setup({
+      ProjectRef: strictRef,
+      BranchService: {
+        listBranches: vi.fn(async () => ({
+          branches: [
+            {
+              name: 'draft',
+              branch_project_id: 'f'.repeat(24),
+              status: 'merged',
+            },
+            { name: 'draft', branch_project_id: branchId, status: 'open' },
+          ],
+        })),
+        diffBranch,
+      },
+    })
+    await server._registeredTools.diff_branch.handler({
+      branch: 'draft',
+      project: parentId,
+    })
+    expect(services.BranchService.listBranches).toHaveBeenCalledWith(
+      parentId,
+      'u'
+    )
+    expect(diffBranch).toHaveBeenCalledWith(branchId, 'u')
+  })
+
+  it('takes a branch by its project id', async () => {
+    const archiveBranch = vi.fn(async () => ({ status: 'archived' }))
+    const { server } = setup({
+      ProjectRef: strictRef,
+      BranchService: { archiveBranch },
+    })
+    await server._registeredTools.archive_branch.handler({ branch: branchId })
+    expect(archiveBranch).toHaveBeenCalledWith(branchId, 'u')
+  })
+
+  it('explains what a branch reference is when given a bare name', async () => {
+    const { server } = setup({ ProjectRef: strictRef })
+    const result = await server._registeredTools.merge_branch.handler({
+      branch: 'draft',
+    })
+    expect(result.structuredContent.code).toBe('invalid_branch_ref')
+    expect(result.structuredContent.next_action).toContain(
+      'pass project (the parent project) together with the branch name'
+    )
+  })
+
+  it('lists the branch names when the name matches none', async () => {
+    const { server } = setup({
+      ProjectRef: strictRef,
+      BranchService: {
+        listBranches: vi.fn(async () => ({
+          branches: [
+            { name: 'draft', branch_project_id: branchId, status: 'open' },
+          ],
+        })),
+      },
+    })
+    const result = await server._registeredTools.diff_branch.handler({
+      branch: 'final',
+      project: parentId,
+    })
+    expect(result.structuredContent.code).toBe('branch_not_found')
+    expect(result.structuredContent.message).toContain(
+      'its branches are: draft'
+    )
+  })
+})
+
 describe('project_version on file writes', () => {
   const project = 'a'.repeat(24)
 

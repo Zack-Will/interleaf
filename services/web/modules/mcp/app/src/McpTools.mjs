@@ -290,6 +290,10 @@ function nextAction(error, next) {
     return 're-read the file and choose an anchor present in the current content'
   if (error.code === 'text_mismatch')
     return 'the document changed under the anchor; re-read the file and retry with the text now at that position (actual_text)'
+  if (error.code === 'branch_not_found')
+    return 'this project is not a branch; pass the branch_project_id from list_branches on the parent project'
+  if (error.code === 'invalid_project_ref')
+    return 'pass a project id (24 hex characters) or the project URL; list_projects shows both'
   if (error.code === 'thread_not_found')
     return 'call list_comments to see the threads of this project'
   if (error.code === 'ot_type_unsupported')
@@ -1002,6 +1006,19 @@ function withVersion(data, version) {
   return version == null ? data : { ...data, project_version: version }
 }
 
+const branchRefSchema = z
+  .string()
+  .describe(
+    'The branch: its branch_project_id or URL (from create_branch or list_branches), or its name when project is given too.'
+  )
+
+const branchParentSchema = z
+  .string()
+  .optional()
+  .describe(
+    'The parent project id or URL; needed only when branch is a branch name.'
+  )
+
 function requestedChangeIds(changeIds, all) {
   if (all) return null
   if (Array.isArray(changeIds) && changeIds.length) return changeIds
@@ -1037,6 +1054,91 @@ export function registerTools(
     }
   }
 
+  // Same-named projects the token user can reach, for a caller that passed a
+  // project name where an id belongs.  Only looked up on that error path.
+  const projectsNamed = async name => {
+    const wanted = String(name).trim().toLowerCase()
+    try {
+      const all = await services.ProjectGetter.promises.findAllUsersProjects(
+        userId,
+        'name'
+      )
+      return Object.values(all || {})
+        .flat()
+        .filter(item => String(item?.name).trim().toLowerCase() === wanted)
+        .map(item => ({
+          project_id: String(item._id || item.id),
+          name: item.name,
+        }))
+    } catch {
+      return []
+    }
+  }
+
+  // Every tool takes a project id or URL.  A name is the most common mistake,
+  // so the error says what to pass instead and lists the projects of that
+  // name when there are any.
+  const projectIdOf = async ref => {
+    try {
+      return projectId(ref, services)
+    } catch (error) {
+      if (error?.code !== 'invalid_project_ref') throw error
+      const candidates = await projectsNamed(ref)
+      const refused = toolError(
+        'invalid_project_ref',
+        `${JSON.stringify(ref)} is not a project id or URL; pass a project id or URL`,
+        candidates.length
+          ? 'pass the project_id of the project you mean from candidates'
+          : 'call list_projects to find the project id'
+      )
+      if (candidates.length) refused.candidates = candidates
+      throw refused
+    }
+  }
+
+  const isProjectRef = ref => {
+    try {
+      projectId(ref, services)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // A branch is a project of its own, so the branch tools take its project id
+  // or URL; they also take the branch name together with the parent project.
+  const branchProjectIdOf = async (branch, project) => {
+    if (isProjectRef(branch)) return projectId(branch, services)
+    if (project == null)
+      throw toolError(
+        'invalid_branch_ref',
+        `${JSON.stringify(branch)} is not a branch project id or URL`,
+        'pass branch as the branch_project_id that create_branch or list_branches returned, or pass project (the parent project) together with the branch name'
+      )
+    const parentId = await projectIdOf(project)
+    const { branches = [] } = await services.BranchService.listBranches(
+      parentId,
+      userId
+    )
+    const named = branches.filter(item => item.name === branch)
+    const open = named.filter(item => item.status === 'open')
+    const matches = open.length ? open : named
+    if (matches.length === 1) return matches[0].branch_project_id
+    const names = branches.map(item => item.name)
+    const refused = matches.length
+      ? toolError(
+          'branch_ambiguous',
+          `${matches.length} branches of this project are named ${JSON.stringify(branch)}`,
+          'pass the branch_project_id of the one you mean (list_branches shows them)'
+        )
+      : toolError(
+          'branch_not_found',
+          `no open or merged branch named ${JSON.stringify(branch)} on this project${names.length ? `; its branches are: ${names.join(', ')}` : ''}`,
+          'call list_branches to see the branch names and ids'
+        )
+    throw refused
+  }
+
   server.tool('list_projects', 'List projects', {}, async () =>
     run(async () => {
       const all = await services.ProjectGetter.promises.findAllUsersProjects(
@@ -1069,7 +1171,7 @@ export function registerTools(
     { project: z.string() },
     async ({ project }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const projectData = await services.ProjectGetter.promises.getProject(
           id,
@@ -1124,7 +1226,7 @@ export function registerTools(
     },
     async ({ project, path, start_line, end_line, include_suggestions }) =>
       runSummarised(readFileSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const document = await services.SnapshotService.readDoc(id, path, {})
         const changes = document.ranges?.changes || []
@@ -1159,7 +1261,7 @@ export function registerTools(
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const tree = await services.SnapshotService.getFileTree(id)
         const root = path || tree.find(file => file.kind === 'doc')?.path
@@ -1218,7 +1320,7 @@ export function registerTools(
     },
     async ({ project, query, regex, max_results = 50 }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const tree = await services.SnapshotService.getFileTree(id)
         const expression = regex ? new RegExp(query) : null
@@ -1252,7 +1354,7 @@ export function registerTools(
     { project: z.string(), limit: z.number().optional() },
     async ({ project, limit = 50 }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const labels = await services.LabelService.listLabels(id)
         const updatesResponse = await services.fetchJson(
@@ -1299,7 +1401,7 @@ export function registerTools(
     },
     async ({ project, from_version, to_version, path }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const url = path
           ? `${services.settings.apis.project_history.url}/project/${id}/diff?pathname=${encodeURIComponent(path)}&from=${from_version}&to=${to_version}`
@@ -1324,7 +1426,7 @@ export function registerTools(
     },
     async ({ project, comment, version }) =>
       runSummarised(labelSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const latest = await services.VersionService.getLatestVersion(id)
         const at = version ?? latest.version
@@ -1374,7 +1476,7 @@ export function registerTools(
     }) => {
       let id
       try {
-        id = projectId(project, services)
+        id = await projectIdOf(project)
         await access(services, req, id, 'write')
         await assertNoSilentOverwrite(services, id, files, overwrite)
         const result = await services.WriteService.writeFiles(id, userId, {
@@ -1402,7 +1504,7 @@ export function registerTools(
     },
     async ({ project, version, path, message, agent }) => {
       try {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         const result = await services.RevertService.revertTo(id, userId, {
           version,
           path,
@@ -1438,7 +1540,7 @@ export function registerTools(
       label = false,
     }) =>
       runSummarised(editFileSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const document = await services.SnapshotService.readDoc(id, path)
         const { lines, changes, reports, warnings } = applyStructuredEdits(
@@ -1490,7 +1592,7 @@ export function registerTools(
     { project: z.string(), name: z.string() },
     async ({ project, name }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         return services.BranchService.createBranch(id, userId, { name })
       })
   )
@@ -1501,7 +1603,7 @@ export function registerTools(
     { project: z.string() },
     async ({ project }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         return services.BranchService.listBranches(id, userId)
       })
   )
@@ -1509,10 +1611,10 @@ export function registerTools(
   server.tool(
     'diff_branch',
     'Compare a branch with its parent',
-    { branch: z.string() },
-    async ({ branch }) =>
+    { branch: branchRefSchema, project: branchParentSchema },
+    async ({ branch, project }) =>
       run(async () => {
-        const id = projectId(branch, services)
+        const id = await branchProjectIdOf(branch, project)
         return services.BranchService.diffBranch(id, userId)
       })
   )
@@ -1521,14 +1623,15 @@ export function registerTools(
     'merge_branch',
     'Merge a branch into its parent. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
     {
-      branch: z.string(),
+      branch: branchRefSchema,
+      project: branchParentSchema,
       dry_run: z.boolean().optional(),
       message: z.string().optional(),
       agent: z.string().optional(),
     },
-    async ({ branch, dry_run = true, message, agent }) => {
+    async ({ branch, project, dry_run = true, message, agent }) => {
       try {
-        const id = projectId(branch, services)
+        const id = await branchProjectIdOf(branch, project)
         const result = await services.BranchService.mergeBranch(id, userId, {
           dryRun: dry_run,
           message,
@@ -1544,10 +1647,10 @@ export function registerTools(
   server.tool(
     'archive_branch',
     'Archive a project branch',
-    { branch: z.string() },
-    async ({ branch }) =>
+    { branch: branchRefSchema, project: branchParentSchema },
+    async ({ branch, project }) =>
       run(async () => {
-        const id = projectId(branch, services)
+        const id = await branchProjectIdOf(branch, project)
         return services.BranchService.archiveBranch(id, userId)
       })
   )
@@ -1562,7 +1665,7 @@ export function registerTools(
     },
     async ({ project, path, include_resolved = false }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const { comments } = await loadProjectComments(services, id, path)
         const visible = include_resolved
@@ -1582,7 +1685,7 @@ export function registerTools(
     { project: z.string(), context_lines: z.number().int().optional() },
     async ({ project, context_lines = 3 }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const { comments, linesByPath, suggestionCount } =
           await loadProjectComments(services, id, undefined)
@@ -1625,7 +1728,7 @@ export function registerTools(
     },
     async ({ project, thread_id, content, act_as_agent = true }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const comment = await findCommentThread(services, id, thread_id)
         const actor = await resolveActor(services, id, userId, act_as_agent)
@@ -1659,7 +1762,7 @@ export function registerTools(
       },
       async ({ project, thread_id, act_as_agent = true }) =>
         run(async () => {
-          const id = projectId(project, services)
+          const id = await projectIdOf(project)
           await access(services, req, id, 'write')
           const comment = await findCommentThread(services, id, thread_id)
           const actor = await resolveActor(services, id, userId, act_as_agent)
@@ -1733,7 +1836,7 @@ export function registerTools(
     },
     async ({ project, path, anchor, content, act_as_agent = true }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.ReviewService.getDocRanges(
@@ -1769,7 +1872,7 @@ export function registerTools(
     },
     async ({ project, thread_id, path, anchor, act_as_agent = true }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.ReviewService.getDocRanges(
@@ -1818,7 +1921,7 @@ export function registerTools(
       label = false,
     }) =>
       runSummarised(suggestEditsSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.SnapshotService.readDoc(id, path)
@@ -1874,7 +1977,7 @@ export function registerTools(
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
       runSummarised(suggestionListSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const doc = path == null ? null : await resolveDoc(services, id, path)
         const { files, count } =
@@ -1897,7 +2000,7 @@ export function registerTools(
       },
       async ({ project, path, change_ids, all = false }) =>
         runSummarised(suggestionActionSummary, async () => {
-          const id = projectId(project, services)
+          const id = await projectIdOf(project)
           await access(services, req, id, 'write')
           const doc = await resolveDoc(services, id, path)
           const ids = requestedChangeIds(change_ids, all)
@@ -1957,7 +2060,7 @@ export function registerTools(
     { project: z.string() },
     async ({ project }) =>
       runSummarised(backupSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         return await backupService().promises.getStatus(id)
       })
@@ -1971,7 +2074,7 @@ export function registerTools(
       runSummarised(
         backupSummary,
         async () => {
-          const id = projectId(project, services)
+          const id = await projectIdOf(project)
           await access(services, req, id, 'write')
           return await backupService().promises.syncNow(id, { force: true })
         },
