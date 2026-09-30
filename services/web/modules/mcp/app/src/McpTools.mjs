@@ -286,6 +286,7 @@ const errorResult = (error, next) => {
       ...(actualText != null ? { actual_text: actualText } : {}),
       ...(status != null ? { status } : {}),
       ...(details ? { details } : {}),
+      ...(error.paths ? { paths: error.paths } : {}),
       next_action: nextAction(error, next),
     },
   }
@@ -755,6 +756,29 @@ async function describeSuggestions(services, id, docId, changeIds) {
 const LABEL_GUIDANCE =
   'Set label:true to mark a milestone (saved version); by default only the history entry records this change, showing your message under the author line.'
 
+// `write_files` replaces whole files, so writing over one that already exists
+// has to be asked for: a collaborator may have edited it since the caller last
+// read it, and without `base_version` nothing else would notice.  The rule
+// lives here rather than in WriteService because revert, merge and the
+// git-bridge overwrite existing files on purpose.
+async function assertNoSilentOverwrite(services, id, files, overwrite) {
+  if (overwrite) return
+  const tree = await services.SnapshotService.getFileTree(id)
+  const existing = new Set(tree.map(file => cleanPath(file.path)))
+  const clashes = files
+    .filter(file => !file.delete)
+    .map(file => cleanPath(file.path))
+    .filter(path => existing.has(path))
+  if (!clashes.length) return
+  const error = toolError(
+    'file_exists',
+    `${plural(clashes.length, 'file')} already exist${clashes.length === 1 ? 's' : ''}: ${clashes.join(', ')}; nothing was written`,
+    'to replace them pass overwrite: true, with base_version from read_file or get_project so a concurrent edit is refused; to change part of a text file use edit_file'
+  )
+  error.paths = clashes
+  throw error
+}
+
 function requestedChangeIds(changeIds, all) {
   if (all) return null
   if (Array.isArray(changeIds) && changeIds.length) return changeIds
@@ -1091,7 +1115,7 @@ export function registerTools(
 
   server.tool(
     'write_files',
-    `Write project files. ${LABEL_GUIDANCE}`,
+    `Create, replace or delete whole project files in one atomic write (text in content, binary in contentBase64, delete:true to remove). A path that already exists is refused unless you pass overwrite:true; new files and deletes need nothing. Pass base_version too when overwriting, so a concurrent edit is refused instead of lost; to change part of a text file prefer edit_file. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       message: z.string(),
@@ -1104,13 +1128,23 @@ export function registerTools(
         })
       ),
       base_version: z.number().optional(),
+      overwrite: z.boolean().optional(),
       agent: z.string().optional(),
       label: z.boolean().optional(),
     },
-    async ({ project, message, files, base_version, agent, label = false }) => {
+    async ({
+      project,
+      message,
+      files,
+      base_version,
+      overwrite = false,
+      agent,
+      label = false,
+    }) => {
       try {
         const id = projectId(project, services)
         await access(services, req, id, 'write')
+        await assertNoSilentOverwrite(services, id, files, overwrite)
         const result = await services.WriteService.writeFiles(id, userId, {
           baseVersion: base_version,
           message,

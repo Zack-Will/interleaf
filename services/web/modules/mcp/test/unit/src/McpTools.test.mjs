@@ -296,6 +296,7 @@ describe('MCP tools', () => {
       project: 'a'.repeat(24),
       message: 'm',
       files: [{ path: 'main.tex', content: 'x' }],
+      overwrite: true,
     })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.code).toBe('write_failed')
@@ -325,6 +326,7 @@ describe('MCP tools', () => {
         { path: 'main.tex', content: 'x' },
         { path: 'fig.png', content: 'y' },
       ],
+      overwrite: true,
     })
     expect(result.isError).toBe(false)
     expect(result.structuredContent.failed).toEqual([
@@ -349,6 +351,62 @@ describe('MCP tools', () => {
     })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.code).toBe('write_failed')
+  })
+
+  it('refuses to overwrite an existing file without overwrite: true', async () => {
+    const { server, services } = setup()
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: '/main.tex', content: 'x' }],
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('file_exists')
+    expect(result.structuredContent.paths).toEqual(['main.tex'])
+    expect(result.structuredContent.next_action).toContain('overwrite: true')
+    expect(services.WriteService.writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('overwrites an existing file when asked to', async () => {
+    const { server, services } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 5,
+          applied: ['main.tex'],
+          failed: [],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'main.tex', content: 'x' }],
+      overwrite: true,
+    })
+    expect(result.isError).toBe(false)
+    expect(services.WriteService.writeFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates new files and deletes existing ones without the flag', async () => {
+    const { server, services } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 5,
+          applied: ['new.tex', 'main.tex'],
+          failed: [],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [
+        { path: 'new.tex', content: 'x' },
+        { path: 'main.tex', delete: true },
+      ],
+    })
+    expect(result.isError).toBe(false)
+    expect(services.WriteService.writeFiles).toHaveBeenCalledTimes(1)
   })
 
   it('returns version conflict payload for writes', async () => {
