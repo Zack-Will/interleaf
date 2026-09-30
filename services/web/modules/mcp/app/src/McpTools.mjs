@@ -1078,6 +1078,20 @@ function withVersion(data, version) {
   return version == null ? data : { ...data, project_version: version }
 }
 
+const agentSchema = z
+  .string()
+  .optional()
+  .describe(
+    'Who is making the change, shown in the history panel as "(via <agent>)" next to the token owner; defaults to the name of the MCP client.'
+  )
+
+const actAsAgentSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    'true (default): post as the Agent service user, so the review panel tells agent comments apart from yours. false: post as the token owner. If the Agent user cannot join the project the tool posts as the token owner and acted_as says so.'
+  )
+
 const branchRefSchema = z
   .string()
   .describe(
@@ -1211,35 +1225,45 @@ export function registerTools(
     throw refused
   }
 
-  server.tool('list_projects', 'List projects', {}, async () =>
-    run(async () => {
-      const all = await services.ProjectGetter.promises.findAllUsersProjects(
-        userId,
-        'name lastUpdated'
-      )
-      const output = []
-      for (const [key, projects] of Object.entries(all || {})) {
-        for (const project of projects || []) {
-          const id = String(project._id || project.id || project.projectId)
-          const write =
-            key === 'owned' ||
-            key === 'readAndWrite' ||
-            key === 'tokenReadAndWrite'
-          output.push({
-            project_id: id,
-            url: services.ProjectRef.urlFor(id),
-            name: project.name,
-            permissions: write ? 'write' : 'read',
-          })
+  server.tool(
+    'list_projects',
+    'List the projects this token can reach, newest first, with project_id, url, name, permissions (read or write) and last_updated (ISO 8601). Use it to find the id every other tool takes; several projects can share a name, so tell them apart by last_updated.',
+    {},
+    async () =>
+      run(async () => {
+        const all = await services.ProjectGetter.promises.findAllUsersProjects(
+          userId,
+          'name lastUpdated'
+        )
+        const output = []
+        for (const [key, projects] of Object.entries(all || {})) {
+          for (const project of projects || []) {
+            const id = String(project._id || project.id || project.projectId)
+            const write =
+              key === 'owned' ||
+              key === 'readAndWrite' ||
+              key === 'tokenReadAndWrite'
+            output.push({
+              project_id: id,
+              url: services.ProjectRef.urlFor(id),
+              name: project.name,
+              permissions: write ? 'write' : 'read',
+              last_updated: isoTime(project.lastUpdated),
+            })
+          }
         }
-      }
-      return { projects: output, count: output.length }
-    })
+        output.sort((left, right) =>
+          String(right.last_updated ?? '').localeCompare(
+            String(left.last_updated ?? '')
+          )
+        )
+        return { projects: output, count: output.length }
+      })
   )
 
   server.tool(
     'get_project',
-    'Get project metadata',
+    'Get one project: its name, root document, file tree, your permissions and the current project_version, which edit_file, suggest_edits and write_files take as base_version.',
     { project: z.string() },
     async ({ project }) =>
       run(async () => {
@@ -1329,7 +1353,7 @@ export function registerTools(
 
   server.tool(
     'get_outline',
-    'Get LaTeX outline',
+    'List the LaTeX headings (part to subsubsection) with their level, title, file and line, following \\input and \\include from the root document when no path is given. Use it to find the title and level for a replace_section edit.',
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
       run(async () => {
@@ -1383,7 +1407,7 @@ export function registerTools(
 
   server.tool(
     'search',
-    'Search project files',
+    'Search every text document of the project for a string, or a JavaScript regular expression with regex:true, and return path, line and text of each matching line (max_results, default 50).',
     {
       project: z.string(),
       query: z.string(),
@@ -1447,7 +1471,7 @@ export function registerTools(
 
   server.tool(
     'diff',
-    'Compare project versions',
+    'Compare two project versions (from_version and to_version, as list_history gives them). With path: the changes to that file. Without path: the files that were added, edited, renamed or removed.',
     {
       project: z.string(),
       from_version: z.number(),
@@ -1517,7 +1541,7 @@ export function registerTools(
       ),
       base_version: z.number().optional(),
       overwrite: z.boolean().optional(),
-      agent: z.string().optional(),
+      agent: agentSchema,
       label: z.boolean().optional(),
     },
     async ({
@@ -1555,7 +1579,7 @@ export function registerTools(
       version: z.number().int().nonnegative(),
       path: z.string().optional(),
       message: z.string().optional(),
-      agent: z.string().optional(),
+      agent: agentSchema,
     },
     async ({ project, version, path, message, agent }) => {
       try {
@@ -1582,7 +1606,7 @@ export function registerTools(
       base_version: z.number().int().nonnegative(),
       edits: editsSchema,
       message: z.string(),
-      agent: z.string().optional(),
+      agent: agentSchema,
       label: z.boolean().optional(),
     },
     async ({
@@ -1643,7 +1667,7 @@ export function registerTools(
 
   server.tool(
     'create_branch',
-    'Create a project branch',
+    'Create a branch: a copy of the project, recorded against the version it started from, that can later be compared with diff_branch and merged back with merge_branch. Returns branch_project_id, the id the branch tools and every other tool take for the branch.',
     { project: z.string(), name: z.string() },
     async ({ project, name }) =>
       run(async () => {
@@ -1654,7 +1678,7 @@ export function registerTools(
 
   server.tool(
     'list_branches',
-    'List project branches',
+    'List the open and merged branches of a project with their name, branch_project_id, base_version and status.',
     { project: z.string() },
     async ({ project }) =>
       run(async () => {
@@ -1665,7 +1689,7 @@ export function registerTools(
 
   server.tool(
     'diff_branch',
-    'Compare a branch with its parent',
+    'Compare a branch with its parent project: every file with its state since the branch was made (unchanged, branch_only, parent_only, both_same, both_differ).',
     { branch: branchRefSchema, project: branchParentSchema },
     async ({ branch, project }) =>
       run(async () => {
@@ -1676,13 +1700,13 @@ export function registerTools(
 
   server.tool(
     'merge_branch',
-    'Merge a branch into its parent. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
+    'Merge a branch into its parent. dry_run defaults to true: it reports mergeable and the conflicts and writes nothing. With dry_run:false a clean merge is written in one atomic write and returns project_version. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
     {
       branch: branchRefSchema,
       project: branchParentSchema,
       dry_run: z.boolean().optional(),
       message: z.string().optional(),
-      agent: z.string().optional(),
+      agent: agentSchema,
     },
     async ({ branch, project, dry_run = true, message, agent }) => {
       try {
@@ -1701,7 +1725,7 @@ export function registerTools(
 
   server.tool(
     'archive_branch',
-    'Archive a project branch',
+    'Archive a branch: hide its project and take it out of list_branches. Needs write access to the parent project.',
     { branch: branchRefSchema, project: branchParentSchema },
     async ({ branch, project }) =>
       run(async () => {
@@ -1712,7 +1736,7 @@ export function registerTools(
 
   server.tool(
     'list_comments',
-    'List review comments with their anchored text and messages',
+    'List the review comments of a project, or of one file with path: each thread with its id, the text it is anchored to, line and column, messages, and whether it is resolved. Resolved threads are left out unless include_resolved:true.',
     {
       project: z.string(),
       path: z.string().optional(),
@@ -1736,7 +1760,7 @@ export function registerTools(
 
   server.tool(
     'get_review_queue',
-    'List the unresolved comments of a project with their surrounding lines',
+    'The work list of a review round: the unresolved comments grouped by file, each with context_lines (default 3) of the surrounding text, the comments whose text is gone (detached), and how many suggestions are still pending.',
     { project: z.string(), context_lines: z.number().int().optional() },
     async ({ project, context_lines = 3 }) =>
       run(async () => {
@@ -1774,12 +1798,12 @@ export function registerTools(
 
   server.tool(
     'reply_comment',
-    'Reply to a review comment thread',
+    'Reply to a review comment thread (thread_id from list_comments or get_review_queue).',
     {
       project: z.string(),
       thread_id: z.string(),
       content: z.string(),
-      act_as_agent: z.boolean().optional(),
+      act_as_agent: actAsAgentSchema,
     },
     async ({ project, thread_id, content, act_as_agent = true }) =>
       run(async () => {
@@ -1813,7 +1837,7 @@ export function registerTools(
       {
         project: z.string(),
         thread_id: z.string(),
-        act_as_agent: z.boolean().optional(),
+        act_as_agent: actAsAgentSchema,
       },
       async ({ project, thread_id, act_as_agent = true }) =>
         run(async () => {
@@ -1838,8 +1862,16 @@ export function registerTools(
         })
     )
 
-  threadStateTool('resolve_comment', 'Resolve a review comment thread', true)
-  threadStateTool('reopen_comment', 'Reopen a review comment thread', false)
+  threadStateTool(
+    'resolve_comment',
+    'Mark a review comment thread as resolved, once the change it asked for is made.',
+    true
+  )
+  threadStateTool(
+    'reopen_comment',
+    'Reopen a resolved review comment thread, for example when a later change undid the fix it asked for.',
+    false
+  )
 
   const anchorSchema = z
     .object({
@@ -1881,13 +1913,13 @@ export function registerTools(
 
   server.tool(
     'add_comment',
-    'Anchor a new review comment to a passage of a document',
+    'Start a review comment thread on a passage of a document. The anchor is the exact text (optionally narrowed with occurrence, counted from 1, or start_line/end_line), a "first words...last words" passage, or a line range. Returns the thread_id and where the comment landed.',
     {
       project: z.string(),
       path: z.string(),
       anchor: anchorSchema,
       content: z.string(),
-      act_as_agent: z.boolean().optional(),
+      act_as_agent: actAsAgentSchema,
     },
     async ({ project, path, anchor, content, act_as_agent = true }) =>
       run(async () => {
@@ -1917,13 +1949,13 @@ export function registerTools(
 
   server.tool(
     'reanchor_comment',
-    'Move a detached or drifted review comment onto new text',
+    'Move a review comment thread onto new text, for a comment whose text was rewritten or deleted (detached). Takes the same anchor as add_comment.',
     {
       project: z.string(),
       thread_id: z.string(),
       path: z.string(),
       anchor: anchorSchema,
-      act_as_agent: z.boolean().optional(),
+      act_as_agent: actAsAgentSchema,
     },
     async ({ project, thread_id, path, anchor, act_as_agent = true }) =>
       run(async () => {
@@ -1961,8 +1993,8 @@ export function registerTools(
       base_version: z.number().int().nonnegative(),
       edits: editsSchema,
       message: z.string(),
-      agent: z.string().optional(),
-      act_as_agent: z.boolean().optional(),
+      agent: agentSchema,
+      act_as_agent: actAsAgentSchema,
       label: z.boolean().optional(),
     },
     async ({
@@ -2028,7 +2060,7 @@ export function registerTools(
 
   server.tool(
     'list_suggestions',
-    'List the tracked changes waiting for someone to accept or reject them',
+    'List the pending tracked changes (suggestions) of a project, or of one file with path: change_id, insert or delete, the text, line and column, author and time.',
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
       runSummarised(suggestionListSummary, async () => {
@@ -2088,12 +2120,12 @@ export function registerTools(
 
   suggestionActionTool(
     'accept_suggestions',
-    'Accept tracked changes, applying them to the document',
+    'Accept pending suggestions of one file, as the token owner: the ids in change_ids, or every pending one with all:true. The text becomes part of the document.',
     'accept'
   )
   suggestionActionTool(
     'reject_suggestions',
-    'Reject tracked changes, undoing them',
+    'Reject pending suggestions of one file, as the token owner: the ids in change_ids, or every pending one with all:true. Suggested insertions are removed and suggested deletions restored.',
     'reject'
   )
 

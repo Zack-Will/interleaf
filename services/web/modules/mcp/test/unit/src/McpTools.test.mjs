@@ -701,6 +701,42 @@ describe('read_file and pending suggestions', () => {
   })
 })
 
+describe('tool descriptions', () => {
+  it('lists projects newest first with their last update time', async () => {
+    const { server } = setup({
+      ProjectGetter: {
+        promises: {
+          findAllUsersProjects: vi.fn(async () => ({
+            owned: [
+              { _id: 'old', name: 'Paper', lastUpdated: new Date(1000) },
+              { _id: 'new', name: 'Paper', lastUpdated: new Date(5000) },
+            ],
+            readAndWrite: [{ _id: 'mid', name: 'Shared', lastUpdated: 3000 }],
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.list_projects.handler({})
+    expect(
+      result.structuredContent.projects.map(project => [
+        project.project_id,
+        project.last_updated,
+      ])
+    ).toEqual([
+      ['new', '1970-01-01T00:00:05.000Z'],
+      ['mid', '1970-01-01T00:00:03.000Z'],
+      ['old', '1970-01-01T00:00:01.000Z'],
+    ])
+  })
+
+  it('describes every tool in more than a few words', async () => {
+    const { server } = setup()
+    for (const [name, tool] of Object.entries(server._registeredTools)) {
+      expect(tool.description.split(' ').length, name).toBeGreaterThan(8)
+    }
+  })
+})
+
 describe('project and branch references', () => {
   const parentId = 'a'.repeat(24)
   const branchId = 'b'.repeat(24)
