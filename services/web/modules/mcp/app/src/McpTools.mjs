@@ -759,11 +759,40 @@ function assertDocumentFits(lines, services) {
     throw new FileTooLargeError()
 }
 
+// The paths that changed between two project versions, from the file tree
+// diff project-history already computes for the history panel.  Best effort:
+// a conflict is still reported, with the current version, if this fails.
+async function changedPathsBetween(services, id, from, to) {
+  if (!Number.isInteger(Number(from)) || !Number.isInteger(Number(to)))
+    return null
+  if (Number(from) >= Number(to)) return null
+  try {
+    const result = await services.fetchJson(
+      `${services.settings.apis.project_history.url}/project/${id}/filetree/diff?from=${from}&to=${to}`
+    )
+    if (!Array.isArray(result?.diff)) return null
+    return result.diff
+      .filter(entry => entry.operation)
+      .map(entry => cleanPath(entry.newPathname || entry.pathname))
+  } catch {
+    return null
+  }
+}
+
 // Someone else wrote to the project since the caller read it.  The version to
-// retry with is the one the project is at now, so say it.
-function withVersionConflictHint(error) {
-  if (error.code === 'version_conflict')
-    error.next_action = `re-read changed files and retry with base_version=${error.actualVersion}`
+// retry with is the one the project is at now, and the files to re-read are
+// the ones that changed in between, so say both.
+async function withVersionConflictHint(services, id, error) {
+  if (error.code !== 'version_conflict') return error
+  const paths = await changedPathsBetween(
+    services,
+    id,
+    error.expectedVersion,
+    error.actualVersion
+  )
+  if (paths) error.changedPaths = paths
+  const reread = paths?.length ? paths.join(', ') : 'the files you changed'
+  error.next_action = `re-read ${reread} and retry with base_version=${error.actualVersion}`
   return error
 }
 
@@ -1182,8 +1211,9 @@ export function registerTools(
       agent,
       label = false,
     }) => {
+      let id
       try {
-        const id = projectId(project, services)
+        id = projectId(project, services)
         await access(services, req, id, 'write')
         await assertNoSilentOverwrite(services, id, files, overwrite)
         const result = await services.WriteService.writeFiles(id, userId, {
@@ -1195,12 +1225,7 @@ export function registerTools(
         })
         return writeResult(result, files.length)
       } catch (error) {
-        return errorResult(
-          error,
-          error.code === 'version_conflict'
-            ? `re-read changed files and retry with base_version=${error.actualVersion}`
-            : undefined
-        )
+        return errorResult(await withVersionConflictHint(services, id, error))
       }
     }
   )
@@ -1276,7 +1301,7 @@ export function registerTools(
             label,
           })
         } catch (error) {
-          throw withVersionConflictHint(error)
+          throw await withVersionConflictHint(services, id, error)
         }
         const { reanchored, failed } = await reanchorDetachedComments(
           services,
@@ -1620,7 +1645,7 @@ export function registerTools(
             }
           )
         } catch (error) {
-          throw withVersionConflictHint(error)
+          throw await withVersionConflictHint(services, id, error)
         }
         return {
           path: doc.path,

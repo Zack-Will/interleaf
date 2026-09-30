@@ -541,7 +541,15 @@ describe('MCP tools', () => {
       expectedVersion: 1,
       actualVersion: 7,
     })
+    const fetchJson = vi.fn(async () => ({
+      diff: [
+        { pathname: 'main.tex', operation: 'edited' },
+        { pathname: 'refs.bib' },
+        { pathname: 'old.tex', newPathname: 'new.tex', operation: 'renamed' },
+      ],
+    }))
     const { server } = setup({
+      fetchJson,
       WriteService: {
         writeFiles: vi.fn(async () => {
           throw conflict
@@ -551,14 +559,52 @@ describe('MCP tools', () => {
     const result = await server._registeredTools.write_files.handler({
       project: 'a'.repeat(24),
       message: 'm',
-      files: [{ path: 'new.tex', content: 'x' }],
+      files: [{ path: 'other.tex', content: 'x' }],
       base_version: 1,
     })
+    expect(fetchJson).toHaveBeenCalledWith(
+      `http://history/project/${'a'.repeat(24)}/filetree/diff?from=1&to=7`
+    )
+    expect(result.structuredContent.current_version).toBe(7)
+    expect(result.structuredContent.changed_paths).toEqual([
+      'main.tex',
+      'new.tex',
+    ])
     const text = result.content[0].text
     expect(text).toContain('error: version_conflict')
     expect(text).toContain('expected_version: 1')
     expect(text).toContain('current_version: 7')
-    expect(text).toContain('next_action: re-read changed files')
+    expect(text).toContain('changed_paths: main.tex, new.tex')
+    expect(text).toContain(
+      'next_action: re-read main.tex, new.tex and retry with base_version=7'
+    )
+  })
+
+  it('still reports a conflict when the changed paths cannot be read', async () => {
+    const conflict = Object.assign(new Error('project version conflict'), {
+      code: 'version_conflict',
+      expectedVersion: 1,
+      actualVersion: 7,
+    })
+    const { server } = setup({
+      fetchJson: vi.fn(async () => {
+        throw new Error('history down')
+      }),
+      WriteService: {
+        writeFiles: vi.fn(async () => {
+          throw conflict
+        }),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'other.tex', content: 'x' }],
+      base_version: 1,
+    })
+    expect(result.structuredContent.code).toBe('version_conflict')
+    expect(result.structuredContent.changed_paths).toBeUndefined()
+    expect(result.content[0].text).toContain('retry with base_version=7')
   })
 })
 
