@@ -64,10 +64,14 @@ async function writeWith({ before, after, files, docPaths }) {
   return { result, getDocument }
 }
 
-async function stateOf(beforeComment, afterComments) {
+async function stateOf(
+  beforeComment,
+  afterComments,
+  { beforeLines = ['old content'], afterLines = ['new content'] } = {}
+) {
   const { result } = await writeWith({
-    before: { lines: ['old content'], ranges: { comments: [beforeComment] } },
-    after: { lines: ['new content'], ranges: { comments: afterComments } },
+    before: { lines: beforeLines, ranges: { comments: [beforeComment] } },
+    after: { lines: afterLines, ranges: { comments: afterComments } },
   })
   return result.comments_affected
 }
@@ -79,9 +83,29 @@ describe('WriteService comment tracking', () => {
     ).toEqual([{ thread_id: 't1', path: 'main.tex', state: 'unchanged' }])
   })
 
-  it('reports a range pushed along by an earlier edit as moved', async () => {
+  it('reports a range pushed onto another line as moved', async () => {
+    const lines = {
+      beforeLines: ['0123456789abc'],
+      afterLines: ['new first line', '0123456789abc'],
+    }
     expect(
-      await stateOf(comment('t1', 'abc', 10), [comment('t1', 'abc', 24)])
+      await stateOf(comment('t1', 'abc', 10), [comment('t1', 'abc', 25)], lines)
+    ).toEqual([{ thread_id: 't1', path: 'main.tex', state: 'moved' }])
+  })
+
+  it('reports a range only shifted along its own line as unchanged', async () => {
+    const lines = {
+      beforeLines: ['0123456789abc'],
+      afterLines: ['0123456789 more abc'],
+    }
+    expect(
+      await stateOf(comment('t1', 'abc', 10), [comment('t1', 'abc', 16)], lines)
+    ).toEqual([{ thread_id: 't1', path: 'main.tex', state: 'unchanged' }])
+  })
+
+  it('reports a range that now spans different text as moved', async () => {
+    expect(
+      await stateOf(comment('t1', 'abc', 10), [comment('t1', 'xyz', 10)])
     ).toEqual([{ thread_id: 't1', path: 'main.tex', state: 'moved' }])
   })
 
