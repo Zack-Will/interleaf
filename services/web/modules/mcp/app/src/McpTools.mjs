@@ -33,7 +33,6 @@ function writeSummary(data) {
   const version = data.project_version ?? data.version
   if (version != null) parts.unshift(`project version ${version}`)
   if (data.label?.comment) parts.push(`label: ${data.label.comment}`)
-  if (data.code === 'write_failed') parts.unshift('No files were written')
   return parts.join('; ')
 }
 
@@ -221,21 +220,24 @@ function writeResult(data, requestedCount = null) {
     (requestedCount != null ? requestedCount > 0 : failed.length > 0) &&
     applied.length === 0
   if (!allFailed) return { isError: false, ...textResult(structured) }
+  const failure = {
+    code: 'write_failed',
+    message: 'No files were written',
+    next_action:
+      'Fix the failed files and retry; nothing was written and the project version is unchanged',
+  }
+  const version = structured.project_version ?? structured.version
+  const text = errorText({
+    code: failure.code,
+    message: failure.message,
+    ...(version != null ? { project_version: version } : {}),
+    failed: failed.map(entry => `${entry.path} (${entry.error})`),
+    next_action: failure.next_action,
+  })
   return {
     isError: true,
-    content: [
-      {
-        type: 'text',
-        text: writeSummary({ ...structured, code: 'write_failed' }),
-      },
-    ],
-    structuredContent: {
-      ...structured,
-      code: 'write_failed',
-      message: 'No files were written',
-      next_action:
-        'Fix the failed files and retry; nothing was written and the project version is unchanged',
-    },
+    content: [{ type: 'text', text }],
+    structuredContent: { ...structured, ...failure },
   }
 }
 
@@ -262,33 +264,64 @@ function errorDetail(error, name) {
   return error[name] ?? error.info?.[name]
 }
 
+function formatTextValue(value) {
+  if (Array.isArray(value)) return value.map(formatTextValue).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+// Some clients hand the model only the text of a tool result, never its
+// structuredContent, so an error has to carry its facts in the text too: one
+// `key: value` line per fact, the code first and what to do about it last.
+function errorText(structured) {
+  const lines = [`error: ${structured.code}`, `message: ${structured.message}`]
+  for (const [key, value] of Object.entries(structured)) {
+    if (['code', 'message', 'next_action', 'details'].includes(key)) continue
+    lines.push(`${key}: ${formatTextValue(value)}`)
+  }
+  lines.push(`next_action: ${structured.next_action}`)
+  return lines.join('\n')
+}
+
 const errorResult = (error, next) => {
   const candidateLines = errorDetail(error, 'candidateLines')
   const actualText = errorDetail(error, 'actualText')
+  const editIndex = errorDetail(error, 'editIndex')
+  const validValues = errorDetail(error, 'validValues')
+  const matches = errorDetail(error, 'matches')
   // A refusal from document-updater or chat carries the status it answered
   // with and whatever else its body said; both help an agent decide whether to
   // retry, re-read or give up.
   const status = errorDetail(error, 'status')
   const details = errorDetail(error, 'details')
+  const structured = {
+    code: error.code || 'error',
+    message: error.message || String(error),
+    ...(editIndex != null ? { edit_index: editIndex } : {}),
+    ...(validValues ? { valid_values: validValues } : {}),
+    ...(matches ? { matches } : {}),
+    ...(error.expectedVersion != null
+      ? { expected_version: error.expectedVersion }
+      : {}),
+    ...(error.actualVersion != null
+      ? {
+          actual_version: error.actualVersion,
+          current_version: error.actualVersion,
+        }
+      : {}),
+    ...(error.changedPaths ? { changed_paths: error.changedPaths } : {}),
+    ...(candidateLines ? { candidate_lines: candidateLines } : {}),
+    ...(actualText != null ? { actual_text: actualText } : {}),
+    ...(status != null ? { status } : {}),
+    ...(details ? { details } : {}),
+    ...(error.paths ? { paths: error.paths } : {}),
+    ...(error.candidates ? { candidates: error.candidates } : {}),
+    next_action: nextAction(error, next),
+  }
   return {
     isError: true,
-    content: [{ type: 'text', text: error.message || String(error) }],
-    structuredContent: {
-      code: error.code || 'error',
-      message: error.message || String(error),
-      ...(error.expectedVersion != null
-        ? { expected_version: error.expectedVersion }
-        : {}),
-      ...(error.actualVersion != null
-        ? { actual_version: error.actualVersion }
-        : {}),
-      ...(candidateLines ? { candidate_lines: candidateLines } : {}),
-      ...(actualText != null ? { actual_text: actualText } : {}),
-      ...(status != null ? { status } : {}),
-      ...(details ? { details } : {}),
-      ...(error.paths ? { paths: error.paths } : {}),
-      next_action: nextAction(error, next),
-    },
+    content: [{ type: 'text', text: errorText(structured) }],
+    structuredContent: structured,
   }
 }
 

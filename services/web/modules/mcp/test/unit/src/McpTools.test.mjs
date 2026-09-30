@@ -83,6 +83,62 @@ function setup(overrides = {}) {
   return { server, services }
 }
 
+function everyToolArguments(project) {
+  return {
+    list_projects: {},
+    get_project: { project },
+    read_file: { project, path: 'main.tex' },
+    get_outline: { project },
+    search: { project, query: 'one' },
+    list_history: { project },
+    diff: { project, from_version: 1, to_version: 2 },
+    create_label: { project, comment: 'done' },
+    write_files: { project, message: 'm', files: [] },
+    revert_to: { project, version: 1 },
+    create_branch: { project, name: 'test' },
+    list_branches: { project },
+    diff_branch: { branch: project },
+    merge_branch: { branch: project },
+    archive_branch: { branch: project },
+    edit_file: {
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    },
+    list_comments: { project },
+    get_review_queue: { project },
+    reply_comment: { project, thread_id: 't', content: 'c' },
+    resolve_comment: { project, thread_id: 't' },
+    reopen_comment: { project, thread_id: 't' },
+    add_comment: {
+      project,
+      path: 'main.tex',
+      anchor: { exact: 'one' },
+      content: 'c',
+    },
+    reanchor_comment: {
+      project,
+      thread_id: 't',
+      path: 'main.tex',
+      anchor: { exact: 'one' },
+    },
+    suggest_edits: {
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    },
+    list_suggestions: { project },
+    accept_suggestions: { project, path: 'main.tex', all: true },
+    reject_suggestions: { project, path: 'main.tex', all: true },
+    get_backup_status: { project },
+    backup_now: { project },
+  }
+}
+
 describe('MCP tools', () => {
   it('parses project refs and reads line range', async () => {
     const { server, services } = setup()
@@ -434,64 +490,75 @@ describe('MCP tools', () => {
   it('returns plain-object structured content for every tool', async () => {
     const { server } = setup()
     const project = 'a'.repeat(24)
-    const argumentsByTool = {
-      list_projects: {},
-      get_project: { project },
-      read_file: { project, path: 'main.tex' },
-      get_outline: { project },
-      search: { project, query: 'one' },
-      list_history: { project },
-      diff: { project, from_version: 1, to_version: 2 },
-      create_label: { project, comment: 'done' },
-      write_files: { project, message: 'm', files: [] },
-      revert_to: { project, version: 1 },
-      create_branch: { project, name: 'test' },
-      list_branches: { project },
-      diff_branch: { branch: project },
-      merge_branch: { branch: project },
-      archive_branch: { branch: project },
-      edit_file: {
-        project,
-        path: 'main.tex',
-        base_version: 4,
-        edits: [],
-        message: 'm',
-      },
-      list_comments: { project },
-      get_review_queue: { project },
-      reply_comment: { project, thread_id: 't', content: 'c' },
-      resolve_comment: { project, thread_id: 't' },
-      reopen_comment: { project, thread_id: 't' },
-      add_comment: {
-        project,
-        path: 'main.tex',
-        anchor: { exact: 'one' },
-        content: 'c',
-      },
-      reanchor_comment: {
-        project,
-        thread_id: 't',
-        path: 'main.tex',
-        anchor: { exact: 'one' },
-      },
-      suggest_edits: {
-        project,
-        path: 'main.tex',
-        base_version: 4,
-        edits: [],
-        message: 'm',
-      },
-      list_suggestions: { project },
-      accept_suggestions: { project, path: 'main.tex', all: true },
-      reject_suggestions: { project, path: 'main.tex', all: true },
-      get_backup_status: { project },
-      backup_now: { project },
-    }
+    const argumentsByTool = everyToolArguments(project)
     for (const [name, tool] of Object.entries(server._registeredTools)) {
       const result = await tool.handler(argumentsByTool[name])
       expect(typeof result.structuredContent).toBe('object')
       expect(Array.isArray(result.structuredContent)).toBe(false)
     }
+  })
+
+  it('puts the code and next_action of every error in its text', async () => {
+    const refused = Object.assign(new Error('forbidden'), {
+      code: 'forbidden',
+    })
+    const failing = vi.fn(async () => {
+      throw refused
+    })
+    const { server } = setup({
+      ProjectRef: {
+        parse: x => ({ projectId: x }),
+        requireAccess: failing,
+        urlFor: x => x,
+      },
+      ProjectGetter: {
+        promises: { findAllUsersProjects: failing, getProject: failing },
+      },
+      BranchService: {
+        createBranch: failing,
+        listBranches: failing,
+        diffBranch: failing,
+        mergeBranch: failing,
+        archiveBranch: failing,
+      },
+      RevertService: { revertTo: failing },
+    })
+    const argumentsByTool = everyToolArguments('a'.repeat(24))
+    const tools = Object.entries(server._registeredTools)
+    for (const [name, tool] of tools) {
+      const result = await tool.handler(argumentsByTool[name])
+      expect(result.isError, name).toBe(true)
+      const { code, next_action: next } = result.structuredContent
+      expect(next, name).toBeTruthy()
+      expect(result.content[0].text, name).toContain(`error: ${code}`)
+      expect(result.content[0].text, name).toContain(`next_action: ${next}`)
+    }
+  })
+
+  it('puts the versions of a conflict in its text', async () => {
+    const conflict = Object.assign(new Error('project version conflict'), {
+      code: 'version_conflict',
+      expectedVersion: 1,
+      actualVersion: 7,
+    })
+    const { server } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => {
+          throw conflict
+        }),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'new.tex', content: 'x' }],
+      base_version: 1,
+    })
+    const text = result.content[0].text
+    expect(text).toContain('error: version_conflict')
+    expect(text).toContain('expected_version: 1')
+    expect(text).toContain('current_version: 7')
+    expect(text).toContain('next_action: re-read changed files')
   })
 })
 
