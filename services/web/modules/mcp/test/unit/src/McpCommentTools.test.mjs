@@ -487,11 +487,70 @@ describe('MCP comment anchoring tools', () => {
     expect(result.structuredContent.code).toBe('anchor_not_found')
   })
 
-  it('rejects an anchor that mixes two forms', async () => {
+  it('rejects an anchor that mixes the two text forms', async () => {
     const { server } = setup()
-    const result = await addComment(server, { exact: 'Alpha', start_line: 2 })
+    const result = await addComment(server, {
+      exact: 'Alpha',
+      start_with_ellipsis: 'Alpha...beta',
+    })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.code).toBe('invalid_anchor')
+  })
+
+  const repeated = () =>
+    setup({
+      documents: {
+        [mainDocId]: {
+          lines: ['Repeat me', 'filler', 'Repeat me', 'Repeat me'],
+          ranges: { comments: [] },
+        },
+        [partDocId]: { lines: partLines, ranges: { comments: [] } },
+      },
+    })
+
+  it('anchors on the second occurrence of repeated text', async () => {
+    const { server, reviewService } = repeated()
+    const result = await addComment(server, {
+      exact: 'Repeat me',
+      occurrence: 2,
+    })
+    expect(result.isError).not.toBe(true)
+    expect(reviewService.createComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'agent-1',
+      expect.objectContaining({ position: 17, text: 'Repeat me' })
+    )
+    expect(result.structuredContent.line).toBe(3)
+  })
+
+  it('searches only the given lines when exact comes with start_line', async () => {
+    const { server } = repeated()
+    const result = await addComment(server, {
+      exact: 'Repeat me',
+      start_line: 4,
+    })
+    expect(result.structuredContent.line).toBe(4)
+    const narrowed = await addComment(server, {
+      exact: 'Repeat me',
+      start_line: 2,
+      end_line: 4,
+      occurrence: 1,
+    })
+    expect(narrowed.structuredContent.line).toBe(3)
+  })
+
+  it('says how many matches there are when occurrence is too large', async () => {
+    const { server } = repeated()
+    const result = await addComment(server, {
+      exact: 'Repeat me',
+      occurrence: 5,
+    })
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.message).toBe(
+      'anchor text occurs 3 times, so there is no occurrence 5'
+    )
+    expect(result.structuredContent.candidate_lines).toEqual([1, 3, 4])
   })
 
   it('rejects a line range outside the document', async () => {

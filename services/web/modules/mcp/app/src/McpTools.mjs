@@ -395,15 +395,8 @@ function linesOfPositions(text, positions) {
   return positions.map(position => text.slice(0, position).split('\n').length)
 }
 
-function resolveExactAnchor(text, exact) {
-  const positions = occurrences(text, exact)
-  if (!positions.length)
-    throw new AnchorNotFoundError('anchor text is not in this document')
-  if (positions.length > 1)
-    throw new AnchorAmbiguousError('anchor text occurs more than once', {
-      candidateLines: linesOfPositions(text, positions),
-    })
-  return { position: positions[0], text: exact }
+function exactSpans(text, exact) {
+  return occurrences(text, exact).map(position => ({ position, text: exact }))
 }
 
 // The first suffix occurrence that leaves the whole prefix inside the span.
@@ -417,9 +410,9 @@ function findSuffixEnd(text, suffix, minimumEnd) {
 
 // Notion-style "first words...last words": quote the ends of a long passage
 // instead of all of it.
-function resolveEllipsisAnchor(text, pattern) {
+function ellipsisSpans(text, pattern) {
   const separator = pattern.indexOf(ELLIPSIS)
-  if (separator < 0) return resolveExactAnchor(text, pattern)
+  if (separator < 0) return exactSpans(text, pattern)
   const prefix = pattern.slice(0, separator)
   const suffix = pattern.slice(separator + ELLIPSIS.length)
   if (!prefix || !suffix)
@@ -433,18 +426,7 @@ function resolveEllipsisAnchor(text, pattern) {
     const end = findSuffixEnd(text, suffix, start + prefix.length)
     if (end >= 0) spans.push({ position: start, text: text.slice(start, end) })
   }
-  if (!spans.length)
-    throw new AnchorNotFoundError(
-      'no passage starts with the prefix and ends with the suffix'
-    )
-  if (spans.length > 1)
-    throw new AnchorAmbiguousError('more than one passage matches the anchor', {
-      candidateLines: linesOfPositions(
-        text,
-        spans.map(span => span.position)
-      ),
-    })
-  return spans[0]
+  return spans
 }
 
 function resolveLineAnchor(lines, anchor) {
@@ -468,31 +450,107 @@ function resolveLineAnchor(lines, anchor) {
   return { position, text: lines.slice(start - 1, end).join('\n') }
 }
 
-function anchorKind(anchor) {
-  const kinds = []
-  if (anchor?.exact != null) kinds.push('exact')
-  if (anchor?.start_with_ellipsis != null) kinds.push('ellipsis')
-  if (anchor?.start_line != null || anchor?.end_line != null)
-    kinds.push('lines')
-  if (kinds.length !== 1)
+// exact and start_with_ellipsis say which text to anchor to; start_line and
+// end_line either are the anchor or, next to one of those two, narrow the
+// search to those lines.
+function textAnchorForm(anchor) {
+  const forms = []
+  if (anchor?.exact != null) forms.push('exact')
+  if (anchor?.start_with_ellipsis != null) forms.push('ellipsis')
+  if (forms.length > 1)
     throw toolError(
       'invalid_anchor',
-      'anchor needs exactly one of exact, start_with_ellipsis or start_line/end_line',
-      'pass a single anchor form'
+      'anchor takes exact or start_with_ellipsis, not both',
+      'pass one of them, with start_line/end_line or occurrence to tell repeated text apart'
     )
-  return kinds[0]
+  const hasLines = anchor?.start_line != null || anchor?.end_line != null
+  if (!forms.length && !hasLines)
+    throw toolError(
+      'invalid_anchor',
+      'anchor needs exact, start_with_ellipsis or start_line/end_line',
+      'pass the text to comment on as exact, or a line range'
+    )
+  if (!forms.length && anchor?.occurrence != null)
+    throw toolError(
+      'invalid_anchor',
+      'occurrence picks one of several matches of exact or start_with_ellipsis',
+      'drop occurrence from a line-range anchor'
+    )
+  return forms[0] || 'lines'
+}
+
+function describeWindow(anchor) {
+  if (anchor.start_line == null && anchor.end_line == null) return ''
+  const start = anchor.start_line ?? 1
+  return ` between lines ${start} and ${anchor.end_line ?? start}`
+}
+
+// One of the spans the anchor text matched: the only one, or the one
+// `occurrence` (1-based, in document order) picks.
+function pickSpan(text, spans, anchor) {
+  const where = describeWindow(anchor)
+  if (!spans.length)
+    throw new AnchorNotFoundError(`anchor text is not in this document${where}`)
+  const candidateLines = linesOfPositions(
+    text,
+    spans.map(span => span.position)
+  )
+  if (anchor.occurrence != null) {
+    if (!Number.isInteger(anchor.occurrence) || anchor.occurrence < 1)
+      throw toolError(
+        'invalid_anchor',
+        'occurrence counts matches from 1 and must be a positive integer',
+        `pass an occurrence between 1 and ${spans.length}`
+      )
+    if (anchor.occurrence > spans.length) {
+      const error = new AnchorNotFoundError(
+        `anchor text occurs ${plural(spans.length, 'time')}${where}, so there is no occurrence ${anchor.occurrence}`,
+        { candidateLines }
+      )
+      error.next_action = `pass an occurrence between 1 and ${spans.length} (candidate_lines lists them in order)`
+      throw error
+    }
+    return spans[anchor.occurrence - 1]
+  }
+  if (spans.length > 1) {
+    const error = new AnchorAmbiguousError(
+      `anchor text occurs ${spans.length} times${where}`,
+      { candidateLines }
+    )
+    error.next_action =
+      'pass occurrence (1-based, in the order of candidate_lines), or start_line/end_line to search only those lines'
+    throw error
+  }
+  return spans[0]
 }
 
 // Turns an anchor into the character range the comment op needs.  Offsets are
 // computed on lines.join('\n'), the same text document-updater holds.
 function resolveAnchor(lines, anchor) {
   const text = lines.join('\n')
-  const kind = anchorKind(anchor)
+  const form = textAnchorForm(anchor)
   let range
-  if (kind === 'exact') range = resolveExactAnchor(text, String(anchor.exact))
-  else if (kind === 'ellipsis')
-    range = resolveEllipsisAnchor(text, String(anchor.start_with_ellipsis))
-  else range = resolveLineAnchor(lines, anchor)
+  if (form === 'lines') range = resolveLineAnchor(lines, anchor)
+  else {
+    const hasLines = anchor.start_line != null || anchor.end_line != null
+    const window = hasLines
+      ? resolveLineAnchor(lines, {
+          start_line: anchor.start_line ?? 1,
+          end_line: anchor.end_line ?? anchor.start_line,
+        })
+      : { position: 0, text }
+    const windowEnd = window.position + window.text.length
+    const spans = (
+      form === 'exact'
+        ? exactSpans(text, String(anchor.exact))
+        : ellipsisSpans(text, String(anchor.start_with_ellipsis))
+    ).filter(
+      span =>
+        span.position >= window.position &&
+        span.position + span.text.length <= windowEnd
+    )
+    range = pickSpan(text, spans, anchor)
+  }
   if (!range.text)
     throw toolError(
       'invalid_anchor',
@@ -1625,12 +1683,43 @@ export function registerTools(
   threadStateTool('resolve_comment', 'Resolve a review comment thread', true)
   threadStateTool('reopen_comment', 'Reopen a review comment thread', false)
 
-  const anchorSchema = z.object({
-    exact: z.string().optional(),
-    start_with_ellipsis: z.string().optional(),
-    start_line: z.number().int().optional(),
-    end_line: z.number().int().optional(),
-  })
+  const anchorSchema = z
+    .object({
+      exact: z
+        .string()
+        .optional()
+        .describe('Exact text to comment on, as it appears in the document.'),
+      start_with_ellipsis: z
+        .string()
+        .optional()
+        .describe(
+          'A long passage given by its ends: "first words...last words".'
+        ),
+      start_line: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          'Alone: the first line to comment on (1-based). With exact or start_with_ellipsis: search only from this line.'
+        ),
+      end_line: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          'Last line, inclusive; defaults to start_line. With exact or start_with_ellipsis: search only up to this line.'
+        ),
+      occurrence: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          'Which match of exact or start_with_ellipsis to use, counted from 1 in document order (within start_line/end_line when given).'
+        ),
+    })
+    .describe(
+      'Where the comment goes: exact or start_with_ellipsis, optionally narrowed by start_line/end_line and occurrence; or a line range alone.'
+    )
 
   server.tool(
     'add_comment',
