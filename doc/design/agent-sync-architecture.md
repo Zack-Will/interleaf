@@ -312,30 +312,48 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 
 | 工具 | 输入 | 输出 / 语义 |
 |---|---|---|
-| `list_projects` | | 可读项目：`project_id`、`url`、`name`、`permissions: read|write` |
+| `list_projects` | | 可读项目：`project_id`、`url`、`name`、`permissions: read|write`、`last_updated`（ISO 8601），按最近修改倒序 |
 | `get_project` | `project` | 文件树、根文档、`project_version`、`permissions`、分支信息 |
-| `read_file` | `project`, `path`, `range?` | 内容、`sha256`、`project_version`；大文件按行范围分片 |
+| `read_file` | `project`, `path`, `start_line?`, `end_line?`, `include_suggestions?` | 带行号的 `content`（唯一内容形式）、`sha256`、`project_version`、`pending_suggestions`。默认视图为"全部待审建议被拒绝后"的文本（去掉待审插入、放回待审删除）；`include_suggestions: true` 返回实时文本并逐条列出待审建议 |
 | `get_outline` | `project`, `path?` | LaTeX 章节结构，服务端解析 |
 | `search` | `project`, `query`, `regex?` | 命中列表，含行号与上下文 |
-| `write_files` | `project`, `base_version?`, `message`, `files[]`（`{path, content | content_base64 | delete:true}`）, `label?` | 原子写入。`label: true` 才打 label。`base_version` 不符 → `conflict`，附当前版本与相关文件的 diff |
-| `edit_file` | `project`, `path`, `base_version`, `edits[]`, `message`, `label?` | `edits` 支持 `replace_range` / `replace_anchor`（文本锚点）/ `replace_section`（按标题）。服务端算出新内容后走 `write_files` |
-| `list_history` | `project`, `limit?`, `before?` | label 列表 + updates，含 origin 与作者 |
-| `diff` | `project`, `from_version`, `to_version`, `path?` | project-history diff |
+| `write_files` | `project`, `base_version?`, `overwrite?`, `message`, `files[]`（`{path, content | contentBase64 | delete:true}`）, `label?` | 原子写入。已存在的路径须带 `overwrite: true`，否则 `file_exists`（新建与删除不需要）；规则在 MCP 层，`revert_to`、`merge_branch`、git-bridge 直接调 `WriteService` 不受影响。`label: true` 才打 label。`base_version` 不符 → `version_conflict`，附 `current_version` 与期间改过的 `changed_paths`。返回 `project_version`，`version` 为保留一个版本的弃用别名 |
+| `edit_file` | `project`, `path`, `base_version`, `edits[]`, `message`, `label?` | `edits` 按 `type` 区分：`replace_range` / `replace_anchor`（文本锚点，`occurrence` 从 1 计数）/ `insert_at_anchor`（`side: before|after`）/ `replace_section`（按标题，`level` 可省，省略时匹配任意级别、多处匹配报错；`new_text` 须以标题行开头）。删除即 `new_text: ""`。先整体校验再执行，错误带 `edits[i]`。服务端算出新内容后走 `write_files` |
+| `list_history` | `project`, `limit?` | label 与 updates 统一形状：`from_version`、`to_version`、`created_at`、`authors`、`agent`、`message`，可直接交给 `diff` / `revert_to` |
+| `diff` | `project`, `from_version`, `to_version`, `path?` | 带 `path`：3 行上下文的 unified diff；不带：只列有变化的文件及 `operation` |
 | `create_label` | `project`, `comment`, `version?` | 把某个版本（默认最新）标成里程碑，返回 `{project_version, label:{id, comment}}`。需写权限 |
 | `revert_to` | `project`, `version`, `path?`, `message` | 取历史快照 + `writeFiles`，返回新版本；里程碑事件，恒打 label |
-| `create_branch` / `list_branches` / `diff_branch` / `merge_branch` / `archive_branch` | 见 4.6 | `merge_branch` 是里程碑事件，合入成功恒打 label |
+| `create_branch` / `list_branches` / `diff_branch` / `merge_branch` / `archive_branch` | 见 4.6；`branch` 接受分支项目 id / URL，或分支名 + `project`（父项目） | `diff_branch` 只列有变化的文件，附 unified `diff`（分支改了什么）与 `parent_diff`（父项目改了什么）；`merge_branch` 只报要写 / 删的路径与计数、冲突，不回传合并后的全文；合入成功恒打 label。`archive_branch` 需父项目写权限 |
 
-返回同时提供 `content`（人类可读文本）与 `structuredContent`（机器字段）。错误统一为 `{code, message, expected_version?, actual_version?, status?, details?, next_action}`。其中 `status` 与 `details` 来自内部服务的拒绝：`@overleaf/fetch-utils` 把 document-updater 与 chat 的任何拒绝都抛成同一个 `RequestFailedError('request failed')`，模块 `review` 在 `ServiceErrors.mjs` 里统一翻译成带 HTTP 状态、服务自己的稳定 `code`（`text_mismatch`、`ot_type_unsupported`…）与剩余 body 字段（`actual_text` 等）的 typed error；chat 的 404 翻成 `thread_not_found`，没有 code 的拒绝翻成 `document_updater_request_failed` / `chat_request_failed`。超时与 socket 错误原样抛出。示例：
+返回同时提供 `content`（人类可读文本）与 `structuredContent`（机器字段）。**关键事实必须出现在文本里**（R7，见决策 16）：claude.ai 的连接器只把 `content` 的文本交给模型，看不到 `structuredContent`。所以错误的文本是逐行 `key: value`，依次为 `error: <code>`、`message`、各结构化字段（`edit_index`、`valid_values`、`matches`、`expected_version`、`current_version`、`changed_paths`、`candidate_lines`、`paths`、`candidates`…），最后一行 `next_action`；写入结果的文本带 `project_version`。所有时间戳为 ISO 8601。错误统一为 `{code, message, edit_index?, valid_values?, expected_version?, actual_version?, current_version?, changed_paths?, candidate_lines?, status?, details?, next_action}`。其中 `status` 与 `details` 来自内部服务的拒绝：`@overleaf/fetch-utils` 把 document-updater 与 chat 的任何拒绝都抛成同一个 `RequestFailedError('request failed')`，模块 `review` 在 `ServiceErrors.mjs` 里统一翻译成带 HTTP 状态、服务自己的稳定 `code`（`text_mismatch`、`ot_type_unsupported`…）与剩余 body 字段（`actual_text` 等）的 typed error；chat 的 404 翻成 `thread_not_found`，没有 code 的拒绝翻成 `document_updater_request_failed` / `chat_request_failed`。超时与 socket 错误原样抛出。示例：
 
 ```json
 {
   "code": "version_conflict",
+  "message": "project version conflict",
   "expected_version": 41,
   "actual_version": 42,
-  "diff_since_expected": {"main.tex": "@@ -10,3 +10,4 @@ ..."},
-  "next_action": "re-read the listed files, re-apply your change, retry with base_version=42"
+  "current_version": 42,
+  "changed_paths": ["main.tex"],
+  "next_action": "re-read main.tex and retry with base_version=42"
 }
 ```
+
+同一个错误的文本：
+
+```text
+error: version_conflict
+message: project version conflict
+expected_version: 41
+actual_version: 42
+current_version: 42
+changed_paths: main.tex
+next_action: re-read main.tex and retry with base_version=42
+```
+
+`changed_paths` 取自 project-history 的 `filetree/diff`（只在冲突时请求一次）；取不到时省略，只报当前版本。
+
+`edits` 的 JSON Schema 是按 `type` 区分的联合（每种类型只列自己的字段并带说明），但运行时 zod 只要求"对象数组"：SDK 1.30 在进工具前校验参数，失败只回一句 `Invalid input at edits.0.type`，没有 code 也没有 next_action。于是联合通过 JSON Schema 元数据出现在 `tools/list` 里，逐条校验由 `StructuredEdits.mjs` 在执行任何一条之前完成，错误形如 `edits[1]: replace_anchor requires anchor and new_text; missing or invalid: anchor`。
 
 ### 5.3 归属与可见性
 
@@ -558,3 +576,7 @@ ranges 读回，与人在 review panel 里看到的一致；`acceptSuggestions` 
 13. **集成环境用 `develop/` compose 且首期跳过 clsi**：MCP 与 git 验证不需要编译 PDF，省掉 texlive 的 1 到 2 小时构建。
 14. **label 是里程碑，不是每次写入的回执**（R5，与项目负责人商定）。理由：Overleaf 的 label 就是"保存的版本"，也是 git-bridge 暴露的 commit；每次 agent 写入打一个会刷屏 Labels 视图并切碎 git 历史。改为：逐次改动的意图存在 origin 的 `message` 里并显示在历史面板作者行下面；`write_files` / `edit_file` / `suggest_edits` 默认不打 label，`label: true` 才打；`revert_to` / `merge_branch` 恒打；新增 `create_label` 让 agent 显式标里程碑。
 15. **内部服务的拒绝要带 code**（R5）。`fetch-utils` 的 `RequestFailedError` 只有一句 "request failed"，agent 无法据此决定重试还是重读；模块 `review` 统一翻译成带 `status` / `code` / `details` 的 typed error，`McpTools.errorResult` 透传。
+16. **关键事实写进文本，`structuredContent` 不变**（R7，外部评测的横切发现）。评测者只用 claude.ai 连接器，看不到错误的 `structuredContent`，于是 M5（冲突不给当前版本）等"缺字段"其实是字段只在结构化部分。改为：错误文本逐行列出 code、message、全部结构化字段与 next_action；写入结果文本带 `project_version`。结构化部分保持原形状，只增不减。
+17. **锁粒度保持项目级（M6 不做）**（R7）。文件级版本需要 project-history 之外的每文档版本簿记，且 `base_version` 同时是 git-bridge 的 commit 语义；改粒度会让两边分叉。M5 的回答是：冲突时附上期间改过的 `changed_paths`，agent 能分辨真冲突与别处的无关改动，再用 `current_version` 重试。
+18. **`write_files` 覆盖需显式 `overwrite: true`**（R7，H3）。规则放在 MCP 工具层而非 `WriteService`：回退、分支合入、git-bridge 推送本就是有意覆盖。检查在锁外读文件树，极端情况下与并发新建存在竞态；带 `base_version` 可关掉这个窗口。
+19. **`read_file` 默认不含待审建议**（R7，M8）。默认视图是"全部拒绝后"的文本；代价是有待审建议时，行号与锚点可能与 `edit_file` 操作的实时文本不同，文本里会明说，并提示 `include_suggestions: true`。
