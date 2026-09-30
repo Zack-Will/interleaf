@@ -116,6 +116,9 @@ async function readDoc(projectId, path, { startLine, endLine } = {}) {
     totalLines: lines.length,
     sha256: crypto.createHash('sha256').update(content).digest('hex'),
     docVersion: doc.version,
+    // Pending tracked changes and comments, with offsets into the whole
+    // document, so a reader can tell suggested text from accepted text.
+    ranges: doc.ranges || {},
   }
 }
 export default {

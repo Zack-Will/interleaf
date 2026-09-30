@@ -124,6 +124,23 @@ function suggestEditsSummary(data) {
   return [parts.join('; '), ...editReportLines(data)].join('\n')
 }
 
+function readFileSummary(data) {
+  const lines = [
+    `${data.path}; project_version: ${data.project_version}; ${data.total_lines} lines`,
+  ]
+  if (data.pending_suggestions && !data.suggestions)
+    lines.push(
+      `${plural(data.pending_suggestions, 'pending suggestion')} not shown: the text reads as if they were rejected, so line numbers and anchors can differ from the live document edit_file works on; pass include_suggestions:true to see them`
+    )
+  if (data.suggestions?.length)
+    for (const suggestion of data.suggestions)
+      lines.push(
+        `pending ${suggestion.type} ${suggestion.change_id} at line ${suggestion.line}: ${JSON.stringify(suggestion.text)}`
+      )
+  lines.push(data.content)
+  return lines.join('\n')
+}
+
 function suggestionListSummary(data) {
   const parts = [
     `${plural(data.count, 'pending suggestion')} in ${plural(data.files.length, 'file')}`,
@@ -483,6 +500,52 @@ function resolveAnchor(lines, anchor) {
       'pick an anchor that covers at least one character'
     )
   return range
+}
+
+function suggestionKind(change) {
+  if (typeof change.op?.i === 'string') return 'insert'
+  if (typeof change.op?.d === 'string') return 'delete'
+  return 'unknown'
+}
+
+// The document as it would read if every pending suggestion were rejected:
+// suggested insertions are live text and come out, suggested deletions are
+// only in the ranges and go back in.  Changes are applied from the end so the
+// offsets of the ones before stay valid; at one offset the insertion goes
+// first, since the deleted text sits where the inserted text starts.
+function withoutSuggestions(lines, changes) {
+  if (!changes.length) return lines
+  const ordered = [...changes].sort(
+    (left, right) =>
+      (right.op?.p ?? 0) - (left.op?.p ?? 0) ||
+      (suggestionKind(left) === 'insert' ? -1 : 1)
+  )
+  let text = lines.join('\n')
+  for (const change of ordered) {
+    const position = change.op?.p ?? 0
+    const kind = suggestionKind(change)
+    if (kind === 'insert')
+      text = text.slice(0, position) + text.slice(position + change.op.i.length)
+    else if (kind === 'delete')
+      text = text.slice(0, position) + change.op.d + text.slice(position)
+  }
+  return text.split('\n')
+}
+
+function pendingSuggestions(lines, changes) {
+  return changes
+    .map(change => {
+      const position = change.op?.p ?? 0
+      const { line, column } = positionToLineColumn(lines, position)
+      return {
+        change_id: change.id,
+        type: suggestionKind(change),
+        text: change.op?.i ?? change.op?.d ?? '',
+        line,
+        column,
+      }
+    })
+    .sort((left, right) => left.line - right.line || left.column - right.column)
 }
 
 function formatUser(user, fallbackId) {
@@ -993,33 +1056,41 @@ export function registerTools(
 
   server.tool(
     'read_file',
-    'Read a text file',
+    'Read a text document with numbered lines ("12: text"), plus the project_version to pass as base_version to edit_file or suggest_edits. start_line and end_line (1-based, inclusive) limit the lines returned. Pending tracked changes (suggestions nobody has accepted yet) are not part of the text by default: it reads as if they were all rejected, and pending_suggestions says how many there are. Pass include_suggestions:true to get the live text instead, which edit_file and suggest_edits work on, with every pending suggestion listed by line.',
     {
       project: z.string(),
       path: z.string(),
       start_line: z.number().optional(),
       end_line: z.number().optional(),
+      include_suggestions: z.boolean().optional(),
     },
-    async ({ project, path, start_line, end_line }) =>
-      run(async () => {
+    async ({ project, path, start_line, end_line, include_suggestions }) =>
+      runSummarised(readFileSummary, async () => {
         const id = projectId(project, services)
         await access(services, req, id)
-        const document = await services.SnapshotService.readDoc(id, path, {
-          startLine: start_line,
-          endLine: end_line,
-        })
-        const lines = document.lines
-          .map((line, index) => `${(start_line || 1) + index}: ${line}`)
+        const document = await services.SnapshotService.readDoc(id, path, {})
+        const changes = document.ranges?.changes || []
+        const allLines = include_suggestions
+          ? document.lines
+          : withoutSuggestions(document.lines, changes)
+        const from = Math.max(1, start_line ?? 1)
+        const to = Math.min(allLines.length, end_line ?? allLines.length)
+        const content = allLines
+          .slice(from - 1, to)
+          .map((line, index) => `${from + index}: ${line}`)
           .join('\n')
         const latest = await services.VersionService.getLatestVersion(id)
         return {
           path: document.path,
-          content: lines,
-          lines: document.lines,
+          content,
           project_version: latest.version,
           doc_version: document.docVersion,
           sha256: document.sha256,
-          total_lines: document.totalLines,
+          total_lines: allLines.length,
+          pending_suggestions: changes.length,
+          ...(include_suggestions
+            ? { suggestions: pendingSuggestions(document.lines, changes) }
+            : {}),
         }
       })
   )

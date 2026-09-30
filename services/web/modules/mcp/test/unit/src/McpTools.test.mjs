@@ -608,6 +608,69 @@ describe('MCP tools', () => {
   })
 })
 
+describe('read_file and pending suggestions', () => {
+  // "Hello world." with a pending insertion " (suggested)" at offset 11 and a
+  // pending deletion of " old" at offset 31, after "Second" on line 2.
+  const live = ['Hello world (suggested).', 'Second line.']
+  const ranges = {
+    changes: [
+      { id: 'ins-1', op: { p: 11, i: ' (suggested)' } },
+      { id: 'del-1', op: { p: 31, d: ' old' } },
+    ],
+  }
+  const read = async args => {
+    const { server } = setup({
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({
+          path: 'main.tex',
+          lines: live,
+          totalLines: 2,
+          docVersion: 4,
+          ranges,
+        })),
+      },
+    })
+    return server._registeredTools.read_file.handler({
+      project: 'a'.repeat(24),
+      path: 'main.tex',
+      ...args,
+    })
+  }
+
+  it('reads as if every pending suggestion were rejected by default', async () => {
+    const result = await read({})
+    expect(result.structuredContent.content).toBe(
+      '1: Hello world.\n2: Second old line.'
+    )
+    expect(result.structuredContent.pending_suggestions).toBe(2)
+    expect(result.structuredContent.suggestions).toBeUndefined()
+    expect(result.structuredContent.lines).toBeUndefined()
+    expect(result.content[0].text).toContain('2 pending suggestions not shown')
+  })
+
+  it('returns the live text and the pending ranges on request', async () => {
+    const result = await read({
+      include_suggestions: true,
+      start_line: 1,
+      end_line: 1,
+    })
+    expect(result.structuredContent.content).toBe('1: Hello world (suggested).')
+    expect(result.structuredContent.suggestions).toEqual([
+      {
+        change_id: 'ins-1',
+        type: 'insert',
+        text: ' (suggested)',
+        line: 1,
+        column: 12,
+      },
+      { change_id: 'del-1', type: 'delete', text: ' old', line: 2, column: 7 },
+    ])
+    expect(result.content[0].text).toContain(
+      'pending insert ins-1 at line 1: " (suggested)"'
+    )
+  })
+})
+
 describe('project_version on file writes', () => {
   const project = 'a'.repeat(24)
 
