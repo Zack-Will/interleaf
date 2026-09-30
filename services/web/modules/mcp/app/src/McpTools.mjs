@@ -20,9 +20,37 @@ import {
   editsSchema,
 } from './StructuredEdits.mjs'
 
+// Fields that hold a point in time, whatever the service that filled them
+// called them: chat's `timestamp` in milliseconds, `created_at`, Mongo's
+// `updatedAt`, a backup error's `at`, `last_updated`.
+const TIME_FIELD = /^(?:timestamp|at|last_updated)$|_at$|[a-z]At$/
+
+// Only plain objects are rebuilt; an ObjectId or a Date is a value.
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object') return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+// Every timestamp an MCP tool returns is an ISO 8601 string (evaluation L4).
+function withIsoTimestamps(value) {
+  if (Array.isArray(value)) return value.map(withIsoTimestamps)
+  if (!isPlainObject(value)) return value
+  const output = {}
+  for (const [key, field] of Object.entries(value)) {
+    if (TIME_FIELD.test(key) && field != null && typeof field !== 'object')
+      output[key] = isoTime(field) ?? field
+    else if (TIME_FIELD.test(key) && field instanceof Date)
+      output[key] = isoTime(field)
+    else output[key] = withIsoTimestamps(field)
+  }
+  return output
+}
+
 function normalizeStructuredContent(data) {
-  if (Array.isArray(data)) return { items: data, count: data.length }
-  if (data && typeof data === 'object') return data
+  if (Array.isArray(data))
+    return { items: withIsoTimestamps(data), count: data.length }
+  if (data && typeof data === 'object') return withIsoTimestamps(data)
   return { value: data }
 }
 

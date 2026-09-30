@@ -146,11 +146,12 @@ describe('MCP comment tools', () => {
       {
         id: 'm-1',
         content: 'Tighten this',
-        timestamp: 100,
+        timestamp: '1970-01-01T00:00:00.100Z',
         user: { id: 'u-1', name: 'Ada', email: 'ada@example.com' },
       },
     ])
-    expect(comments[0].created_at).toBe(100)
+    // Chat keeps milliseconds; every MCP timestamp is ISO 8601.
+    expect(comments[0].created_at).toBe('1970-01-01T00:00:00.100Z')
   })
 
   it('places a comment that follows a multi-line insert on the right line', async () => {
@@ -213,7 +214,7 @@ describe('MCP comment tools', () => {
     )
     expect(resolved).toMatchObject({
       resolved: true,
-      resolved_at: 300,
+      resolved_at: '1970-01-01T00:00:00.300Z',
       resolved_by: { id: 'u-2', name: 'Bob' },
     })
   })

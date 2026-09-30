@@ -834,6 +834,37 @@ describe('branch output size', () => {
   })
 })
 
+describe('timestamps', () => {
+  it('turns every timestamp field into ISO 8601 and leaves other values', async () => {
+    const { server } = setup({
+      GithubBackupService: {
+        promises: {
+          getStatus: vi.fn(async () => ({
+            linked: true,
+            owner: 'o',
+            repo: 'r',
+            branch: 'main',
+            status: 'ok',
+            lastSyncedVersion: 1700000000000,
+            lastSyncedAt: new Date(0),
+            lastError: { code: 'x', message: 'y', at: 1000 },
+            updatedAt: '2026-01-01T00:00:00Z',
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.get_backup_status.handler({
+      project: 'a'.repeat(24),
+    })
+    expect(result.structuredContent).toMatchObject({
+      lastSyncedVersion: 1700000000000,
+      lastSyncedAt: '1970-01-01T00:00:00.000Z',
+      lastError: { at: '1970-01-01T00:00:01.000Z' },
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+  })
+})
+
 describe('tool descriptions', () => {
   it('lists projects newest first with their last update time', async () => {
     const { server } = setup({
