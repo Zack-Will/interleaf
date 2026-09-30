@@ -278,7 +278,10 @@ async function mergeBranch(
 
 async function archiveBranch(branchProjectId, userId) {
   const branch = await getBranch(branchProjectId)
-  await ProjectRef.requireAccess(userId, branch.parentProjectId, 'read')
+  // The branch record is shared by everyone on the parent project, so taking
+  // a branch out of the list is a write to the parent, not a read.
+  await ProjectRef.requireAccess(userId, branch.parentProjectId, 'write')
+  await ProjectRef.requireAccess(userId, branch.branchProjectId, 'read')
   await ProjectDeleter.promises.archiveProject(branch.branchProjectId, userId)
   await SyncBranch.updateOne(
     { branchProjectId: branch.branchProjectId },

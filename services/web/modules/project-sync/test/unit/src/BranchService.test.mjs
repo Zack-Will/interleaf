@@ -351,6 +351,29 @@ describe('BranchService archiveBranch', () => {
       { branchProjectId: branchId },
       { $set: { status: 'archived' } }
     )
+    expect(mocks.requireAccess).toHaveBeenCalledWith('u', parentId, 'write')
+    expect(mocks.requireAccess).toHaveBeenCalledWith('u', branchId, 'read')
+  })
+
+  it('refuses a collaborator with read-only access to the parent', async () => {
+    vi.resetModules()
+    const mocks = setupBranch()
+    const archiveProject = vi.fn()
+    vi.doMock(
+      '../../../../../app/src/Features/Project/ProjectDeleter.mjs',
+      () => ({
+        default: { promises: { archiveProject } },
+      })
+    )
+    mocks.requireAccess.mockImplementation(async (_user, id, level) => {
+      if (id === parentId && level === 'write')
+        throw Object.assign(new Error('forbidden'), { code: 'forbidden' })
+    })
+    const service = await importBranchService()
+    const error = await service.archiveBranch(branchId, 'u').catch(e => e)
+    expect(error.code).toBe('forbidden')
+    expect(archiveProject).not.toHaveBeenCalled()
+    expect(mocks.updateOne).not.toHaveBeenCalled()
   })
 })
 
