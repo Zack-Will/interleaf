@@ -1,5 +1,5 @@
 // eslint-disable-next-line import/no-extraneous-dependencies -- diff is a web dependency
-import { applyPatch, merge as mergeText } from 'diff'
+import { applyPatch, createTwoFilesPatch, merge as mergeText } from 'diff'
 import ProjectDetailsHandler from '../../../../app/src/Features/Project/ProjectDetailsHandler.mjs'
 import ProjectDuplicator from '../../../../app/src/Features/Project/ProjectDuplicator.mjs'
 import ProjectDeleter from '../../../../app/src/Features/Project/ProjectDeleter.mjs'
@@ -33,6 +33,40 @@ function classify(base, branch, parent) {
   if (!branchChanged && parentChanged) return 'parent_only'
   if (fileEqual(branch, parent)) return 'both_same'
   return 'both_differ'
+}
+
+const BRANCH_CHANGES = new Set(['branch_only', 'both_same', 'both_differ'])
+const PARENT_CHANGES = new Set(['parent_only', 'both_differ'])
+
+// A unified diff between two versions of a text document, with 3 lines of
+// context like the MCP tools; null when either side is a binary file.
+function textDiff(path, from, to) {
+  if ((from && from.kind !== 'doc') || (to && to.kind !== 'doc')) return null
+  return createTwoFilesPatch(
+    path,
+    path,
+    from?.content ?? '',
+    to?.content ?? '',
+    undefined,
+    undefined,
+    { context: 3 }
+  )
+}
+
+// What the branch changed (`diff`) and, where the parent moved too, what the
+// parent changed (`parent_diff`), each against the version the branch was
+// made from.
+function stateDiffs(path, state, base, branch, parent) {
+  const diffs = {}
+  if (BRANCH_CHANGES.has(state)) {
+    const diff = textDiff(path, base, branch)
+    if (diff) diffs.diff = diff
+  }
+  if (PARENT_CHANGES.has(state)) {
+    const diff = textDiff(path, base, parent)
+    if (diff) diffs.parent_diff = diff
+  }
+  return diffs
 }
 
 function snapshotMap(snapshot) {
@@ -147,12 +181,16 @@ async function diffBranch(branchProjectId, userId) {
     ...parentFiles.keys(),
   ])
   const files = [...paths].sort().map(path => {
+    const baseFile = baseFiles.get(path)
     const branchFile = branchFiles.get(path)
-    const file = branchFile || baseFiles.get(path) || parentFiles.get(path)
+    const parentFile = parentFiles.get(path)
+    const file = branchFile || baseFile || parentFile
+    const state = classify(baseFile, branchFile, parentFile)
     return {
       path,
       kind: file?.kind || 'file',
-      state: classify(baseFiles.get(path), branchFile, parentFiles.get(path)),
+      state,
+      ...stateDiffs(path, state, baseFile, branchFile, parentFile),
     }
   })
   return {
@@ -278,7 +316,10 @@ async function mergeBranch(
 
 async function archiveBranch(branchProjectId, userId) {
   const branch = await getBranch(branchProjectId)
-  await ProjectRef.requireAccess(userId, branch.parentProjectId, 'read')
+  // The branch record is shared by everyone on the parent project, so taking
+  // a branch out of the list is a write to the parent, not a read.
+  await ProjectRef.requireAccess(userId, branch.parentProjectId, 'write')
+  await ProjectRef.requireAccess(userId, branch.branchProjectId, 'read')
   await ProjectDeleter.promises.archiveProject(branch.branchProjectId, userId)
   await SyncBranch.updateOne(
     { branchProjectId: branch.branchProjectId },

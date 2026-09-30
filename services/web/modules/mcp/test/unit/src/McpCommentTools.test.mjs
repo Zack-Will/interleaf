@@ -146,11 +146,12 @@ describe('MCP comment tools', () => {
       {
         id: 'm-1',
         content: 'Tighten this',
-        timestamp: 100,
+        timestamp: '1970-01-01T00:00:00.100Z',
         user: { id: 'u-1', name: 'Ada', email: 'ada@example.com' },
       },
     ])
-    expect(comments[0].created_at).toBe(100)
+    // Chat keeps milliseconds; every MCP timestamp is ISO 8601.
+    expect(comments[0].created_at).toBe('1970-01-01T00:00:00.100Z')
   })
 
   it('places a comment that follows a multi-line insert on the right line', async () => {
@@ -213,7 +214,7 @@ describe('MCP comment tools', () => {
     )
     expect(resolved).toMatchObject({
       resolved: true,
-      resolved_at: 300,
+      resolved_at: '1970-01-01T00:00:00.300Z',
       resolved_by: { id: 'u-2', name: 'Bob' },
     })
   })
@@ -487,11 +488,70 @@ describe('MCP comment anchoring tools', () => {
     expect(result.structuredContent.code).toBe('anchor_not_found')
   })
 
-  it('rejects an anchor that mixes two forms', async () => {
+  it('rejects an anchor that mixes the two text forms', async () => {
     const { server } = setup()
-    const result = await addComment(server, { exact: 'Alpha', start_line: 2 })
+    const result = await addComment(server, {
+      exact: 'Alpha',
+      start_with_ellipsis: 'Alpha...beta',
+    })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.code).toBe('invalid_anchor')
+  })
+
+  const repeated = () =>
+    setup({
+      documents: {
+        [mainDocId]: {
+          lines: ['Repeat me', 'filler', 'Repeat me', 'Repeat me'],
+          ranges: { comments: [] },
+        },
+        [partDocId]: { lines: partLines, ranges: { comments: [] } },
+      },
+    })
+
+  it('anchors on the second occurrence of repeated text', async () => {
+    const { server, reviewService } = repeated()
+    const result = await addComment(server, {
+      exact: 'Repeat me',
+      occurrence: 2,
+    })
+    expect(result.isError).not.toBe(true)
+    expect(reviewService.createComment).toHaveBeenCalledWith(
+      projectId,
+      mainDocId,
+      'agent-1',
+      expect.objectContaining({ position: 17, text: 'Repeat me' })
+    )
+    expect(result.structuredContent.line).toBe(3)
+  })
+
+  it('searches only the given lines when exact comes with start_line', async () => {
+    const { server } = repeated()
+    const result = await addComment(server, {
+      exact: 'Repeat me',
+      start_line: 4,
+    })
+    expect(result.structuredContent.line).toBe(4)
+    const narrowed = await addComment(server, {
+      exact: 'Repeat me',
+      start_line: 2,
+      end_line: 4,
+      occurrence: 1,
+    })
+    expect(narrowed.structuredContent.line).toBe(3)
+  })
+
+  it('says how many matches there are when occurrence is too large', async () => {
+    const { server } = repeated()
+    const result = await addComment(server, {
+      exact: 'Repeat me',
+      occurrence: 5,
+    })
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.message).toBe(
+      'anchor text occurs 3 times, so there is no occurrence 5'
+    )
+    expect(result.structuredContent.candidate_lines).toEqual([1, 3, 4])
   })
 
   it('rejects a line range outside the document', async () => {
@@ -748,5 +808,55 @@ describe('edit_file re-anchoring', () => {
     ])
     expect(result.structuredContent.project_version).toBe(6)
     expect(result.structuredContent.reanchored).toBeUndefined()
+  })
+})
+
+describe('project_version on comment and suggestion writes', () => {
+  it('returns the version the project is at after the operation', async () => {
+    const suggestionAction = vi.fn(async () => ({
+      change_ids: ['ch-1'],
+      remaining: 0,
+    }))
+    const { server } = setup({
+      services: {
+        VersionService: {
+          getLatestVersion: vi.fn(async () => ({ version: 12 })),
+        },
+        SuggestionService: {
+          acceptSuggestions: suggestionAction,
+          rejectSuggestions: suggestionAction,
+        },
+      },
+    })
+    const tools = server._registeredTools
+    const calls = {
+      add_comment: {
+        project: projectId,
+        path: 'main.tex',
+        anchor: { exact: 'Gamma' },
+        content: 'Why?',
+      },
+      reanchor_comment: {
+        project: projectId,
+        thread_id: 't-detached',
+        path: 'main.tex',
+        anchor: { exact: 'delta' },
+      },
+      reply_comment: {
+        project: projectId,
+        thread_id: 't-alpha',
+        content: 'ok',
+      },
+      resolve_comment: { project: projectId, thread_id: 't-alpha' },
+      reopen_comment: { project: projectId, thread_id: 't-beta' },
+      accept_suggestions: { project: projectId, path: 'main.tex', all: true },
+      reject_suggestions: { project: projectId, path: 'main.tex', all: true },
+    }
+    for (const [name, args] of Object.entries(calls)) {
+      const result = await tools[name].handler(args)
+      expect(result.isError, name).not.toBe(true)
+      expect(result.structuredContent.project_version, name).toBe(12)
+      expect(result.content[0].text, name).toContain('project_version: 12')
+    }
   })
 })

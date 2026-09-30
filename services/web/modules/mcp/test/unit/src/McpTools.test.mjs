@@ -83,6 +83,62 @@ function setup(overrides = {}) {
   return { server, services }
 }
 
+function everyToolArguments(project) {
+  return {
+    list_projects: {},
+    get_project: { project },
+    read_file: { project, path: 'main.tex' },
+    get_outline: { project },
+    search: { project, query: 'one' },
+    list_history: { project },
+    diff: { project, from_version: 1, to_version: 2 },
+    create_label: { project, comment: 'done' },
+    write_files: { project, message: 'm', files: [] },
+    revert_to: { project, version: 1 },
+    create_branch: { project, name: 'test' },
+    list_branches: { project },
+    diff_branch: { branch: project },
+    merge_branch: { branch: project },
+    archive_branch: { branch: project },
+    edit_file: {
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    },
+    list_comments: { project },
+    get_review_queue: { project },
+    reply_comment: { project, thread_id: 't', content: 'c' },
+    resolve_comment: { project, thread_id: 't' },
+    reopen_comment: { project, thread_id: 't' },
+    add_comment: {
+      project,
+      path: 'main.tex',
+      anchor: { exact: 'one' },
+      content: 'c',
+    },
+    reanchor_comment: {
+      project,
+      thread_id: 't',
+      path: 'main.tex',
+      anchor: { exact: 'one' },
+    },
+    suggest_edits: {
+      project,
+      path: 'main.tex',
+      base_version: 4,
+      edits: [],
+      message: 'm',
+    },
+    list_suggestions: { project },
+    accept_suggestions: { project, path: 'main.tex', all: true },
+    reject_suggestions: { project, path: 'main.tex', all: true },
+    get_backup_status: { project },
+    backup_now: { project },
+  }
+}
+
 describe('MCP tools', () => {
   it('parses project refs and reads line range', async () => {
     const { server, services } = setup()
@@ -229,7 +285,7 @@ describe('MCP tools', () => {
     expect(result.structuredContent.code).toBe('error')
   })
 
-  it('returns labels and updates as distinct history entry types', async () => {
+  it('returns versions, times and origin for every history entry', async () => {
     const { server } = setup({
       LabelService: {
         listLabels: vi.fn(async () => [
@@ -244,12 +300,22 @@ describe('MCP tools', () => {
       fetchJson: vi.fn(async () => ({
         updates: [
           {
-            from_version: 3,
-            to_version: 4,
-            origin: { kind: 'mcp' },
-            users: ['user-1'],
-            timestamp: '2026-01-01T00:00:00Z',
+            fromV: 3,
+            toV: 4,
+            meta: {
+              users: ['user-1'],
+              start_ts: 1767225500000,
+              end_ts: 1767225600000,
+              origin: { kind: 'mcp', agent: 'Claude', message: 'Tighten' },
+            },
+            labels: [],
             pathnames: ['main.tex'],
+          },
+          {
+            fromV: 1,
+            toV: 3,
+            meta: { users: [{ id: 'user-2' }], end_ts: 1767225000000 },
+            pathnames: [],
           },
         ],
       })),
@@ -259,26 +325,46 @@ describe('MCP tools', () => {
       project: 'a'.repeat(24),
     })
     expect(result.structuredContent).toEqual({
-      count: 2,
+      count: 3,
       entries: [
         {
           type: 'label',
+          from_version: 4,
+          to_version: 4,
           version: 4,
+          created_at: '2026-01-02T00:00:00.000Z',
+          authors: ['user-1'],
+          message: 'Agent change',
           comment: 'Agent change',
-          user: 'user-1',
-          created_at: '2026-01-02T00:00:00Z',
         },
         {
           type: 'update',
           from_version: 3,
           to_version: 4,
-          origin: { kind: 'mcp' },
-          users: ['user-1'],
-          timestamp: '2026-01-01T00:00:00Z',
+          created_at: '2026-01-01T00:00:00.000Z',
+          authors: ['user-1'],
+          agent: 'Claude',
+          message: 'Tighten',
+          origin: { kind: 'mcp', agent: 'Claude', message: 'Tighten' },
           pathnames: ['main.tex'],
+        },
+        {
+          type: 'update',
+          from_version: 1,
+          to_version: 3,
+          created_at: '2025-12-31T23:50:00.000Z',
+          authors: ['user-2'],
+          pathnames: [],
         },
       ],
     })
+    for (const entry of result.structuredContent.entries) {
+      expect(Number.isInteger(entry.from_version)).toBe(true)
+      expect(Number.isInteger(entry.to_version)).toBe(true)
+    }
+    expect(result.content[0].text).toContain(
+      '2026-01-01T00:00:00.000Z versions 3-4 via Claude: Tighten'
+    )
   })
 
   it('returns an error when every requested write fails', async () => {
@@ -296,6 +382,7 @@ describe('MCP tools', () => {
       project: 'a'.repeat(24),
       message: 'm',
       files: [{ path: 'main.tex', content: 'x' }],
+      overwrite: true,
     })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.code).toBe('write_failed')
@@ -325,6 +412,7 @@ describe('MCP tools', () => {
         { path: 'main.tex', content: 'x' },
         { path: 'fig.png', content: 'y' },
       ],
+      overwrite: true,
     })
     expect(result.isError).toBe(false)
     expect(result.structuredContent.failed).toEqual([
@@ -349,6 +437,62 @@ describe('MCP tools', () => {
     })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.code).toBe('write_failed')
+  })
+
+  it('refuses to overwrite an existing file without overwrite: true', async () => {
+    const { server, services } = setup()
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: '/main.tex', content: 'x' }],
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('file_exists')
+    expect(result.structuredContent.paths).toEqual(['main.tex'])
+    expect(result.structuredContent.next_action).toContain('overwrite: true')
+    expect(services.WriteService.writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('overwrites an existing file when asked to', async () => {
+    const { server, services } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 5,
+          applied: ['main.tex'],
+          failed: [],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'main.tex', content: 'x' }],
+      overwrite: true,
+    })
+    expect(result.isError).toBe(false)
+    expect(services.WriteService.writeFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates new files and deletes existing ones without the flag', async () => {
+    const { server, services } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 5,
+          applied: ['new.tex', 'main.tex'],
+          failed: [],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [
+        { path: 'new.tex', content: 'x' },
+        { path: 'main.tex', delete: true },
+      ],
+    })
+    expect(result.isError).toBe(false)
+    expect(services.WriteService.writeFiles).toHaveBeenCalledTimes(1)
   })
 
   it('returns version conflict payload for writes', async () => {
@@ -376,64 +520,540 @@ describe('MCP tools', () => {
   it('returns plain-object structured content for every tool', async () => {
     const { server } = setup()
     const project = 'a'.repeat(24)
-    const argumentsByTool = {
-      list_projects: {},
-      get_project: { project },
-      read_file: { project, path: 'main.tex' },
-      get_outline: { project },
-      search: { project, query: 'one' },
-      list_history: { project },
-      diff: { project, from_version: 1, to_version: 2 },
-      create_label: { project, comment: 'done' },
-      write_files: { project, message: 'm', files: [] },
-      revert_to: { project, version: 1 },
-      create_branch: { project, name: 'test' },
-      list_branches: { project },
-      diff_branch: { branch: project },
-      merge_branch: { branch: project },
-      archive_branch: { branch: project },
-      edit_file: {
-        project,
-        path: 'main.tex',
-        base_version: 4,
-        edits: [],
-        message: 'm',
-      },
-      list_comments: { project },
-      get_review_queue: { project },
-      reply_comment: { project, thread_id: 't', content: 'c' },
-      resolve_comment: { project, thread_id: 't' },
-      reopen_comment: { project, thread_id: 't' },
-      add_comment: {
-        project,
-        path: 'main.tex',
-        anchor: { exact: 'one' },
-        content: 'c',
-      },
-      reanchor_comment: {
-        project,
-        thread_id: 't',
-        path: 'main.tex',
-        anchor: { exact: 'one' },
-      },
-      suggest_edits: {
-        project,
-        path: 'main.tex',
-        base_version: 4,
-        edits: [],
-        message: 'm',
-      },
-      list_suggestions: { project },
-      accept_suggestions: { project, path: 'main.tex', all: true },
-      reject_suggestions: { project, path: 'main.tex', all: true },
-      get_backup_status: { project },
-      backup_now: { project },
-    }
+    const argumentsByTool = everyToolArguments(project)
     for (const [name, tool] of Object.entries(server._registeredTools)) {
       const result = await tool.handler(argumentsByTool[name])
       expect(typeof result.structuredContent).toBe('object')
       expect(Array.isArray(result.structuredContent)).toBe(false)
     }
+  })
+
+  it('puts the code and next_action of every error in its text', async () => {
+    const refused = Object.assign(new Error('forbidden'), {
+      code: 'forbidden',
+    })
+    const failing = vi.fn(async () => {
+      throw refused
+    })
+    const { server } = setup({
+      ProjectRef: {
+        parse: x => ({ projectId: x }),
+        requireAccess: failing,
+        urlFor: x => x,
+      },
+      ProjectGetter: {
+        promises: { findAllUsersProjects: failing, getProject: failing },
+      },
+      BranchService: {
+        createBranch: failing,
+        listBranches: failing,
+        diffBranch: failing,
+        mergeBranch: failing,
+        archiveBranch: failing,
+      },
+      RevertService: { revertTo: failing },
+    })
+    const argumentsByTool = everyToolArguments('a'.repeat(24))
+    const tools = Object.entries(server._registeredTools)
+    for (const [name, tool] of tools) {
+      const result = await tool.handler(argumentsByTool[name])
+      expect(result.isError, name).toBe(true)
+      const { code, next_action: next } = result.structuredContent
+      expect(next, name).toBeTruthy()
+      expect(result.content[0].text, name).toContain(`error: ${code}`)
+      expect(result.content[0].text, name).toContain(`next_action: ${next}`)
+    }
+  })
+
+  it('puts the versions of a conflict in its text', async () => {
+    const conflict = Object.assign(new Error('project version conflict'), {
+      code: 'version_conflict',
+      expectedVersion: 1,
+      actualVersion: 7,
+    })
+    const fetchJson = vi.fn(async () => ({
+      diff: [
+        { pathname: 'main.tex', operation: 'edited' },
+        { pathname: 'refs.bib' },
+        { pathname: 'old.tex', newPathname: 'new.tex', operation: 'renamed' },
+      ],
+    }))
+    const { server } = setup({
+      fetchJson,
+      WriteService: {
+        writeFiles: vi.fn(async () => {
+          throw conflict
+        }),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'other.tex', content: 'x' }],
+      base_version: 1,
+    })
+    expect(fetchJson).toHaveBeenCalledWith(
+      `http://history/project/${'a'.repeat(24)}/filetree/diff?from=1&to=7`
+    )
+    expect(result.structuredContent.current_version).toBe(7)
+    expect(result.structuredContent.changed_paths).toEqual([
+      'main.tex',
+      'new.tex',
+    ])
+    const text = result.content[0].text
+    expect(text).toContain('error: version_conflict')
+    expect(text).toContain('expected_version: 1')
+    expect(text).toContain('current_version: 7')
+    expect(text).toContain('changed_paths: main.tex, new.tex')
+    expect(text).toContain(
+      'next_action: re-read main.tex, new.tex and retry with base_version=7'
+    )
+  })
+
+  it('still reports a conflict when the changed paths cannot be read', async () => {
+    const conflict = Object.assign(new Error('project version conflict'), {
+      code: 'version_conflict',
+      expectedVersion: 1,
+      actualVersion: 7,
+    })
+    const { server } = setup({
+      fetchJson: vi.fn(async () => {
+        throw new Error('history down')
+      }),
+      WriteService: {
+        writeFiles: vi.fn(async () => {
+          throw conflict
+        }),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      files: [{ path: 'other.tex', content: 'x' }],
+      base_version: 1,
+    })
+    expect(result.structuredContent.code).toBe('version_conflict')
+    expect(result.structuredContent.changed_paths).toBeUndefined()
+    expect(result.content[0].text).toContain('retry with base_version=7')
+  })
+})
+
+describe('read_file and pending suggestions', () => {
+  // "Hello world." with a pending insertion " (suggested)" at offset 11 and a
+  // pending deletion of " old" at offset 31, after "Second" on line 2.
+  const live = ['Hello world (suggested).', 'Second line.']
+  const ranges = {
+    changes: [
+      { id: 'ins-1', op: { p: 11, i: ' (suggested)' } },
+      { id: 'del-1', op: { p: 31, d: ' old' } },
+    ],
+  }
+  const read = async args => {
+    const { server } = setup({
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({
+          path: 'main.tex',
+          lines: live,
+          totalLines: 2,
+          docVersion: 4,
+          ranges,
+        })),
+      },
+    })
+    return server._registeredTools.read_file.handler({
+      project: 'a'.repeat(24),
+      path: 'main.tex',
+      ...args,
+    })
+  }
+
+  it('reads as if every pending suggestion were rejected by default', async () => {
+    const result = await read({})
+    expect(result.structuredContent.content).toBe(
+      '1: Hello world.\n2: Second old line.'
+    )
+    expect(result.structuredContent.pending_suggestions).toBe(2)
+    expect(result.structuredContent.suggestions).toBeUndefined()
+    expect(result.structuredContent.lines).toBeUndefined()
+    expect(result.content[0].text).toContain('2 pending suggestions not shown')
+  })
+
+  it('returns the live text and the pending ranges on request', async () => {
+    const result = await read({
+      include_suggestions: true,
+      start_line: 1,
+      end_line: 1,
+    })
+    expect(result.structuredContent.content).toBe('1: Hello world (suggested).')
+    expect(result.structuredContent.suggestions).toEqual([
+      {
+        change_id: 'ins-1',
+        type: 'insert',
+        text: ' (suggested)',
+        line: 1,
+        column: 12,
+      },
+      { change_id: 'del-1', type: 'delete', text: ' old', line: 2, column: 7 },
+    ])
+    expect(result.content[0].text).toContain(
+      'pending insert ins-1 at line 1: " (suggested)"'
+    )
+  })
+})
+
+describe('diff', () => {
+  const project = 'a'.repeat(24)
+
+  it('returns a unified diff with 3 lines of context for a path', async () => {
+    const unchangedTop = 'l1\nl2\nl3\nl4\nl5\n'
+    const fetchJson = vi.fn(async () => ({
+      diff: [
+        { u: unchangedTop },
+        { d: 'old\n', meta: {} },
+        { i: 'new\n', meta: {} },
+        { u: 'l7\nl8\nl9\nl10\nl11\n' },
+      ],
+    }))
+    const { server } = setup({ fetchJson })
+    const result = await server._registeredTools.diff.handler({
+      project,
+      from_version: 3,
+      to_version: 5,
+      path: '/main.tex',
+    })
+    expect(fetchJson).toHaveBeenCalledWith(
+      `http://history/project/${project}/diff?pathname=main.tex&from=3&to=5`
+    )
+    const diff = result.structuredContent.diff
+    expect(diff).toContain('@@ -3,7 +3,7 @@')
+    expect(diff).toContain('-old\n+new')
+    expect(diff).not.toContain('l1\n')
+    expect(diff).not.toContain('l11')
+    expect(result.content[0].text).toContain('main.tex, versions 3-5:')
+    expect(result.content[0].text).toContain('-old')
+  })
+
+  it('lists only the changed files without a path', async () => {
+    const fetchJson = vi.fn(async () => ({
+      diff: [
+        { pathname: 'main.tex', operation: 'edited' },
+        { pathname: 'refs.bib' },
+        { pathname: 'a.tex', newPathname: 'b.tex', operation: 'renamed' },
+      ],
+    }))
+    const { server } = setup({ fetchJson })
+    const result = await server._registeredTools.diff.handler({
+      project,
+      from_version: 3,
+      to_version: 5,
+    })
+    expect(result.structuredContent).toEqual({
+      from_version: 3,
+      to_version: 5,
+      files: [
+        { path: 'main.tex', operation: 'edited' },
+        { path: 'b.tex', operation: 'renamed', previous_path: 'a.tex' },
+      ],
+      count: 2,
+      unchanged_count: 1,
+    })
+    expect(result.content[0].text).toContain('renamed: b.tex (from a.tex)')
+  })
+})
+
+describe('branch output size', () => {
+  const branch = 'b'.repeat(24)
+
+  it('diff_branch lists changed files with their diffs only', async () => {
+    const { server } = setup({
+      BranchService: {
+        diffBranch: vi.fn(async () => ({
+          base_version: 3,
+          branch_version: 7,
+          parent_version: 9,
+          files: [
+            { path: 'a.tex', kind: 'doc', state: 'unchanged' },
+            {
+              path: 'b.tex',
+              kind: 'doc',
+              state: 'branch_only',
+              diff: '--- b.tex\n+++ b.tex\n@@ -1 +1 @@\n-x\n+y\n',
+            },
+          ],
+        })),
+      },
+    })
+    const result = await server._registeredTools.diff_branch.handler({
+      branch,
+    })
+    expect(result.structuredContent.files.map(file => file.path)).toEqual([
+      'b.tex',
+    ])
+    expect(result.structuredContent.unchanged_count).toBe(1)
+    expect(result.content[0].text).toContain('branch_only: b.tex')
+    expect(result.content[0].text).toContain('+y')
+  })
+
+  it('merge_branch dry run reports counts and conflicts, not content', async () => {
+    const { server } = setup({
+      BranchService: {
+        mergeBranch: vi.fn(async () => ({
+          mergeable: false,
+          files: [
+            { path: 'main.tex', content: 'the whole merged file' },
+            { path: 'old.tex', delete: true },
+          ],
+          conflicts: [
+            {
+              path: 'fig.png',
+              conflicts: [
+                { mine: [], theirs: [], reason: 'binary_both_changed' },
+              ],
+            },
+          ],
+          branch_version: 7,
+          parent_version: 9,
+          base_version: 3,
+        })),
+      },
+    })
+    const result = await server._registeredTools.merge_branch.handler({
+      branch,
+    })
+    expect(result.structuredContent.files).toEqual([
+      { path: 'main.tex', action: 'write' },
+      { path: 'old.tex', action: 'delete' },
+    ])
+    expect(result.structuredContent.files_to_write).toBe(1)
+    expect(result.structuredContent.files_to_delete).toBe(1)
+    expect(result.structuredContent.conflict_count).toBe(1)
+    expect(JSON.stringify(result)).not.toContain('the whole merged file')
+    expect(result.content[0].text).toContain(
+      'conflict: fig.png (binary_both_changed)'
+    )
+  })
+})
+
+describe('timestamps', () => {
+  it('turns every timestamp field into ISO 8601 and leaves other values', async () => {
+    const { server } = setup({
+      GithubBackupService: {
+        promises: {
+          getStatus: vi.fn(async () => ({
+            linked: true,
+            owner: 'o',
+            repo: 'r',
+            branch: 'main',
+            status: 'ok',
+            lastSyncedVersion: 1700000000000,
+            lastSyncedAt: new Date(0),
+            lastError: { code: 'x', message: 'y', at: 1000 },
+            updatedAt: '2026-01-01T00:00:00Z',
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.get_backup_status.handler({
+      project: 'a'.repeat(24),
+    })
+    expect(result.structuredContent).toMatchObject({
+      lastSyncedVersion: 1700000000000,
+      lastSyncedAt: '1970-01-01T00:00:00.000Z',
+      lastError: { at: '1970-01-01T00:00:01.000Z' },
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+  })
+})
+
+describe('tool descriptions', () => {
+  it('lists projects newest first with their last update time', async () => {
+    const { server } = setup({
+      ProjectGetter: {
+        promises: {
+          findAllUsersProjects: vi.fn(async () => ({
+            owned: [
+              { _id: 'old', name: 'Paper', lastUpdated: new Date(1000) },
+              { _id: 'new', name: 'Paper', lastUpdated: new Date(5000) },
+            ],
+            readAndWrite: [{ _id: 'mid', name: 'Shared', lastUpdated: 3000 }],
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.list_projects.handler({})
+    expect(
+      result.structuredContent.projects.map(project => [
+        project.project_id,
+        project.last_updated,
+      ])
+    ).toEqual([
+      ['new', '1970-01-01T00:00:05.000Z'],
+      ['mid', '1970-01-01T00:00:03.000Z'],
+      ['old', '1970-01-01T00:00:01.000Z'],
+    ])
+  })
+
+  it('describes every tool in more than a few words', async () => {
+    const { server } = setup()
+    for (const [name, tool] of Object.entries(server._registeredTools)) {
+      expect(tool.description.split(' ').length, name).toBeGreaterThan(8)
+    }
+  })
+})
+
+describe('project and branch references', () => {
+  const parentId = 'a'.repeat(24)
+  const branchId = 'b'.repeat(24)
+  const strictRef = {
+    parse: vi.fn(ref => {
+      if (/^[0-9a-f]{24}$/.test(ref)) return { projectId: ref }
+      throw Object.assign(new Error('invalid project reference'), {
+        code: 'invalid_project_ref',
+      })
+    }),
+    urlFor: id => `/project/${id}`,
+    requireAccess: vi.fn(async () => {}),
+  }
+
+  it('asks for an id or URL and lists same-named projects for a name', async () => {
+    const { server } = setup({
+      ProjectRef: strictRef,
+      ProjectGetter: {
+        promises: {
+          findAllUsersProjects: vi.fn(async () => ({
+            owned: [
+              { _id: 'c'.repeat(24), name: 'CrossMem' },
+              { _id: 'd'.repeat(24), name: 'Other' },
+            ],
+            readAndWrite: [{ _id: 'e'.repeat(24), name: 'crossmem ' }],
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.get_project.handler({
+      project: 'CrossMem',
+    })
+    expect(result.structuredContent.code).toBe('invalid_project_ref')
+    expect(result.structuredContent.message).toBe(
+      '"CrossMem" is not a project id or URL; pass a project id or URL'
+    )
+    expect(result.structuredContent.candidates).toEqual([
+      { project_id: 'c'.repeat(24), name: 'CrossMem' },
+      { project_id: 'e'.repeat(24), name: 'crossmem ' },
+    ])
+    expect(result.content[0].text).toContain('candidates:')
+  })
+
+  it('takes a branch by name together with its parent project', async () => {
+    const diffBranch = vi.fn(async () => ({ files: [] }))
+    const { server, services } = setup({
+      ProjectRef: strictRef,
+      BranchService: {
+        listBranches: vi.fn(async () => ({
+          branches: [
+            {
+              name: 'draft',
+              branch_project_id: 'f'.repeat(24),
+              status: 'merged',
+            },
+            { name: 'draft', branch_project_id: branchId, status: 'open' },
+          ],
+        })),
+        diffBranch,
+      },
+    })
+    await server._registeredTools.diff_branch.handler({
+      branch: 'draft',
+      project: parentId,
+    })
+    expect(services.BranchService.listBranches).toHaveBeenCalledWith(
+      parentId,
+      'u'
+    )
+    expect(diffBranch).toHaveBeenCalledWith(branchId, 'u')
+  })
+
+  it('takes a branch by its project id', async () => {
+    const archiveBranch = vi.fn(async () => ({ status: 'archived' }))
+    const { server } = setup({
+      ProjectRef: strictRef,
+      BranchService: { archiveBranch },
+    })
+    await server._registeredTools.archive_branch.handler({ branch: branchId })
+    expect(archiveBranch).toHaveBeenCalledWith(branchId, 'u')
+  })
+
+  it('explains what a branch reference is when given a bare name', async () => {
+    const { server } = setup({ ProjectRef: strictRef })
+    const result = await server._registeredTools.merge_branch.handler({
+      branch: 'draft',
+    })
+    expect(result.structuredContent.code).toBe('invalid_branch_ref')
+    expect(result.structuredContent.next_action).toContain(
+      'pass project (the parent project) together with the branch name'
+    )
+  })
+
+  it('lists the branch names when the name matches none', async () => {
+    const { server } = setup({
+      ProjectRef: strictRef,
+      BranchService: {
+        listBranches: vi.fn(async () => ({
+          branches: [
+            { name: 'draft', branch_project_id: branchId, status: 'open' },
+          ],
+        })),
+      },
+    })
+    const result = await server._registeredTools.diff_branch.handler({
+      branch: 'final',
+      project: parentId,
+    })
+    expect(result.structuredContent.code).toBe('branch_not_found')
+    expect(result.structuredContent.message).toContain(
+      'its branches are: draft'
+    )
+  })
+})
+
+describe('project_version on file writes', () => {
+  const project = 'a'.repeat(24)
+
+  it('write_files returns project_version and keeps version as an alias', async () => {
+    const { server } = setup({
+      WriteService: {
+        writeFiles: vi.fn(async () => ({
+          version: 8,
+          applied: ['new.tex'],
+          failed: [],
+        })),
+      },
+    })
+    const result = await server._registeredTools.write_files.handler({
+      project,
+      message: 'm',
+      files: [{ path: 'new.tex', content: 'x' }],
+    })
+    expect(result.structuredContent.project_version).toBe(8)
+    expect(result.structuredContent.version).toBe(8)
+  })
+
+  it('merge_branch returns project_version after a merge', async () => {
+    const { server } = setup({
+      BranchService: {
+        mergeBranch: vi.fn(async () => ({
+          mergeable: true,
+          files: [],
+          conflicts: [],
+          version: 11,
+        })),
+      },
+    })
+    const result = await server._registeredTools.merge_branch.handler({
+      branch: 'b'.repeat(24),
+      dry_run: false,
+    })
+    expect(result.structuredContent.project_version).toBe(11)
   })
 })
 
@@ -604,6 +1224,111 @@ describe('edit_file', () => {
     )
   })
 
+  // H1: replacing the last section used to run to \end{document} and took the
+  // bibliography with it.
+  it('keeps the bibliography that follows the last section', async () => {
+    const { result, writeFiles } = await call(
+      {
+        type: 'replace_section',
+        title: 'Conclusion',
+        new_text: '\\section{Conclusion}\nShorter.',
+      },
+      {},
+      [
+        '\\section{Conclusion}',
+        'Old conclusion.',
+        '',
+        '% references',
+        '\\bibliographystyle{plain}',
+        '\\bibliography{refs}',
+        '\\end{document}',
+      ]
+    )
+    expect(writeFiles.mock.calls[0][2].files[0].content).toBe(
+      [
+        '\\section{Conclusion}',
+        'Shorter.',
+        '',
+        '% references',
+        '\\bibliographystyle{plain}',
+        '\\bibliography{refs}',
+        '\\end{document}',
+      ].join('\n')
+    )
+    expect(result.structuredContent.edits[0].replaced_lines).toEqual([1, 2])
+    expect(result.content[0].text).toContain(
+      'edits[0] replace_section: replaced lines 1-2'
+    )
+  })
+
+  it('keeps the appendix that follows the last section', async () => {
+    const lines = [
+      '\\section{Results}',
+      'Old results.',
+      '\\appendix',
+      '\\section{Proofs}',
+      'Proof body.',
+      '\\printbibliography',
+      '\\end{document}',
+    ]
+    const { result, writeFiles } = await call(
+      {
+        type: 'replace_section',
+        title: 'Results',
+        new_text: '\\section{Results}\nNew results.',
+      },
+      {},
+      lines
+    )
+    expect(writeFiles.mock.calls[0][2].files[0].content).toBe(
+      ['\\section{Results}', 'New results.', ...lines.slice(2)].join('\n')
+    )
+    expect(result.structuredContent.edits[0].replaced_lines).toEqual([1, 2])
+  })
+
+  it('stops at an appendix input and at printbibliography', async () => {
+    const { writeFiles } = await call(
+      {
+        type: 'replace_section',
+        title: 'Discussion',
+        new_text: '\\section{Discussion}\nNew.',
+      },
+      {},
+      [
+        '\\section{Discussion}',
+        'Old.',
+        '\\input{appendix}',
+        '\\printbibliography',
+      ]
+    )
+    expect(writeFiles.mock.calls[0][2].files[0].content).toBe(
+      '\\section{Discussion}\nNew.\n\\input{appendix}\n\\printbibliography'
+    )
+  })
+
+  it('warns when a section replacement removes far more lines than it adds', async () => {
+    const body = Array.from({ length: 12 }, (_, index) => `line ${index}`)
+    const { result } = await call(
+      {
+        type: 'replace_section',
+        title: 'Long',
+        new_text: '\\section{Long}\nshort',
+      },
+      {},
+      ['\\section{Long}', ...body, '\\end{document}']
+    )
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent.edits[0]).toMatchObject({
+      replaced_lines: [1, 13],
+      lines_removed: 13,
+      lines_added: 2,
+    })
+    expect(result.structuredContent.warnings).toEqual([
+      expect.stringContaining('edits[0]: replaced 13 lines with 2'),
+    ])
+    expect(result.content[0].text).toContain('warning: edits[0]')
+  })
+
   it('stops a subsection at the next section or subsection', async () => {
     const { writeFiles } = await call(
       {
@@ -709,7 +1434,7 @@ describe('edit_file', () => {
     )
     expect(ambiguous.result.structuredContent.code).toBe('anchor_ambiguous')
     expect(ambiguous.result.structuredContent.next_action).toContain(
-      'unique anchor'
+      'pass occurrence'
     )
     const missing = await call({
       type: 'replace_anchor',
@@ -730,6 +1455,206 @@ describe('edit_file', () => {
       { settings: { max_doc_length: 2 } }
     )
     expect(large.result.structuredContent.code).toBe('file_too_large')
+  })
+
+  const callEdits = async (edits, lines) => {
+    const writeFiles = vi.fn(async () => ({ version: 5, label: null }))
+    const { server } = setup({
+      settings: { max_doc_length: 10000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({ path: 'main.tex', lines })),
+      },
+      WriteService: { writeFiles },
+    })
+    const result = await server._registeredTools.edit_file.handler({
+      project: 'a'.repeat(24),
+      path: 'main.tex',
+      base_version: 4,
+      edits,
+      message: 'edit',
+    })
+    const written = writeFiles.mock.calls[0]?.[2].files[0].content
+    return { result, writeFiles, written }
+  }
+
+  it('lists the valid edit types for an unknown one', async () => {
+    const { result, writeFiles } = await callEdits(
+      [{ type: 'bogus', new_text: 'x' }],
+      ['one']
+    )
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('invalid_edit')
+    expect(result.structuredContent.valid_values).toEqual([
+      'replace_range',
+      'replace_anchor',
+      'insert_at_anchor',
+      'replace_section',
+    ])
+    expect(result.content[0].text).toContain(
+      'edits[0]: unknown edit type "bogus"; expected one of: replace_range, replace_anchor, insert_at_anchor, replace_section'
+    )
+    expect(writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('names the fields an edit is missing before running any edit', async () => {
+    const { result, writeFiles } = await callEdits(
+      [
+        { type: 'replace_range', start_line: 1, new_text: 'x' },
+        { type: 'replace_anchor', new_text: 'x' },
+      ],
+      ['one']
+    )
+    expect(result.structuredContent.code).toBe('invalid_edit')
+    expect(result.structuredContent.edit_index).toBe(1)
+    expect(result.structuredContent.message).toBe(
+      'edits[1]: replace_anchor requires anchor and new_text; missing or invalid: anchor'
+    )
+    expect(result.content[0].text).not.toContain('Invalid array length')
+    expect(writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('names the failing edit of a batch', async () => {
+    const { result, writeFiles } = await callEdits(
+      [
+        { type: 'replace_anchor', anchor: 'one', new_text: 'ONE' },
+        { type: 'replace_anchor', anchor: 'missing', new_text: 'x' },
+      ],
+      ['one', 'two']
+    )
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.edit_index).toBe(1)
+    expect(result.content[0].text).toContain('edits[1]: anchor not found')
+    expect(writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('says how many occurrences exist when occurrence is out of range', async () => {
+    const { result } = await callEdits(
+      [{ type: 'replace_anchor', anchor: 'x', occurrence: 99, new_text: 'y' }],
+      ['x x', 'x']
+    )
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.message).toBe(
+      'edits[0]: anchor occurs 3 times, so there is no occurrence 99'
+    )
+    expect(result.structuredContent.candidate_lines).toEqual([1, 1, 2])
+    expect(result.structuredContent.next_action).toContain('between 1 and 3')
+  })
+
+  it('counts occurrence from 1', async () => {
+    const { written } = await callEdits(
+      [{ type: 'replace_anchor', anchor: 'x', occurrence: 1, new_text: 'y' }],
+      ['x x']
+    )
+    expect(written).toBe('y x')
+  })
+
+  it('inserts before or after an anchor', async () => {
+    const { result, written } = await callEdits(
+      [
+        {
+          type: 'insert_at_anchor',
+          anchor: 'two',
+          side: 'before',
+          new_text: 'A ',
+        },
+        {
+          type: 'insert_at_anchor',
+          anchor: 'two',
+          side: 'after',
+          new_text: '\nthree',
+        },
+      ],
+      ['one', 'two']
+    )
+    expect(written).toBe('one\nA two\nthree')
+    expect(result.structuredContent.edits).toEqual([
+      { type: 'insert_at_anchor', inserted_at_line: 2 },
+      { type: 'insert_at_anchor', inserted_at_line: 2 },
+    ])
+    expect(result.content[0].text).toContain(
+      'edits[1] insert_at_anchor: inserted at line 2'
+    )
+  })
+
+  it('requires a side for insert_at_anchor', async () => {
+    const { result } = await callEdits(
+      [{ type: 'insert_at_anchor', anchor: 'one', new_text: 'x' }],
+      ['one']
+    )
+    expect(result.structuredContent.message).toBe(
+      'edits[0]: insert_at_anchor requires anchor and side and new_text; missing or invalid: side'
+    )
+  })
+
+  it('deletes with an empty new_text', async () => {
+    const { written } = await callEdits(
+      [{ type: 'replace_anchor', anchor: ' two', new_text: '' }],
+      ['one two']
+    )
+    expect(written).toBe('one')
+  })
+
+  it('finds a section at any level when no level is given', async () => {
+    const { result, written } = await callEdits(
+      [
+        {
+          type: 'replace_section',
+          title: 'Good luck!',
+          new_text: '\\subsection{Good luck!}\nNew.',
+        },
+      ],
+      [
+        '\\section{Intro}',
+        'text',
+        '\\subsection{Good luck!}',
+        'old',
+        '\\end{document}',
+      ]
+    )
+    expect(result.isError).not.toBe(true)
+    expect(written).toBe(
+      '\\section{Intro}\ntext\n\\subsection{Good luck!}\nNew.\n\\end{document}'
+    )
+  })
+
+  it('refuses a section title that matches several headings', async () => {
+    const { result } = await callEdits(
+      [
+        {
+          type: 'replace_section',
+          title: 'Notes',
+          new_text: '\\section{Notes}\nx',
+        },
+      ],
+      ['\\section{Notes}', 'a', '\\subsection{Notes}', 'b']
+    )
+    expect(result.structuredContent.code).toBe('anchor_ambiguous')
+    expect(result.structuredContent.matches).toEqual([
+      { line: 1, level: 'section' },
+      { line: 3, level: 'subsection' },
+    ])
+    expect(result.content[0].text).toContain(
+      '2 headings are titled "Notes": section at line 1, subsection at line 3'
+    )
+    expect(result.structuredContent.next_action).toContain('pass level')
+  })
+
+  it('says where the title is when the level does not match', async () => {
+    const { result } = await callEdits(
+      [
+        {
+          type: 'replace_section',
+          title: 'Notes',
+          level: 'section',
+          new_text: '\\section{Notes}',
+        },
+      ],
+      ['\\subsection{Notes}', 'b']
+    )
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.message).toContain(
+      'found at another level: subsection at line 1'
+    )
   })
 })
 

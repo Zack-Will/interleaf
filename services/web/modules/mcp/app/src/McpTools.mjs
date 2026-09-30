@@ -10,15 +10,47 @@ import {
   AnchorAmbiguousError,
   AnchorNotFoundError,
   FileTooLargeError,
-  InvalidEditError,
 } from '../../../project-sync/app/src/Errors.mjs'
 // Pure helper, safe to import here: it pulls in nothing that talks to a
 // database, so the smoke script still runs without one.
 import { positionToLineColumn } from '../../../review/app/src/TextPositions.mjs'
+import {
+  applyStructuredEdits,
+  EDITS_DESCRIPTION,
+  editsSchema,
+} from './StructuredEdits.mjs'
+
+// Fields that hold a point in time, whatever the service that filled them
+// called them: chat's `timestamp` in milliseconds, `created_at`, Mongo's
+// `updatedAt`, a backup error's `at`, `last_updated`.
+const TIME_FIELD = /^(?:timestamp|at|last_updated)$|_at$|[a-z]At$/
+
+// Only plain objects are rebuilt; an ObjectId or a Date is a value.
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object') return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+// Every timestamp an MCP tool returns is an ISO 8601 string (evaluation L4).
+function withIsoTimestamps(value) {
+  if (Array.isArray(value)) return value.map(withIsoTimestamps)
+  if (!isPlainObject(value)) return value
+  const output = {}
+  for (const [key, field] of Object.entries(value)) {
+    if (TIME_FIELD.test(key) && field != null && typeof field !== 'object')
+      output[key] = isoTime(field) ?? field
+    else if (TIME_FIELD.test(key) && field instanceof Date)
+      output[key] = isoTime(field)
+    else output[key] = withIsoTimestamps(field)
+  }
+  return output
+}
 
 function normalizeStructuredContent(data) {
-  if (Array.isArray(data)) return { items: data, count: data.length }
-  if (data && typeof data === 'object') return data
+  if (Array.isArray(data))
+    return { items: withIsoTimestamps(data), count: data.length }
+  if (data && typeof data === 'object') return withIsoTimestamps(data)
   return { value: data }
 }
 
@@ -33,7 +65,6 @@ function writeSummary(data) {
   const version = data.project_version ?? data.version
   if (version != null) parts.unshift(`project version ${version}`)
   if (data.label?.comment) parts.push(`label: ${data.label.comment}`)
-  if (data.code === 'write_failed') parts.unshift('No files were written')
   return parts.join('; ')
 }
 
@@ -72,6 +103,40 @@ function reviewQueueSummary(data) {
   return parts.join('\n')
 }
 
+// One line per edit, so a client that only shows the text still learns what
+// each edit replaced and whether any of them looks larger than intended.
+function editReportLines(data) {
+  const lines = []
+  for (const [index, report] of (data.edits || []).entries()) {
+    if (report.replaced_lines)
+      lines.push(
+        `edits[${index}] ${report.type}: replaced lines ${report.replaced_lines[0]}-${report.replaced_lines[1]}`
+      )
+    else if (report.inserted_at_line)
+      lines.push(
+        `edits[${index}] ${report.type}: inserted at line ${report.inserted_at_line}`
+      )
+  }
+  for (const warning of data.warnings || []) lines.push(`warning: ${warning}`)
+  return lines
+}
+
+function editFileSummary(data) {
+  const lines = [
+    `Edited ${data.path}; project_version: ${data.project_version}`,
+    ...editReportLines(data),
+  ]
+  const affected = (data.comments_affected || []).filter(
+    entry => entry.state !== 'unchanged'
+  )
+  if (affected.length)
+    lines.push(
+      `comments affected: ${affected.map(entry => `${entry.thread_id} ${entry.state}`).join(', ')}`
+    )
+  if (data.label?.comment) lines.push(`label: ${data.label.comment}`)
+  return lines.join('\n')
+}
+
 function suggestEditsSummary(data) {
   const parts = [
     `${plural(data.change_ids.length, 'suggestion')} pending in ${data.path}`,
@@ -84,7 +149,121 @@ function suggestEditsSummary(data) {
       ? 'nothing is applied until a human accepts them in the review panel'
       : 'the document already said this, so nothing was suggested'
   )
-  return parts.join('; ')
+  return [parts.join('; '), ...editReportLines(data)].join('\n')
+}
+
+// Unified diffs everywhere use the same 3 lines of context, so the output of
+// diff, diff_branch and edit_file reads alike.
+function unifiedDiff(path, before, after) {
+  return createTwoFilesPatch(path, path, before, after, undefined, undefined, {
+    context: 3,
+  })
+}
+
+// project-history answers a file diff as the whole document cut into
+// unchanged (u), inserted (i) and deleted (d) parts.
+function historyDiffTexts(parts) {
+  let before = ''
+  let after = ''
+  for (const part of Array.isArray(parts) ? parts : []) {
+    if (part.u != null) {
+      before += part.u
+      after += part.u
+    } else if (part.i != null) after += part.i
+    else if (part.d != null) before += part.d
+  }
+  return { before, after }
+}
+
+function fileTreeChange(entry) {
+  const renamed = entry.newPathname && entry.newPathname !== entry.pathname
+  return {
+    path: cleanPath(renamed ? entry.newPathname : entry.pathname),
+    operation: entry.operation,
+    ...(renamed ? { previous_path: cleanPath(entry.pathname) } : {}),
+  }
+}
+
+function diffSummary(data) {
+  const range = `versions ${data.from_version}-${data.to_version}`
+  if (data.path) {
+    if (data.binary) return `${data.path}, ${range}: binary file`
+    if (!data.changed) return `${data.path}, ${range}: no change`
+    return `${data.path}, ${range}:\n${data.diff}`
+  }
+  const lines = [`${plural(data.count, 'file')} changed, ${range}`]
+  for (const file of data.files) {
+    const from = file.previous_path ? ` (from ${file.previous_path})` : ''
+    lines.push(`${file.operation}: ${file.path}${from}`)
+  }
+  return lines.join('\n')
+}
+
+// A merge result names the files it writes instead of repeating their merged
+// content: a dry run is for deciding whether to merge, and diff_branch shows
+// what the branch changed.
+function mergeResultSummary(result) {
+  const { files = [], ...rest } = result
+  const planned = files.map(file => ({
+    path: file.path,
+    action: file.delete ? 'delete' : 'write',
+  }))
+  return {
+    ...rest,
+    files: planned,
+    files_to_write: planned.filter(file => file.action === 'write').length,
+    files_to_delete: planned.filter(file => file.action === 'delete').length,
+    conflict_count: (result.conflicts || []).length,
+  }
+}
+
+function mergeSummary(data) {
+  const merged = data.project_version != null
+  const lines = [
+    merged
+      ? `Merged into project_version ${data.project_version}`
+      : data.mergeable
+        ? 'Branch merge is clean (dry run, nothing written)'
+        : `${plural(data.conflict_count, 'file')} in conflict (nothing written)`,
+    `${plural(data.files_to_write, 'file')} to write, ${plural(data.files_to_delete, 'file')} to delete`,
+  ]
+  for (const conflict of data.conflicts || []) {
+    const reasons = (conflict.conflicts || [])
+      .map(entry => entry.reason)
+      .filter(Boolean)
+    const why = reasons.length ? ` (${reasons.join(', ')})` : ''
+    lines.push(`conflict: ${conflict.path}${why}`)
+  }
+  return lines.join('\n')
+}
+
+function branchDiffSummary(data) {
+  const lines = [
+    `${plural(data.files.length, 'file')} changed since the branch was made at version ${data.base_version}; ${data.unchanged_count} unchanged`,
+  ]
+  for (const file of data.files) {
+    lines.push(`${file.state}: ${file.path}`)
+    if (file.diff) lines.push(file.diff)
+    if (file.parent_diff) lines.push(`parent changed:\n${file.parent_diff}`)
+  }
+  return lines.join('\n')
+}
+
+function readFileSummary(data) {
+  const lines = [
+    `${data.path}; project_version: ${data.project_version}; ${data.total_lines} lines`,
+  ]
+  if (data.pending_suggestions && !data.suggestions)
+    lines.push(
+      `${plural(data.pending_suggestions, 'pending suggestion')} not shown: the text reads as if they were rejected, so line numbers and anchors can differ from the live document edit_file works on; pass include_suggestions:true to see them`
+    )
+  if (data.suggestions?.length)
+    for (const suggestion of data.suggestions)
+      lines.push(
+        `pending ${suggestion.type} ${suggestion.change_id} at line ${suggestion.line}: ${JSON.stringify(suggestion.text)}`
+      )
+  lines.push(data.content)
+  return lines.join('\n')
 }
 
 function suggestionListSummary(data) {
@@ -96,9 +275,15 @@ function suggestionListSummary(data) {
   return parts.join('\n')
 }
 
+function versionSuffix(data) {
+  return data.project_version == null
+    ? ''
+    : `; project_version: ${data.project_version}`
+}
+
 function suggestionActionSummary(data) {
   const verb = data.action === 'accept' ? 'Accepted' : 'Rejected'
-  return `${verb} ${plural(data.change_ids.length, 'suggestion')} in ${data.path}; ${plural(data.remaining, 'suggestion')} still pending there`
+  return `${verb} ${plural(data.change_ids.length, 'suggestion')} in ${data.path}; ${plural(data.remaining, 'suggestion')} still pending there${versionSuffix(data)}`
 }
 
 function labelSummary(data) {
@@ -120,14 +305,14 @@ function backupSummary(data) {
 function commentPlacementSummary(data) {
   const action = data.reanchored ? 'Re-anchored' : 'Added'
   const place = `${data.path}:${data.line}:${data.column}`
-  return `${action} comment ${data.thread_id} at ${place} as ${data.acted_as}`
+  return `${action} comment ${data.thread_id} at ${place} as ${data.acted_as}${versionSuffix(data)}`
 }
 
 function commentActionSummary(data) {
   if (data.message_id)
-    return `Replied to thread ${data.thread_id} as ${data.acted_as}`
+    return `Replied to thread ${data.thread_id} as ${data.acted_as}${versionSuffix(data)}`
   const state = data.resolved ? 'Resolved' : 'Reopened'
-  return `${state} thread ${data.thread_id} as ${data.acted_as}`
+  return `${state} thread ${data.thread_id} as ${data.acted_as}${versionSuffix(data)}`
 }
 
 function summaryText(data) {
@@ -152,8 +337,6 @@ function summaryText(data) {
   }
   if (Array.isArray(data.applied) || Array.isArray(data.failed))
     return writeSummary(data)
-  if (Array.isArray(data.diff))
-    return `${data.count ?? data.diff.length} diff entries`
   if (Array.isArray(data.branches))
     return `${data.count ?? data.branches.length} branches`
   if (Array.isArray(data.conflicts))
@@ -183,29 +366,41 @@ const textResult = (data, text = summaryText(data)) => ({
   structuredContent: normalizeStructuredContent(data),
 })
 
+// Every write tool names the version it left the project at `project_version`,
+// the name base_version is compared against.  WriteService calls it `version`,
+// which write_files keeps returning as a deprecated alias for one release.
+function withProjectVersion(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data
+  if (data.project_version != null || data.version == null) return data
+  return { ...data, project_version: data.version }
+}
+
 function writeResult(data, requestedCount = null) {
-  const structured = normalizeStructuredContent(data)
+  const structured = normalizeStructuredContent(withProjectVersion(data))
   const applied = Array.isArray(structured.applied) ? structured.applied : []
   const failed = Array.isArray(structured.failed) ? structured.failed : []
   const allFailed =
     (requestedCount != null ? requestedCount > 0 : failed.length > 0) &&
     applied.length === 0
   if (!allFailed) return { isError: false, ...textResult(structured) }
+  const failure = {
+    code: 'write_failed',
+    message: 'No files were written',
+    next_action:
+      'Fix the failed files and retry; nothing was written and the project version is unchanged',
+  }
+  const version = structured.project_version ?? structured.version
+  const text = errorText({
+    code: failure.code,
+    message: failure.message,
+    ...(version != null ? { project_version: version } : {}),
+    failed: failed.map(entry => `${entry.path} (${entry.error})`),
+    next_action: failure.next_action,
+  })
   return {
     isError: true,
-    content: [
-      {
-        type: 'text',
-        text: writeSummary({ ...structured, code: 'write_failed' }),
-      },
-    ],
-    structuredContent: {
-      ...structured,
-      code: 'write_failed',
-      message: 'No files were written',
-      next_action:
-        'Fix the failed files and retry; nothing was written and the project version is unchanged',
-    },
+    content: [{ type: 'text', text }],
+    structuredContent: { ...structured, ...failure },
   }
 }
 
@@ -218,6 +413,10 @@ function nextAction(error, next) {
     return 're-read the file and choose an anchor present in the current content'
   if (error.code === 'text_mismatch')
     return 'the document changed under the anchor; re-read the file and retry with the text now at that position (actual_text)'
+  if (error.code === 'branch_not_found')
+    return 'this project is not a branch; pass the branch_project_id from list_branches on the parent project'
+  if (error.code === 'invalid_project_ref')
+    return 'pass a project id (24 hex characters) or the project URL; list_projects shows both'
   if (error.code === 'thread_not_found')
     return 'call list_comments to see the threads of this project'
   if (error.code === 'ot_type_unsupported')
@@ -232,32 +431,64 @@ function errorDetail(error, name) {
   return error[name] ?? error.info?.[name]
 }
 
+function formatTextValue(value) {
+  if (Array.isArray(value)) return value.map(formatTextValue).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+// Some clients hand the model only the text of a tool result, never its
+// structuredContent, so an error has to carry its facts in the text too: one
+// `key: value` line per fact, the code first and what to do about it last.
+function errorText(structured) {
+  const lines = [`error: ${structured.code}`, `message: ${structured.message}`]
+  for (const [key, value] of Object.entries(structured)) {
+    if (['code', 'message', 'next_action', 'details'].includes(key)) continue
+    lines.push(`${key}: ${formatTextValue(value)}`)
+  }
+  lines.push(`next_action: ${structured.next_action}`)
+  return lines.join('\n')
+}
+
 const errorResult = (error, next) => {
   const candidateLines = errorDetail(error, 'candidateLines')
   const actualText = errorDetail(error, 'actualText')
+  const editIndex = errorDetail(error, 'editIndex')
+  const validValues = errorDetail(error, 'validValues')
+  const matches = errorDetail(error, 'matches')
   // A refusal from document-updater or chat carries the status it answered
   // with and whatever else its body said; both help an agent decide whether to
   // retry, re-read or give up.
   const status = errorDetail(error, 'status')
   const details = errorDetail(error, 'details')
+  const structured = {
+    code: error.code || 'error',
+    message: error.message || String(error),
+    ...(editIndex != null ? { edit_index: editIndex } : {}),
+    ...(validValues ? { valid_values: validValues } : {}),
+    ...(matches ? { matches } : {}),
+    ...(error.expectedVersion != null
+      ? { expected_version: error.expectedVersion }
+      : {}),
+    ...(error.actualVersion != null
+      ? {
+          actual_version: error.actualVersion,
+          current_version: error.actualVersion,
+        }
+      : {}),
+    ...(error.changedPaths ? { changed_paths: error.changedPaths } : {}),
+    ...(candidateLines ? { candidate_lines: candidateLines } : {}),
+    ...(actualText != null ? { actual_text: actualText } : {}),
+    ...(status != null ? { status } : {}),
+    ...(details ? { details } : {}),
+    ...(error.paths ? { paths: error.paths } : {}),
+    ...(error.candidates ? { candidates: error.candidates } : {}),
+    next_action: nextAction(error, next),
+  }
   return {
     isError: true,
-    content: [{ type: 'text', text: error.message || String(error) }],
-    structuredContent: {
-      code: error.code || 'error',
-      message: error.message || String(error),
-      ...(error.expectedVersion != null
-        ? { expected_version: error.expectedVersion }
-        : {}),
-      ...(error.actualVersion != null
-        ? { actual_version: error.actualVersion }
-        : {}),
-      ...(candidateLines ? { candidate_lines: candidateLines } : {}),
-      ...(actualText != null ? { actual_text: actualText } : {}),
-      ...(status != null ? { status } : {}),
-      ...(details ? { details } : {}),
-      next_action: nextAction(error, next),
-    },
+    content: [{ type: 'text', text: errorText(structured) }],
+    structuredContent: structured,
   }
 }
 
@@ -291,15 +522,8 @@ function linesOfPositions(text, positions) {
   return positions.map(position => text.slice(0, position).split('\n').length)
 }
 
-function resolveExactAnchor(text, exact) {
-  const positions = occurrences(text, exact)
-  if (!positions.length)
-    throw new AnchorNotFoundError('anchor text is not in this document')
-  if (positions.length > 1)
-    throw new AnchorAmbiguousError('anchor text occurs more than once', {
-      candidateLines: linesOfPositions(text, positions),
-    })
-  return { position: positions[0], text: exact }
+function exactSpans(text, exact) {
+  return occurrences(text, exact).map(position => ({ position, text: exact }))
 }
 
 // The first suffix occurrence that leaves the whole prefix inside the span.
@@ -313,9 +537,9 @@ function findSuffixEnd(text, suffix, minimumEnd) {
 
 // Notion-style "first words...last words": quote the ends of a long passage
 // instead of all of it.
-function resolveEllipsisAnchor(text, pattern) {
+function ellipsisSpans(text, pattern) {
   const separator = pattern.indexOf(ELLIPSIS)
-  if (separator < 0) return resolveExactAnchor(text, pattern)
+  if (separator < 0) return exactSpans(text, pattern)
   const prefix = pattern.slice(0, separator)
   const suffix = pattern.slice(separator + ELLIPSIS.length)
   if (!prefix || !suffix)
@@ -329,18 +553,7 @@ function resolveEllipsisAnchor(text, pattern) {
     const end = findSuffixEnd(text, suffix, start + prefix.length)
     if (end >= 0) spans.push({ position: start, text: text.slice(start, end) })
   }
-  if (!spans.length)
-    throw new AnchorNotFoundError(
-      'no passage starts with the prefix and ends with the suffix'
-    )
-  if (spans.length > 1)
-    throw new AnchorAmbiguousError('more than one passage matches the anchor', {
-      candidateLines: linesOfPositions(
-        text,
-        spans.map(span => span.position)
-      ),
-    })
-  return spans[0]
+  return spans
 }
 
 function resolveLineAnchor(lines, anchor) {
@@ -364,31 +577,107 @@ function resolveLineAnchor(lines, anchor) {
   return { position, text: lines.slice(start - 1, end).join('\n') }
 }
 
-function anchorKind(anchor) {
-  const kinds = []
-  if (anchor?.exact != null) kinds.push('exact')
-  if (anchor?.start_with_ellipsis != null) kinds.push('ellipsis')
-  if (anchor?.start_line != null || anchor?.end_line != null)
-    kinds.push('lines')
-  if (kinds.length !== 1)
+// exact and start_with_ellipsis say which text to anchor to; start_line and
+// end_line either are the anchor or, next to one of those two, narrow the
+// search to those lines.
+function textAnchorForm(anchor) {
+  const forms = []
+  if (anchor?.exact != null) forms.push('exact')
+  if (anchor?.start_with_ellipsis != null) forms.push('ellipsis')
+  if (forms.length > 1)
     throw toolError(
       'invalid_anchor',
-      'anchor needs exactly one of exact, start_with_ellipsis or start_line/end_line',
-      'pass a single anchor form'
+      'anchor takes exact or start_with_ellipsis, not both',
+      'pass one of them, with start_line/end_line or occurrence to tell repeated text apart'
     )
-  return kinds[0]
+  const hasLines = anchor?.start_line != null || anchor?.end_line != null
+  if (!forms.length && !hasLines)
+    throw toolError(
+      'invalid_anchor',
+      'anchor needs exact, start_with_ellipsis or start_line/end_line',
+      'pass the text to comment on as exact, or a line range'
+    )
+  if (!forms.length && anchor?.occurrence != null)
+    throw toolError(
+      'invalid_anchor',
+      'occurrence picks one of several matches of exact or start_with_ellipsis',
+      'drop occurrence from a line-range anchor'
+    )
+  return forms[0] || 'lines'
+}
+
+function describeWindow(anchor) {
+  if (anchor.start_line == null && anchor.end_line == null) return ''
+  const start = anchor.start_line ?? 1
+  return ` between lines ${start} and ${anchor.end_line ?? start}`
+}
+
+// One of the spans the anchor text matched: the only one, or the one
+// `occurrence` (1-based, in document order) picks.
+function pickSpan(text, spans, anchor) {
+  const where = describeWindow(anchor)
+  if (!spans.length)
+    throw new AnchorNotFoundError(`anchor text is not in this document${where}`)
+  const candidateLines = linesOfPositions(
+    text,
+    spans.map(span => span.position)
+  )
+  if (anchor.occurrence != null) {
+    if (!Number.isInteger(anchor.occurrence) || anchor.occurrence < 1)
+      throw toolError(
+        'invalid_anchor',
+        'occurrence counts matches from 1 and must be a positive integer',
+        `pass an occurrence between 1 and ${spans.length}`
+      )
+    if (anchor.occurrence > spans.length) {
+      const error = new AnchorNotFoundError(
+        `anchor text occurs ${plural(spans.length, 'time')}${where}, so there is no occurrence ${anchor.occurrence}`,
+        { candidateLines }
+      )
+      error.next_action = `pass an occurrence between 1 and ${spans.length} (candidate_lines lists them in order)`
+      throw error
+    }
+    return spans[anchor.occurrence - 1]
+  }
+  if (spans.length > 1) {
+    const error = new AnchorAmbiguousError(
+      `anchor text occurs ${spans.length} times${where}`,
+      { candidateLines }
+    )
+    error.next_action =
+      'pass occurrence (1-based, in the order of candidate_lines), or start_line/end_line to search only those lines'
+    throw error
+  }
+  return spans[0]
 }
 
 // Turns an anchor into the character range the comment op needs.  Offsets are
 // computed on lines.join('\n'), the same text document-updater holds.
 function resolveAnchor(lines, anchor) {
   const text = lines.join('\n')
-  const kind = anchorKind(anchor)
+  const form = textAnchorForm(anchor)
   let range
-  if (kind === 'exact') range = resolveExactAnchor(text, String(anchor.exact))
-  else if (kind === 'ellipsis')
-    range = resolveEllipsisAnchor(text, String(anchor.start_with_ellipsis))
-  else range = resolveLineAnchor(lines, anchor)
+  if (form === 'lines') range = resolveLineAnchor(lines, anchor)
+  else {
+    const hasLines = anchor.start_line != null || anchor.end_line != null
+    const window = hasLines
+      ? resolveLineAnchor(lines, {
+          start_line: anchor.start_line ?? 1,
+          end_line: anchor.end_line ?? anchor.start_line,
+        })
+      : { position: 0, text }
+    const windowEnd = window.position + window.text.length
+    const spans = (
+      form === 'exact'
+        ? exactSpans(text, String(anchor.exact))
+        : ellipsisSpans(text, String(anchor.start_with_ellipsis))
+    ).filter(
+      span =>
+        span.position >= window.position &&
+        span.position + span.text.length <= windowEnd
+    )
+    range = pickSpan(text, spans, anchor)
+  }
   if (!range.text)
     throw toolError(
       'invalid_anchor',
@@ -396,6 +685,124 @@ function resolveAnchor(lines, anchor) {
       'pick an anchor that covers at least one character'
     )
   return range
+}
+
+function suggestionKind(change) {
+  if (typeof change.op?.i === 'string') return 'insert'
+  if (typeof change.op?.d === 'string') return 'delete'
+  return 'unknown'
+}
+
+// The document as it would read if every pending suggestion were rejected:
+// suggested insertions are live text and come out, suggested deletions are
+// only in the ranges and go back in.  Changes are applied from the end so the
+// offsets of the ones before stay valid; at one offset the insertion goes
+// first, since the deleted text sits where the inserted text starts.
+function withoutSuggestions(lines, changes) {
+  if (!changes.length) return lines
+  const ordered = [...changes].sort(
+    (left, right) =>
+      (right.op?.p ?? 0) - (left.op?.p ?? 0) ||
+      (suggestionKind(left) === 'insert' ? -1 : 1)
+  )
+  let text = lines.join('\n')
+  for (const change of ordered) {
+    const position = change.op?.p ?? 0
+    const kind = suggestionKind(change)
+    if (kind === 'insert')
+      text = text.slice(0, position) + text.slice(position + change.op.i.length)
+    else if (kind === 'delete')
+      text = text.slice(0, position) + change.op.d + text.slice(position)
+  }
+  return text.split('\n')
+}
+
+function pendingSuggestions(lines, changes) {
+  return changes
+    .map(change => {
+      const position = change.op?.p ?? 0
+      const { line, column } = positionToLineColumn(lines, position)
+      return {
+        change_id: change.id,
+        type: suggestionKind(change),
+        text: change.op?.i ?? change.op?.d ?? '',
+        line,
+        column,
+      }
+    })
+    .sort((left, right) => left.line - right.line || left.column - right.column)
+}
+
+// Timestamps leave the MCP as ISO 8601 strings, whatever the service that
+// stored them used: milliseconds, a Date or a string.
+function isoTime(value) {
+  if (value == null || value === '') return undefined
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+}
+
+function userIdOf(user) {
+  if (user == null) return null
+  if (typeof user === 'object') return String(user.id ?? user._id ?? '')
+  return String(user)
+}
+
+// One history entry, in the same shape for labels and updates, so either can
+// be handed straight to diff (from_version, to_version) or revert_to.
+function updateHistoryEntry(update) {
+  const meta = update.meta || {}
+  const origin = meta.origin || update.origin
+  const users = meta.users || update.users || []
+  return {
+    type: 'update',
+    from_version: update.fromV ?? update.from_version ?? update.fromVersion,
+    to_version: update.toV ?? update.to_version ?? update.toVersion,
+    created_at: isoTime(meta.end_ts ?? update.timestamp),
+    authors: users.map(userIdOf).filter(Boolean),
+    ...(origin?.agent ? { agent: origin.agent } : {}),
+    ...(origin?.message ? { message: origin.message } : {}),
+    ...(origin ? { origin } : {}),
+    pathnames: update.pathnames || update.paths || [],
+  }
+}
+
+function labelHistoryEntry(label) {
+  const author = userIdOf(label.user_id ?? label.user)
+  return {
+    type: 'label',
+    from_version: label.version,
+    to_version: label.version,
+    version: label.version,
+    created_at: isoTime(label.created_at ?? label.createdAt ?? label.timestamp),
+    authors: author ? [author] : [],
+    message: label.comment,
+    comment: label.comment,
+  }
+}
+
+function newestHistoryEntryFirst(left, right) {
+  const byVersion = (right.to_version ?? -1) - (left.to_version ?? -1)
+  if (byVersion) return byVersion
+  // A label sits on the version its update produced; list it above that
+  // update, as the history panel does.
+  const rank = entry => (entry.type === 'label' ? 0 : 1)
+  return rank(left) - rank(right)
+}
+
+function historySummary(data) {
+  const lines = [
+    `${data.count} history ${data.count === 1 ? 'entry' : 'entries'}`,
+  ]
+  for (const entry of data.entries) {
+    const versions =
+      entry.type === 'label'
+        ? `label at version ${entry.to_version}`
+        : `versions ${entry.from_version}-${entry.to_version}`
+    const who = entry.agent ? ` via ${entry.agent}` : ''
+    const what = entry.message ? `: ${entry.message}` : ''
+    lines.push(`${entry.created_at ?? 'unknown time'} ${versions}${who}${what}`)
+  }
+  return lines.join('\n')
 }
 
 function formatUser(user, fallbackId) {
@@ -545,17 +952,6 @@ function commentPlacement(lines, path, result, range, actor, extra = {}) {
   }
 }
 
-function offsetOfLineIndex(lines, index) {
-  let offset = 0
-  for (
-    let position = 0;
-    position < index && position < lines.length;
-    position++
-  )
-    offset += lines[position].length + 1
-  return offset
-}
-
 // Each structured edit replaces one stretch of the document.  Positions are
 // recorded against the document as it stood when that edit ran, so they have
 // to be walked back to the document the comments were anchored in, and forward
@@ -691,148 +1087,6 @@ function contextFor(lines, line, contextLines) {
   }
 }
 
-const editSchema = z.object({
-  type: z.string(),
-  start_line: z.number().optional(),
-  end_line: z.number().optional(),
-  new_text: z.string().optional(),
-  anchor: z.string().optional(),
-  occurrence: z.number().optional(),
-  title: z.string().optional(),
-  level: z.string().optional(),
-})
-
-/**
- * Apply the structured edits of `edit_file` to a document, in order, and
- * report each replacement as a character range of the document as it stood
- * when that edit ran.  `suggest_edits` builds its new content the same way,
- * so the two tools take identical `edits` and behave identically on an
- * ambiguous or missing anchor.
- *
- * @param {string[]} documentLines
- * @param {Array<object>} edits
- * @return {{lines: string[], changes: Array<object>}}
- */
-function applyStructuredEdits(documentLines, edits) {
-  let lines = [...documentLines]
-  const split = text => String(text ?? '').split(/\r\n|\n|\r/)
-  const changes = []
-  for (const edit of edits) {
-    if (edit.type === 'replace_range') {
-      const start = edit.start_line
-      const end = edit.end_line ?? start
-      if (
-        !Number.isInteger(start) ||
-        !Number.isInteger(end) ||
-        start < 1 ||
-        end > lines.length ||
-        end < start - 1
-      )
-        throw new InvalidEditError('invalid line range')
-      const inserting = end < start
-      const replacement = split(edit.new_text).join('\n')
-      changes.push({
-        start: offsetOfLineIndex(lines, start - 1),
-        oldLength: inserting
-          ? 0
-          : lines.slice(start - 1, end).join('\n').length,
-        newText: inserting ? `${replacement}\n` : replacement,
-        reanchor: false,
-      })
-      lines.splice(
-        start - 1,
-        Math.max(0, end - start + 1),
-        ...split(edit.new_text)
-      )
-    } else if (edit.type === 'replace_anchor') {
-      const anchor = String(edit.anchor ?? '')
-      const text = lines.join('\n')
-      const positions = []
-      let at = text.indexOf(anchor)
-      while (at >= 0) {
-        positions.push(at)
-        at = text.indexOf(anchor, at + 1)
-      }
-      if (!positions.length) throw new AnchorNotFoundError()
-      const candidateLines = positions.map(
-        position => text.slice(0, position).split('\n').length
-      )
-      if (edit.occurrence != null) {
-        const selected = edit.occurrence - 1
-        if (selected < 0 || selected >= positions.length)
-          throw new AnchorNotFoundError()
-        positions.splice(0, positions.length, positions[selected])
-      } else if (positions.length > 1) {
-        throw new AnchorAmbiguousError('anchor is ambiguous', {
-          candidateLines,
-        })
-      }
-      changes.push({
-        start: positions[0],
-        oldLength: anchor.length,
-        newText: String(edit.new_text ?? ''),
-        reanchor: true,
-      })
-      const replacement =
-        text.slice(0, positions[0]) +
-        String(edit.new_text ?? '') +
-        text.slice(positions[0] + anchor.length)
-      lines = split(replacement)
-    } else if (edit.type === 'replace_section') {
-      const levels = [
-        'part',
-        'chapter',
-        'section',
-        'subsection',
-        'subsubsection',
-        'paragraph',
-        'subparagraph',
-      ]
-      const level = edit.level || 'section'
-      const levelIndex = levels.indexOf(level)
-      if (levelIndex < 0) throw new InvalidEditError('invalid section level')
-      const heading = new RegExp(
-        '^\\\\(' +
-          levels.join('|') +
-          ')\\*?\\{' +
-          String(edit.title).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') +
-          '\\}'
-      )
-      const start = lines.findIndex(
-        line => heading.test(line) && line.match(heading)[1] === level
-      )
-      if (start < 0) throw new AnchorNotFoundError('section not found')
-      let end = lines.length
-      for (let index = start + 1; index < lines.length; index += 1) {
-        const match = lines[index].match(
-          /^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/
-        )
-        if (match && levels.indexOf(match[1]) <= levelIndex) {
-          end = index
-          break
-        }
-        if (/^\\end\{document\}/.test(lines[index])) {
-          end = index
-          break
-        }
-      }
-      const replacementLines = split(edit.new_text)
-      if (!heading.test(replacementLines[0] || ''))
-        throw new InvalidEditError(
-          'replace_section new_text must include heading'
-        )
-      changes.push({
-        start: offsetOfLineIndex(lines, start),
-        oldLength: lines.slice(start, end).join('\n').length,
-        newText: replacementLines.join('\n'),
-        reanchor: true,
-      })
-      lines.splice(start, end - start, ...replacementLines)
-    } else throw new InvalidEditError(`unknown edit type ${edit.type}`)
-  }
-  return { lines, changes }
-}
-
 // A document that outgrows the limit is refused before anything is written.
 function assertDocumentFits(lines, services) {
   const size = lines.reduce((total, line) => total + line.length + 1, 0)
@@ -840,11 +1094,40 @@ function assertDocumentFits(lines, services) {
     throw new FileTooLargeError()
 }
 
+// The paths that changed between two project versions, from the file tree
+// diff project-history already computes for the history panel.  Best effort:
+// a conflict is still reported, with the current version, if this fails.
+async function changedPathsBetween(services, id, from, to) {
+  if (!Number.isInteger(Number(from)) || !Number.isInteger(Number(to)))
+    return null
+  if (Number(from) >= Number(to)) return null
+  try {
+    const result = await services.fetchJson(
+      `${services.settings.apis.project_history.url}/project/${id}/filetree/diff?from=${from}&to=${to}`
+    )
+    if (!Array.isArray(result?.diff)) return null
+    return result.diff
+      .filter(entry => entry.operation)
+      .map(entry => cleanPath(entry.newPathname || entry.pathname))
+  } catch {
+    return null
+  }
+}
+
 // Someone else wrote to the project since the caller read it.  The version to
-// retry with is the one the project is at now, so say it.
-function withVersionConflictHint(error) {
-  if (error.code === 'version_conflict')
-    error.next_action = `re-read changed files and retry with base_version=${error.actualVersion}`
+// retry with is the one the project is at now, and the files to re-read are
+// the ones that changed in between, so say both.
+async function withVersionConflictHint(services, id, error) {
+  if (error.code !== 'version_conflict') return error
+  const paths = await changedPathsBetween(
+    services,
+    id,
+    error.expectedVersion,
+    error.actualVersion
+  )
+  if (paths) error.changedPaths = paths
+  const reread = paths?.length ? paths.join(', ') : 'the files you changed'
+  error.next_action = `re-read ${reread} and retry with base_version=${error.actualVersion}`
   return error
 }
 
@@ -877,6 +1160,73 @@ async function describeSuggestions(services, id, docId, changeIds) {
 // reading a single tool description still learns the rule.
 const LABEL_GUIDANCE =
   'Set label:true to mark a milestone (saved version); by default only the history entry records this change, showing your message under the author line.'
+
+// `write_files` replaces whole files, so writing over one that already exists
+// has to be asked for: a collaborator may have edited it since the caller last
+// read it, and without `base_version` nothing else would notice.  The rule
+// lives here rather than in WriteService because revert, merge and the
+// git-bridge overwrite existing files on purpose.
+async function assertNoSilentOverwrite(services, id, files, overwrite) {
+  if (overwrite) return
+  const tree = await services.SnapshotService.getFileTree(id)
+  const existing = new Set(tree.map(file => cleanPath(file.path)))
+  const clashes = files
+    .filter(file => !file.delete)
+    .map(file => cleanPath(file.path))
+    .filter(path => existing.has(path))
+  if (!clashes.length) return
+  const error = toolError(
+    'file_exists',
+    `${plural(clashes.length, 'file')} already exist${clashes.length === 1 ? 's' : ''}: ${clashes.join(', ')}; nothing was written`,
+    'to replace them pass overwrite: true, with base_version from read_file or get_project so a concurrent edit is refused; to change part of a text file use edit_file'
+  )
+  error.paths = clashes
+  throw error
+}
+
+// The version a write that does not go through WriteService left the project
+// at: comment and suggestion operations move the project history too, and the
+// caller needs the new version for its next base_version.  Best effort; the
+// operation itself has already happened.
+async function currentProjectVersion(services, id) {
+  if (!services.VersionService?.getLatestVersion) return undefined
+  try {
+    return (await services.VersionService.getLatestVersion(id))?.version
+  } catch {
+    return undefined
+  }
+}
+
+function withVersion(data, version) {
+  return version == null ? data : { ...data, project_version: version }
+}
+
+const agentSchema = z
+  .string()
+  .optional()
+  .describe(
+    'Who is making the change, shown in the history panel as "(via <agent>)" next to the token owner; defaults to the name of the MCP client.'
+  )
+
+const actAsAgentSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    'true (default): post as the Agent service user, so the review panel tells agent comments apart from yours. false: post as the token owner. If the Agent user cannot join the project the tool posts as the token owner and acted_as says so.'
+  )
+
+const branchRefSchema = z
+  .string()
+  .describe(
+    'The branch: its branch_project_id or URL (from create_branch or list_branches), or its name when project is given too.'
+  )
+
+const branchParentSchema = z
+  .string()
+  .optional()
+  .describe(
+    'The parent project id or URL; needed only when branch is a branch name.'
+  )
 
 function requestedChangeIds(changeIds, all) {
   if (all) return null
@@ -913,39 +1263,134 @@ export function registerTools(
     }
   }
 
-  server.tool('list_projects', 'List projects', {}, async () =>
-    run(async () => {
+  // Same-named projects the token user can reach, for a caller that passed a
+  // project name where an id belongs.  Only looked up on that error path.
+  const projectsNamed = async name => {
+    const wanted = String(name).trim().toLowerCase()
+    try {
       const all = await services.ProjectGetter.promises.findAllUsersProjects(
         userId,
-        'name lastUpdated'
+        'name'
       )
-      const output = []
-      for (const [key, projects] of Object.entries(all || {})) {
-        for (const project of projects || []) {
-          const id = String(project._id || project.id || project.projectId)
-          const write =
-            key === 'owned' ||
-            key === 'readAndWrite' ||
-            key === 'tokenReadAndWrite'
-          output.push({
-            project_id: id,
-            url: services.ProjectRef.urlFor(id),
-            name: project.name,
-            permissions: write ? 'write' : 'read',
-          })
+      return Object.values(all || {})
+        .flat()
+        .filter(item => String(item?.name).trim().toLowerCase() === wanted)
+        .map(item => ({
+          project_id: String(item._id || item.id),
+          name: item.name,
+        }))
+    } catch {
+      return []
+    }
+  }
+
+  // Every tool takes a project id or URL.  A name is the most common mistake,
+  // so the error says what to pass instead and lists the projects of that
+  // name when there are any.
+  const projectIdOf = async ref => {
+    try {
+      return projectId(ref, services)
+    } catch (error) {
+      if (error?.code !== 'invalid_project_ref') throw error
+      const candidates = await projectsNamed(ref)
+      const refused = toolError(
+        'invalid_project_ref',
+        `${JSON.stringify(ref)} is not a project id or URL; pass a project id or URL`,
+        candidates.length
+          ? 'pass the project_id of the project you mean from candidates'
+          : 'call list_projects to find the project id'
+      )
+      if (candidates.length) refused.candidates = candidates
+      throw refused
+    }
+  }
+
+  const isProjectRef = ref => {
+    try {
+      projectId(ref, services)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // A branch is a project of its own, so the branch tools take its project id
+  // or URL; they also take the branch name together with the parent project.
+  const branchProjectIdOf = async (branch, project) => {
+    if (isProjectRef(branch)) return projectId(branch, services)
+    if (project == null)
+      throw toolError(
+        'invalid_branch_ref',
+        `${JSON.stringify(branch)} is not a branch project id or URL`,
+        'pass branch as the branch_project_id that create_branch or list_branches returned, or pass project (the parent project) together with the branch name'
+      )
+    const parentId = await projectIdOf(project)
+    const { branches = [] } = await services.BranchService.listBranches(
+      parentId,
+      userId
+    )
+    const named = branches.filter(item => item.name === branch)
+    const open = named.filter(item => item.status === 'open')
+    const matches = open.length ? open : named
+    if (matches.length === 1) return matches[0].branch_project_id
+    const names = branches.map(item => item.name)
+    const refused = matches.length
+      ? toolError(
+          'branch_ambiguous',
+          `${matches.length} branches of this project are named ${JSON.stringify(branch)}`,
+          'pass the branch_project_id of the one you mean (list_branches shows them)'
+        )
+      : toolError(
+          'branch_not_found',
+          `no open or merged branch named ${JSON.stringify(branch)} on this project${names.length ? `; its branches are: ${names.join(', ')}` : ''}`,
+          'call list_branches to see the branch names and ids'
+        )
+    throw refused
+  }
+
+  server.tool(
+    'list_projects',
+    'List the projects this token can reach, newest first, with project_id, url, name, permissions (read or write) and last_updated (ISO 8601). Use it to find the id every other tool takes; several projects can share a name, so tell them apart by last_updated.',
+    {},
+    async () =>
+      run(async () => {
+        const all = await services.ProjectGetter.promises.findAllUsersProjects(
+          userId,
+          'name lastUpdated'
+        )
+        const output = []
+        for (const [key, projects] of Object.entries(all || {})) {
+          for (const project of projects || []) {
+            const id = String(project._id || project.id || project.projectId)
+            const write =
+              key === 'owned' ||
+              key === 'readAndWrite' ||
+              key === 'tokenReadAndWrite'
+            output.push({
+              project_id: id,
+              url: services.ProjectRef.urlFor(id),
+              name: project.name,
+              permissions: write ? 'write' : 'read',
+              last_updated: isoTime(project.lastUpdated),
+            })
+          }
         }
-      }
-      return { projects: output, count: output.length }
-    })
+        output.sort((left, right) =>
+          String(right.last_updated ?? '').localeCompare(
+            String(left.last_updated ?? '')
+          )
+        )
+        return { projects: output, count: output.length }
+      })
   )
 
   server.tool(
     'get_project',
-    'Get project metadata',
+    'Get one project: its name, root document, file tree, your permissions and the current project_version, which edit_file, suggest_edits and write_files take as base_version.',
     { project: z.string() },
     async ({ project }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const projectData = await services.ProjectGetter.promises.getProject(
           id,
@@ -990,44 +1435,52 @@ export function registerTools(
 
   server.tool(
     'read_file',
-    'Read a text file',
+    'Read a text document with numbered lines ("12: text"), plus the project_version to pass as base_version to edit_file or suggest_edits. start_line and end_line (1-based, inclusive) limit the lines returned. Pending tracked changes (suggestions nobody has accepted yet) are not part of the text by default: it reads as if they were all rejected, and pending_suggestions says how many there are. Pass include_suggestions:true to get the live text instead, which edit_file and suggest_edits work on, with every pending suggestion listed by line.',
     {
       project: z.string(),
       path: z.string(),
       start_line: z.number().optional(),
       end_line: z.number().optional(),
+      include_suggestions: z.boolean().optional(),
     },
-    async ({ project, path, start_line, end_line }) =>
-      run(async () => {
-        const id = projectId(project, services)
+    async ({ project, path, start_line, end_line, include_suggestions }) =>
+      runSummarised(readFileSummary, async () => {
+        const id = await projectIdOf(project)
         await access(services, req, id)
-        const document = await services.SnapshotService.readDoc(id, path, {
-          startLine: start_line,
-          endLine: end_line,
-        })
-        const lines = document.lines
-          .map((line, index) => `${(start_line || 1) + index}: ${line}`)
+        const document = await services.SnapshotService.readDoc(id, path, {})
+        const changes = document.ranges?.changes || []
+        const allLines = include_suggestions
+          ? document.lines
+          : withoutSuggestions(document.lines, changes)
+        const from = Math.max(1, start_line ?? 1)
+        const to = Math.min(allLines.length, end_line ?? allLines.length)
+        const content = allLines
+          .slice(from - 1, to)
+          .map((line, index) => `${from + index}: ${line}`)
           .join('\n')
         const latest = await services.VersionService.getLatestVersion(id)
         return {
           path: document.path,
-          content: lines,
-          lines: document.lines,
+          content,
           project_version: latest.version,
           doc_version: document.docVersion,
           sha256: document.sha256,
-          total_lines: document.totalLines,
+          total_lines: allLines.length,
+          pending_suggestions: changes.length,
+          ...(include_suggestions
+            ? { suggestions: pendingSuggestions(document.lines, changes) }
+            : {}),
         }
       })
   )
 
   server.tool(
     'get_outline',
-    'Get LaTeX outline',
+    'List the LaTeX headings (part to subsubsection) with their level, title, file and line, following \\input and \\include from the root document when no path is given. Use it to find the title and level for a replace_section edit.',
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const tree = await services.SnapshotService.getFileTree(id)
         const root = path || tree.find(file => file.kind === 'doc')?.path
@@ -1077,7 +1530,7 @@ export function registerTools(
 
   server.tool(
     'search',
-    'Search project files',
+    'Search every text document of the project for a string, or a JavaScript regular expression with regex:true, and return path, line and text of each matching line (max_results, default 50).',
     {
       project: z.string(),
       query: z.string(),
@@ -1086,7 +1539,7 @@ export function registerTools(
     },
     async ({ project, query, regex, max_results = 50 }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const tree = await services.SnapshotService.getFileTree(id)
         const expression = regex ? new RegExp(query) : null
@@ -1116,11 +1569,11 @@ export function registerTools(
 
   server.tool(
     'list_history',
-    'List project history',
+    'List the history of a project, newest first: updates (from_version, to_version, created_at, authors, and the agent and message a write recorded) and labels (saved versions). Pass from_version and to_version of an update to diff to see what it changed, or a version to revert_to.',
     { project: z.string(), limit: z.number().optional() },
     async ({ project, limit = 50 }) =>
-      run(async () => {
-        const id = projectId(project, services)
+      runSummarised(historySummary, async () => {
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const labels = await services.LabelService.listLabels(id)
         const updatesResponse = await services.fetchJson(
@@ -1129,28 +1582,11 @@ export function registerTools(
         const updates = Array.isArray(updatesResponse)
           ? updatesResponse
           : updatesResponse?.updates || []
-        const normalizedLabels = (labels || []).map(label => ({
-          type: 'label',
-          version: label.version,
-          comment: label.comment,
-          user: label.user || label.user_id,
-          created_at: label.created_at || label.createdAt || label.timestamp,
-        }))
-        const normalizedUpdates = updates.map(update => ({
-          type: 'update',
-          from_version: update.from_version ?? update.fromVersion,
-          to_version: update.to_version ?? update.toVersion,
-          origin: update.origin,
-          users: update.users || (update.user_id ? [update.user_id] : []),
-          timestamp: update.timestamp,
-          pathnames: update.pathnames || update.paths,
-        }))
-        const entries = [...normalizedLabels, ...normalizedUpdates]
-          .sort(
-            (left, right) =>
-              new Date(right.created_at || right.timestamp || 0) -
-              new Date(left.created_at || left.timestamp || 0)
-          )
+        const entries = [
+          ...(labels || []).map(labelHistoryEntry),
+          ...updates.map(updateHistoryEntry),
+        ]
+          .sort(newestHistoryEntryFirst)
           .slice(0, limit)
         return { entries, count: entries.length }
       })
@@ -1158,7 +1594,7 @@ export function registerTools(
 
   server.tool(
     'diff',
-    'Compare project versions',
+    'Compare two project versions (from_version and to_version, as list_history gives them). With path: a unified diff of that file with 3 lines of context. Without path: the files that were added, edited, renamed or removed between the two versions.',
     {
       project: z.string(),
       from_version: z.number(),
@@ -1166,16 +1602,39 @@ export function registerTools(
       path: z.string().optional(),
     },
     async ({ project, from_version, to_version, path }) =>
-      run(async () => {
-        const id = projectId(project, services)
+      runSummarised(diffSummary, async () => {
+        const id = await projectIdOf(project)
         await access(services, req, id)
-        const url = path
-          ? `${services.settings.apis.project_history.url}/project/${id}/diff?pathname=${encodeURIComponent(path)}&from=${from_version}&to=${to_version}`
-          : `${services.settings.apis.project_history.url}/project/${id}/filetree/diff?from=${from_version}&to=${to_version}`
-        const result = await services.fetchJson(url)
-        return Array.isArray(result)
-          ? { diff: result, count: result.length }
-          : result
+        const history = services.settings.apis.project_history.url
+        const versions = { from_version, to_version }
+        if (path) {
+          const target = cleanPath(path)
+          const result = await services.fetchJson(
+            `${history}/project/${id}/diff?pathname=${encodeURIComponent(target)}&from=${from_version}&to=${to_version}`
+          )
+          if (result?.diff?.binary)
+            return { path: target, ...versions, binary: true }
+          const { before, after } = historyDiffTexts(result?.diff)
+          return {
+            path: target,
+            ...versions,
+            changed: before !== after,
+            diff: unifiedDiff(target, before, after),
+          }
+        }
+        const result = await services.fetchJson(
+          `${history}/project/${id}/filetree/diff?from=${from_version}&to=${to_version}`
+        )
+        const entries = Array.isArray(result) ? result : result?.diff || []
+        const files = entries
+          .filter(entry => entry.operation)
+          .map(fileTreeChange)
+        return {
+          ...versions,
+          files,
+          count: files.length,
+          unchanged_count: entries.length - files.length,
+        }
       })
   )
 
@@ -1192,7 +1651,7 @@ export function registerTools(
     },
     async ({ project, comment, version }) =>
       runSummarised(labelSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const latest = await services.VersionService.getLatestVersion(id)
         const at = version ?? latest.version
@@ -1214,7 +1673,7 @@ export function registerTools(
 
   server.tool(
     'write_files',
-    `Write project files. ${LABEL_GUIDANCE}`,
+    `Create, replace or delete whole project files in one atomic write (text in content, binary in contentBase64, delete:true to remove). A path that already exists is refused unless you pass overwrite:true; new files and deletes need nothing. Pass base_version too when overwriting, so a concurrent edit is refused instead of lost; to change part of a text file prefer edit_file. Returns project_version, the version the project is at after the write (the older name version is a deprecated alias, kept for one release), and the files applied, unchanged or failed. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       message: z.string(),
@@ -1227,13 +1686,24 @@ export function registerTools(
         })
       ),
       base_version: z.number().optional(),
-      agent: z.string().optional(),
+      overwrite: z.boolean().optional(),
+      agent: agentSchema,
       label: z.boolean().optional(),
     },
-    async ({ project, message, files, base_version, agent, label = false }) => {
+    async ({
+      project,
+      message,
+      files,
+      base_version,
+      overwrite = false,
+      agent,
+      label = false,
+    }) => {
+      let id
       try {
-        const id = projectId(project, services)
+        id = await projectIdOf(project)
         await access(services, req, id, 'write')
+        await assertNoSilentOverwrite(services, id, files, overwrite)
         const result = await services.WriteService.writeFiles(id, userId, {
           baseVersion: base_version,
           message,
@@ -1243,12 +1713,7 @@ export function registerTools(
         })
         return writeResult(result, files.length)
       } catch (error) {
-        return errorResult(
-          error,
-          error.code === 'version_conflict'
-            ? `re-read changed files and retry with base_version=${error.actualVersion}`
-            : undefined
-        )
+        return errorResult(await withVersionConflictHint(services, id, error))
       }
     }
   )
@@ -1260,11 +1725,11 @@ export function registerTools(
       version: z.number().int().nonnegative(),
       path: z.string().optional(),
       message: z.string().optional(),
-      agent: z.string().optional(),
+      agent: agentSchema,
     },
     async ({ project, version, path, message, agent }) => {
       try {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         const result = await services.RevertService.revertTo(id, userId, {
           version,
           path,
@@ -1280,14 +1745,14 @@ export function registerTools(
 
   server.tool(
     'edit_file',
-    `Apply structured edits to a text document. ${LABEL_GUIDANCE}`,
+    `Change part of a text document with structured edits, applied atomically against base_version (the project_version read_file or get_project returned). Returns the new project_version, the lines each edit replaced, a unified diff and the comments the change affected.\n${EDITS_DESCRIPTION}\n${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
       base_version: z.number().int().nonnegative(),
-      edits: z.array(editSchema),
+      edits: editsSchema,
       message: z.string(),
-      agent: z.string().optional(),
+      agent: agentSchema,
       label: z.boolean().optional(),
     },
     async ({
@@ -1299,11 +1764,14 @@ export function registerTools(
       agent,
       label = false,
     }) =>
-      run(async () => {
-        const id = projectId(project, services)
+      runSummarised(editFileSummary, async () => {
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const document = await services.SnapshotService.readDoc(id, path)
-        const { lines, changes } = applyStructuredEdits(document.lines, edits)
+        const { lines, changes, reports, warnings } = applyStructuredEdits(
+          document.lines,
+          edits
+        )
         assertDocumentFits(lines, services)
         const before = document.lines.join('\n')
         const content = lines.join('\n')
@@ -1321,7 +1789,7 @@ export function registerTools(
             label,
           })
         } catch (error) {
-          throw withVersionConflictHint(error)
+          throw await withVersionConflictHint(services, id, error)
         }
         const { reanchored, failed } = await reanchorDetachedComments(
           services,
@@ -1336,62 +1804,73 @@ export function registerTools(
           comments_affected: result.comments_affected,
           ...(reanchored.length ? { reanchored } : {}),
           ...(failed.length ? { reanchor_failed: failed } : {}),
-          diff: createTwoFilesPatch(path, path, before, content),
+          edits: reports,
+          ...(warnings.length ? { warnings } : {}),
+          diff: unifiedDiff(path, before, content),
         }
       })
   )
 
   server.tool(
     'create_branch',
-    'Create a project branch',
+    'Create a branch: a copy of the project, recorded against the version it started from, that can later be compared with diff_branch and merged back with merge_branch. Returns branch_project_id, the id the branch tools and every other tool take for the branch.',
     { project: z.string(), name: z.string() },
     async ({ project, name }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         return services.BranchService.createBranch(id, userId, { name })
       })
   )
 
   server.tool(
     'list_branches',
-    'List project branches',
+    'List the open and merged branches of a project with their name, branch_project_id, base_version and status.',
     { project: z.string() },
     async ({ project }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         return services.BranchService.listBranches(id, userId)
       })
   )
 
   server.tool(
     'diff_branch',
-    'Compare a branch with its parent',
-    { branch: z.string() },
-    async ({ branch }) =>
-      run(async () => {
-        const id = projectId(branch, services)
-        return services.BranchService.diffBranch(id, userId)
+    'Compare a branch with its parent project: every file the branch or the parent changed since the branch was made, with its state (branch_only, parent_only, both_same, both_differ), a unified diff of what the branch changed (diff) and, where the parent changed it too, of what the parent changed (parent_diff).',
+    { branch: branchRefSchema, project: branchParentSchema },
+    async ({ branch, project }) =>
+      runSummarised(branchDiffSummary, async () => {
+        const id = await branchProjectIdOf(branch, project)
+        const result = await services.BranchService.diffBranch(id, userId)
+        const files = result.files || []
+        const changed = files.filter(file => file.state !== 'unchanged')
+        return {
+          ...result,
+          files: changed,
+          unchanged_count: files.length - changed.length,
+        }
       })
   )
 
   server.tool(
     'merge_branch',
-    'Merge a branch into its parent. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
+    'Merge a branch into its parent. dry_run defaults to true: it reports mergeable, the conflicts, and which files a merge would write or delete, and writes nothing (use diff_branch to see the changes themselves). With dry_run:false a clean merge is written in one atomic write and returns project_version. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
     {
-      branch: z.string(),
+      branch: branchRefSchema,
+      project: branchParentSchema,
       dry_run: z.boolean().optional(),
       message: z.string().optional(),
-      agent: z.string().optional(),
+      agent: agentSchema,
     },
-    async ({ branch, dry_run = true, message, agent }) => {
+    async ({ branch, project, dry_run = true, message, agent }) => {
       try {
-        const id = projectId(branch, services)
+        const id = await branchProjectIdOf(branch, project)
         const result = await services.BranchService.mergeBranch(id, userId, {
           dryRun: dry_run,
           message,
           agent: agent || clientName || 'mcp',
         })
-        return { isError: false, ...textResult(result) }
+        const summary = mergeResultSummary(withProjectVersion(result))
+        return { isError: false, ...textResult(summary, mergeSummary(summary)) }
       } catch (error) {
         return errorResult(error)
       }
@@ -1400,18 +1879,18 @@ export function registerTools(
 
   server.tool(
     'archive_branch',
-    'Archive a project branch',
-    { branch: z.string() },
-    async ({ branch }) =>
+    'Archive a branch: hide its project and take it out of list_branches. Needs write access to the parent project.',
+    { branch: branchRefSchema, project: branchParentSchema },
+    async ({ branch, project }) =>
       run(async () => {
-        const id = projectId(branch, services)
+        const id = await branchProjectIdOf(branch, project)
         return services.BranchService.archiveBranch(id, userId)
       })
   )
 
   server.tool(
     'list_comments',
-    'List review comments with their anchored text and messages',
+    'List the review comments of a project, or of one file with path: each thread with its id, the text it is anchored to, line and column, messages, and whether it is resolved. Resolved threads are left out unless include_resolved:true.',
     {
       project: z.string(),
       path: z.string().optional(),
@@ -1419,7 +1898,7 @@ export function registerTools(
     },
     async ({ project, path, include_resolved = false }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const { comments } = await loadProjectComments(services, id, path)
         const visible = include_resolved
@@ -1435,11 +1914,11 @@ export function registerTools(
 
   server.tool(
     'get_review_queue',
-    'List the unresolved comments of a project with their surrounding lines',
+    'The work list of a review round: the unresolved comments grouped by file, each with context_lines (default 3) of the surrounding text, the comments whose text is gone (detached), and how many suggestions are still pending.',
     { project: z.string(), context_lines: z.number().int().optional() },
     async ({ project, context_lines = 3 }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const { comments, linesByPath, suggestionCount } =
           await loadProjectComments(services, id, undefined)
@@ -1473,16 +1952,16 @@ export function registerTools(
 
   server.tool(
     'reply_comment',
-    'Reply to a review comment thread',
+    'Reply to a review comment thread (thread_id from list_comments or get_review_queue).',
     {
       project: z.string(),
       thread_id: z.string(),
       content: z.string(),
-      act_as_agent: z.boolean().optional(),
+      act_as_agent: actAsAgentSchema,
     },
     async ({ project, thread_id, content, act_as_agent = true }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const comment = await findCommentThread(services, id, thread_id)
         const actor = await resolveActor(services, id, userId, act_as_agent)
@@ -1492,13 +1971,16 @@ export function registerTools(
           actor.userId,
           content
         )
-        return {
-          thread_id,
-          path: comment.path,
-          message_id: message?.id,
-          acted_as: actor.acted_as,
-          ...(actor.reason ? { reason: actor.reason } : {}),
-        }
+        return withVersion(
+          {
+            thread_id,
+            path: comment.path,
+            message_id: message?.id,
+            acted_as: actor.acted_as,
+            ...(actor.reason ? { reason: actor.reason } : {}),
+          },
+          await currentProjectVersion(services, id)
+        )
       })
   )
 
@@ -1509,11 +1991,11 @@ export function registerTools(
       {
         project: z.string(),
         thread_id: z.string(),
-        act_as_agent: z.boolean().optional(),
+        act_as_agent: actAsAgentSchema,
       },
       async ({ project, thread_id, act_as_agent = true }) =>
         run(async () => {
-          const id = projectId(project, services)
+          const id = await projectIdOf(project)
           await access(services, req, id, 'write')
           const comment = await findCommentThread(services, id, thread_id)
           const actor = await resolveActor(services, id, userId, act_as_agent)
@@ -1521,39 +2003,81 @@ export function registerTools(
             ? services.ReviewService.resolveThread
             : services.ReviewService.reopenThread
           await apply(id, comment.doc_id, thread_id, actor.userId)
-          return {
-            thread_id,
-            path: comment.path,
-            resolved,
-            acted_as: actor.acted_as,
-            ...(actor.reason ? { reason: actor.reason } : {}),
-          }
+          return withVersion(
+            {
+              thread_id,
+              path: comment.path,
+              resolved,
+              acted_as: actor.acted_as,
+              ...(actor.reason ? { reason: actor.reason } : {}),
+            },
+            await currentProjectVersion(services, id)
+          )
         })
     )
 
-  threadStateTool('resolve_comment', 'Resolve a review comment thread', true)
-  threadStateTool('reopen_comment', 'Reopen a review comment thread', false)
+  threadStateTool(
+    'resolve_comment',
+    'Mark a review comment thread as resolved, once the change it asked for is made.',
+    true
+  )
+  threadStateTool(
+    'reopen_comment',
+    'Reopen a resolved review comment thread, for example when a later change undid the fix it asked for.',
+    false
+  )
 
-  const anchorSchema = z.object({
-    exact: z.string().optional(),
-    start_with_ellipsis: z.string().optional(),
-    start_line: z.number().int().optional(),
-    end_line: z.number().int().optional(),
-  })
+  const anchorSchema = z
+    .object({
+      exact: z
+        .string()
+        .optional()
+        .describe('Exact text to comment on, as it appears in the document.'),
+      start_with_ellipsis: z
+        .string()
+        .optional()
+        .describe(
+          'A long passage given by its ends: "first words...last words".'
+        ),
+      start_line: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          'Alone: the first line to comment on (1-based). With exact or start_with_ellipsis: search only from this line.'
+        ),
+      end_line: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          'Last line, inclusive; defaults to start_line. With exact or start_with_ellipsis: search only up to this line.'
+        ),
+      occurrence: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          'Which match of exact or start_with_ellipsis to use, counted from 1 in document order (within start_line/end_line when given).'
+        ),
+    })
+    .describe(
+      'Where the comment goes: exact or start_with_ellipsis, optionally narrowed by start_line/end_line and occurrence; or a line range alone.'
+    )
 
   server.tool(
     'add_comment',
-    'Anchor a new review comment to a passage of a document',
+    'Start a review comment thread on a passage of a document. The anchor is the exact text (optionally narrowed with occurrence, counted from 1, or start_line/end_line), a "first words...last words" passage, or a line range. Returns the thread_id and where the comment landed.',
     {
       project: z.string(),
       path: z.string(),
       anchor: anchorSchema,
       content: z.string(),
-      act_as_agent: z.boolean().optional(),
+      act_as_agent: actAsAgentSchema,
     },
     async ({ project, path, anchor, content, act_as_agent = true }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.ReviewService.getDocRanges(
@@ -1572,23 +2096,24 @@ export function registerTools(
         return commentPlacement(lines, doc.path, result, range, actor, {
           doc_id: doc.docId,
           message_id: result.message?.id,
+          project_version: await currentProjectVersion(services, id),
         })
       })
   )
 
   server.tool(
     'reanchor_comment',
-    'Move a detached or drifted review comment onto new text',
+    'Move a review comment thread onto new text, for a comment whose text was rewritten or deleted (detached). Takes the same anchor as add_comment.',
     {
       project: z.string(),
       thread_id: z.string(),
       path: z.string(),
       anchor: anchorSchema,
-      act_as_agent: z.boolean().optional(),
+      act_as_agent: actAsAgentSchema,
     },
     async ({ project, thread_id, path, anchor, act_as_agent = true }) =>
       run(async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.ReviewService.getDocRanges(
@@ -1608,21 +2133,22 @@ export function registerTools(
         return commentPlacement(lines, doc.path, result, range, actor, {
           doc_id: doc.docId,
           reanchored: true,
+          project_version: await currentProjectVersion(services, id),
         })
       })
   )
 
   server.tool(
     'suggest_edits',
-    `Offer structured edits to a document as tracked changes a human accepts or rejects, instead of writing them straight into the document. ${LABEL_GUIDANCE}`,
+    `Offer structured edits to a document as tracked changes a human accepts or rejects in the review panel, instead of writing them straight into the document. Takes the same edits as edit_file and returns the ids of the suggestions it created.\n${EDITS_DESCRIPTION}\n${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
       base_version: z.number().int().nonnegative(),
-      edits: z.array(editSchema),
+      edits: editsSchema,
       message: z.string(),
-      agent: z.string().optional(),
-      act_as_agent: z.boolean().optional(),
+      agent: agentSchema,
+      act_as_agent: actAsAgentSchema,
       label: z.boolean().optional(),
     },
     async ({
@@ -1636,11 +2162,14 @@ export function registerTools(
       label = false,
     }) =>
       runSummarised(suggestEditsSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.SnapshotService.readDoc(id, path)
-        const { lines } = applyStructuredEdits(document.lines, edits)
+        const { lines, reports, warnings } = applyStructuredEdits(
+          document.lines,
+          edits
+        )
         assertDocumentFits(lines, services)
         const before = document.lines.join('\n')
         const content = lines.join('\n')
@@ -1660,7 +2189,7 @@ export function registerTools(
             }
           )
         } catch (error) {
-          throw withVersionConflictHint(error)
+          throw await withVersionConflictHint(services, id, error)
         }
         return {
           path: doc.path,
@@ -1676,18 +2205,20 @@ export function registerTools(
           ),
           acted_as: actor.acted_as,
           ...(actor.reason ? { reason: actor.reason } : {}),
-          diff: createTwoFilesPatch(path, path, before, content),
+          edits: reports,
+          ...(warnings.length ? { warnings } : {}),
+          diff: unifiedDiff(path, before, content),
         }
       })
   )
 
   server.tool(
     'list_suggestions',
-    'List the tracked changes waiting for someone to accept or reject them',
+    'List the pending tracked changes (suggestions) of a project, or of one file with path: change_id, insert or delete, the text, line and column, author and time.',
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
       runSummarised(suggestionListSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         const doc = path == null ? null : await resolveDoc(services, id, path)
         const { files, count } =
@@ -1710,7 +2241,7 @@ export function registerTools(
       },
       async ({ project, path, change_ids, all = false }) =>
         runSummarised(suggestionActionSummary, async () => {
-          const id = projectId(project, services)
+          const id = await projectIdOf(project)
           await access(services, req, id, 'write')
           const doc = await resolveDoc(services, id, path)
           const ids = requestedChangeIds(change_ids, all)
@@ -1728,24 +2259,27 @@ export function registerTools(
                   ids,
                   userId
                 )
-          return {
-            action,
-            path: doc.path,
-            doc_id: doc.docId,
-            change_ids: result.change_ids,
-            remaining: result.remaining,
-          }
+          return withVersion(
+            {
+              action,
+              path: doc.path,
+              doc_id: doc.docId,
+              change_ids: result.change_ids,
+              remaining: result.remaining,
+            },
+            await currentProjectVersion(services, id)
+          )
         })
     )
 
   suggestionActionTool(
     'accept_suggestions',
-    'Accept tracked changes, applying them to the document',
+    'Accept pending suggestions of one file, as the token owner: the ids in change_ids, or every pending one with all:true. The text becomes part of the document.',
     'accept'
   )
   suggestionActionTool(
     'reject_suggestions',
-    'Reject tracked changes, undoing them',
+    'Reject pending suggestions of one file, as the token owner: the ids in change_ids, or every pending one with all:true. Suggested insertions are removed and suggested deletions restored.',
     'reject'
   )
 
@@ -1767,7 +2301,7 @@ export function registerTools(
     { project: z.string() },
     async ({ project }) =>
       runSummarised(backupSummary, async () => {
-        const id = projectId(project, services)
+        const id = await projectIdOf(project)
         await access(services, req, id)
         return await backupService().promises.getStatus(id)
       })
@@ -1781,7 +2315,7 @@ export function registerTools(
       runSummarised(
         backupSummary,
         async () => {
-          const id = projectId(project, services)
+          const id = await projectIdOf(project)
           await access(services, req, id, 'write')
           return await backupService().promises.syncNow(id, { force: true })
         },

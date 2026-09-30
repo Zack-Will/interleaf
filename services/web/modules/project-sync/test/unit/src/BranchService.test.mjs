@@ -203,6 +203,18 @@ describe('BranchService classification', () => {
       '/same': 'both_same',
       '/unchanged': 'unchanged',
     })
+    const byPath = Object.fromEntries(
+      result.files.map(file => [file.path, file])
+    )
+    expect(byPath['/branch'].diff).toContain('-a')
+    expect(byPath['/branch'].diff).toContain('+b')
+    expect(byPath['/branch'].parent_diff).toBeUndefined()
+    expect(byPath['/parent'].diff).toBeUndefined()
+    expect(byPath['/parent'].parent_diff).toContain('+c')
+    expect(byPath['/diff'].diff).toContain('+b')
+    expect(byPath['/diff'].parent_diff).toContain('+c')
+    expect(byPath['/deleted'].diff).toContain('-a')
+    expect(byPath['/unchanged'].diff).toBeUndefined()
   })
 
   it('compares binary files by hash', async () => {
@@ -351,6 +363,29 @@ describe('BranchService archiveBranch', () => {
       { branchProjectId: branchId },
       { $set: { status: 'archived' } }
     )
+    expect(mocks.requireAccess).toHaveBeenCalledWith('u', parentId, 'write')
+    expect(mocks.requireAccess).toHaveBeenCalledWith('u', branchId, 'read')
+  })
+
+  it('refuses a collaborator with read-only access to the parent', async () => {
+    vi.resetModules()
+    const mocks = setupBranch()
+    const archiveProject = vi.fn()
+    vi.doMock(
+      '../../../../../app/src/Features/Project/ProjectDeleter.mjs',
+      () => ({
+        default: { promises: { archiveProject } },
+      })
+    )
+    mocks.requireAccess.mockImplementation(async (_user, id, level) => {
+      if (id === parentId && level === 'write')
+        throw Object.assign(new Error('forbidden'), { code: 'forbidden' })
+    })
+    const service = await importBranchService()
+    const error = await service.archiveBranch(branchId, 'u').catch(e => e)
+    expect(error.code).toBe('forbidden')
+    expect(archiveProject).not.toHaveBeenCalled()
+    expect(mocks.updateOne).not.toHaveBeenCalled()
   })
 })
 

@@ -30,30 +30,47 @@ function findDocId(docs, target) {
   return entry ? entry[0] : null
 }
 
+// The 1-based line a character offset falls on.
+function lineOfPosition(lines, position) {
+  let offset = 0
+  for (let index = 0; index < lines.length; index += 1) {
+    offset += lines[index].length + 1
+    if (position < offset) return index + 1
+  }
+  return Math.max(1, lines.length)
+}
+
 // Comment ranges are transformed by the editing operations our write produces,
 // so an agent needs to know which of them moved, changed size or lost their
-// text entirely.  `moved` also covers a range that kept its length but now
-// spans different text.
-function commentState(before, after) {
+// text entirely.  `moved` means the comment is now on a different line, or
+// kept its length but spans different text; an edit earlier on the same line
+// only shifts its offset, which nobody reading the document would notice.
+function commentState(before, after, beforeLines, afterLines) {
   if (!after) return 'detached'
   const beforeText = before.op?.c ?? ''
   const afterText = after.op?.c ?? ''
   if (afterText === '' && beforeText !== '') return 'detached'
   if (afterText.length > beforeText.length) return 'grown'
   if (afterText.length < beforeText.length) return 'shrunk'
-  if ((after.op?.p ?? 0) !== (before.op?.p ?? 0) || afterText !== beforeText)
-    return 'moved'
-  return 'unchanged'
+  if (afterText !== beforeText) return 'moved'
+  const beforeLine = lineOfPosition(beforeLines, before.op?.p ?? 0)
+  const afterLine = lineOfPosition(afterLines, after.op?.p ?? 0)
+  return beforeLine === afterLine ? 'unchanged' : 'moved'
 }
 
 function compareComments(target, before, after) {
   const afterByThread = new Map(
-    (after || []).map(comment => [threadIdOf(comment), comment])
+    (after.comments || []).map(comment => [threadIdOf(comment), comment])
   )
-  return (before || []).map(comment => ({
+  return (before.comments || []).map(comment => ({
     thread_id: threadIdOf(comment),
     path: target,
-    state: commentState(comment, afterByThread.get(threadIdOf(comment))),
+    state: commentState(
+      comment,
+      afterByThread.get(threadIdOf(comment)),
+      before.lines,
+      after.lines
+    ),
   }))
 }
 
@@ -195,6 +212,7 @@ async function writeFiles(
             ? findDocId(docs, target)
             : null
         let commentsBefore = []
+        let linesBefore = []
         try {
           if (docId) {
             const document = await loadDocument(projectId, docId, target)
@@ -206,6 +224,7 @@ async function writeFiles(
                 continue
               }
               commentsBefore = document.ranges?.comments || []
+              linesBefore = docLines(document)
             }
           }
           if (item.delete) {
@@ -260,8 +279,11 @@ async function writeFiles(
               commentsAffected.push(
                 ...compareComments(
                   target,
-                  commentsBefore,
-                  document.ranges?.comments || []
+                  { comments: commentsBefore, lines: linesBefore },
+                  {
+                    comments: document.ranges?.comments || [],
+                    lines: docLines(document),
+                  }
                 )
               )
           }
