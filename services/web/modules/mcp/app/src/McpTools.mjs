@@ -10,11 +10,11 @@ import {
   AnchorAmbiguousError,
   AnchorNotFoundError,
   FileTooLargeError,
-  InvalidEditError,
 } from '../../../project-sync/app/src/Errors.mjs'
 // Pure helper, safe to import here: it pulls in nothing that talks to a
 // database, so the smoke script still runs without one.
 import { positionToLineColumn } from '../../../review/app/src/TextPositions.mjs'
+import { applyStructuredEdits, editSchema } from './StructuredEdits.mjs'
 
 function normalizeStructuredContent(data) {
   if (Array.isArray(data)) return { items: data, count: data.length }
@@ -72,6 +72,36 @@ function reviewQueueSummary(data) {
   return parts.join('\n')
 }
 
+// One line per edit, so a client that only shows the text still learns what
+// each edit replaced and whether any of them looks larger than intended.
+function editReportLines(data) {
+  const lines = []
+  for (const [index, report] of (data.edits || []).entries()) {
+    if (report.replaced_lines)
+      lines.push(
+        `edits[${index}] ${report.type}: replaced lines ${report.replaced_lines[0]}-${report.replaced_lines[1]}`
+      )
+  }
+  for (const warning of data.warnings || []) lines.push(`warning: ${warning}`)
+  return lines
+}
+
+function editFileSummary(data) {
+  const lines = [
+    `Edited ${data.path}; project_version: ${data.project_version}`,
+    ...editReportLines(data),
+  ]
+  const affected = (data.comments_affected || []).filter(
+    entry => entry.state !== 'unchanged'
+  )
+  if (affected.length)
+    lines.push(
+      `comments affected: ${affected.map(entry => `${entry.thread_id} ${entry.state}`).join(', ')}`
+    )
+  if (data.label?.comment) lines.push(`label: ${data.label.comment}`)
+  return lines.join('\n')
+}
+
 function suggestEditsSummary(data) {
   const parts = [
     `${plural(data.change_ids.length, 'suggestion')} pending in ${data.path}`,
@@ -84,7 +114,7 @@ function suggestEditsSummary(data) {
       ? 'nothing is applied until a human accepts them in the review panel'
       : 'the document already said this, so nothing was suggested'
   )
-  return parts.join('; ')
+  return [parts.join('; '), ...editReportLines(data)].join('\n')
 }
 
 function suggestionListSummary(data) {
@@ -545,17 +575,6 @@ function commentPlacement(lines, path, result, range, actor, extra = {}) {
   }
 }
 
-function offsetOfLineIndex(lines, index) {
-  let offset = 0
-  for (
-    let position = 0;
-    position < index && position < lines.length;
-    position++
-  )
-    offset += lines[position].length + 1
-  return offset
-}
-
 // Each structured edit replaces one stretch of the document.  Positions are
 // recorded against the document as it stood when that edit ran, so they have
 // to be walked back to the document the comments were anchored in, and forward
@@ -689,148 +708,6 @@ function contextFor(lines, line, contextLines) {
     line: lines[index] ?? '',
     after: lines.slice(index + 1, index + 1 + contextLines),
   }
-}
-
-const editSchema = z.object({
-  type: z.string(),
-  start_line: z.number().optional(),
-  end_line: z.number().optional(),
-  new_text: z.string().optional(),
-  anchor: z.string().optional(),
-  occurrence: z.number().optional(),
-  title: z.string().optional(),
-  level: z.string().optional(),
-})
-
-/**
- * Apply the structured edits of `edit_file` to a document, in order, and
- * report each replacement as a character range of the document as it stood
- * when that edit ran.  `suggest_edits` builds its new content the same way,
- * so the two tools take identical `edits` and behave identically on an
- * ambiguous or missing anchor.
- *
- * @param {string[]} documentLines
- * @param {Array<object>} edits
- * @return {{lines: string[], changes: Array<object>}}
- */
-function applyStructuredEdits(documentLines, edits) {
-  let lines = [...documentLines]
-  const split = text => String(text ?? '').split(/\r\n|\n|\r/)
-  const changes = []
-  for (const edit of edits) {
-    if (edit.type === 'replace_range') {
-      const start = edit.start_line
-      const end = edit.end_line ?? start
-      if (
-        !Number.isInteger(start) ||
-        !Number.isInteger(end) ||
-        start < 1 ||
-        end > lines.length ||
-        end < start - 1
-      )
-        throw new InvalidEditError('invalid line range')
-      const inserting = end < start
-      const replacement = split(edit.new_text).join('\n')
-      changes.push({
-        start: offsetOfLineIndex(lines, start - 1),
-        oldLength: inserting
-          ? 0
-          : lines.slice(start - 1, end).join('\n').length,
-        newText: inserting ? `${replacement}\n` : replacement,
-        reanchor: false,
-      })
-      lines.splice(
-        start - 1,
-        Math.max(0, end - start + 1),
-        ...split(edit.new_text)
-      )
-    } else if (edit.type === 'replace_anchor') {
-      const anchor = String(edit.anchor ?? '')
-      const text = lines.join('\n')
-      const positions = []
-      let at = text.indexOf(anchor)
-      while (at >= 0) {
-        positions.push(at)
-        at = text.indexOf(anchor, at + 1)
-      }
-      if (!positions.length) throw new AnchorNotFoundError()
-      const candidateLines = positions.map(
-        position => text.slice(0, position).split('\n').length
-      )
-      if (edit.occurrence != null) {
-        const selected = edit.occurrence - 1
-        if (selected < 0 || selected >= positions.length)
-          throw new AnchorNotFoundError()
-        positions.splice(0, positions.length, positions[selected])
-      } else if (positions.length > 1) {
-        throw new AnchorAmbiguousError('anchor is ambiguous', {
-          candidateLines,
-        })
-      }
-      changes.push({
-        start: positions[0],
-        oldLength: anchor.length,
-        newText: String(edit.new_text ?? ''),
-        reanchor: true,
-      })
-      const replacement =
-        text.slice(0, positions[0]) +
-        String(edit.new_text ?? '') +
-        text.slice(positions[0] + anchor.length)
-      lines = split(replacement)
-    } else if (edit.type === 'replace_section') {
-      const levels = [
-        'part',
-        'chapter',
-        'section',
-        'subsection',
-        'subsubsection',
-        'paragraph',
-        'subparagraph',
-      ]
-      const level = edit.level || 'section'
-      const levelIndex = levels.indexOf(level)
-      if (levelIndex < 0) throw new InvalidEditError('invalid section level')
-      const heading = new RegExp(
-        '^\\\\(' +
-          levels.join('|') +
-          ')\\*?\\{' +
-          String(edit.title).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') +
-          '\\}'
-      )
-      const start = lines.findIndex(
-        line => heading.test(line) && line.match(heading)[1] === level
-      )
-      if (start < 0) throw new AnchorNotFoundError('section not found')
-      let end = lines.length
-      for (let index = start + 1; index < lines.length; index += 1) {
-        const match = lines[index].match(
-          /^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/
-        )
-        if (match && levels.indexOf(match[1]) <= levelIndex) {
-          end = index
-          break
-        }
-        if (/^\\end\{document\}/.test(lines[index])) {
-          end = index
-          break
-        }
-      }
-      const replacementLines = split(edit.new_text)
-      if (!heading.test(replacementLines[0] || ''))
-        throw new InvalidEditError(
-          'replace_section new_text must include heading'
-        )
-      changes.push({
-        start: offsetOfLineIndex(lines, start),
-        oldLength: lines.slice(start, end).join('\n').length,
-        newText: replacementLines.join('\n'),
-        reanchor: true,
-      })
-      lines.splice(start, end - start, ...replacementLines)
-    } else throw new InvalidEditError(`unknown edit type ${edit.type}`)
-  }
-  return { lines, changes }
 }
 
 // A document that outgrows the limit is refused before anything is written.
@@ -1299,11 +1176,14 @@ export function registerTools(
       agent,
       label = false,
     }) =>
-      run(async () => {
+      runSummarised(editFileSummary, async () => {
         const id = projectId(project, services)
         await access(services, req, id, 'write')
         const document = await services.SnapshotService.readDoc(id, path)
-        const { lines, changes } = applyStructuredEdits(document.lines, edits)
+        const { lines, changes, reports, warnings } = applyStructuredEdits(
+          document.lines,
+          edits
+        )
         assertDocumentFits(lines, services)
         const before = document.lines.join('\n')
         const content = lines.join('\n')
@@ -1336,6 +1216,8 @@ export function registerTools(
           comments_affected: result.comments_affected,
           ...(reanchored.length ? { reanchored } : {}),
           ...(failed.length ? { reanchor_failed: failed } : {}),
+          edits: reports,
+          ...(warnings.length ? { warnings } : {}),
           diff: createTwoFilesPatch(path, path, before, content),
         }
       })
@@ -1640,7 +1522,10 @@ export function registerTools(
         await access(services, req, id, 'write')
         const doc = await resolveDoc(services, id, path)
         const document = await services.SnapshotService.readDoc(id, path)
-        const { lines } = applyStructuredEdits(document.lines, edits)
+        const { lines, reports, warnings } = applyStructuredEdits(
+          document.lines,
+          edits
+        )
         assertDocumentFits(lines, services)
         const before = document.lines.join('\n')
         const content = lines.join('\n')
@@ -1676,6 +1561,8 @@ export function registerTools(
           ),
           acted_as: actor.acted_as,
           ...(actor.reason ? { reason: actor.reason } : {}),
+          edits: reports,
+          ...(warnings.length ? { warnings } : {}),
           diff: createTwoFilesPatch(path, path, before, content),
         }
       })

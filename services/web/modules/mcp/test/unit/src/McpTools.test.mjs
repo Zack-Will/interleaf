@@ -604,6 +604,111 @@ describe('edit_file', () => {
     )
   })
 
+  // H1: replacing the last section used to run to \end{document} and took the
+  // bibliography with it.
+  it('keeps the bibliography that follows the last section', async () => {
+    const { result, writeFiles } = await call(
+      {
+        type: 'replace_section',
+        title: 'Conclusion',
+        new_text: '\\section{Conclusion}\nShorter.',
+      },
+      {},
+      [
+        '\\section{Conclusion}',
+        'Old conclusion.',
+        '',
+        '% references',
+        '\\bibliographystyle{plain}',
+        '\\bibliography{refs}',
+        '\\end{document}',
+      ]
+    )
+    expect(writeFiles.mock.calls[0][2].files[0].content).toBe(
+      [
+        '\\section{Conclusion}',
+        'Shorter.',
+        '',
+        '% references',
+        '\\bibliographystyle{plain}',
+        '\\bibliography{refs}',
+        '\\end{document}',
+      ].join('\n')
+    )
+    expect(result.structuredContent.edits[0].replaced_lines).toEqual([1, 2])
+    expect(result.content[0].text).toContain(
+      'edits[0] replace_section: replaced lines 1-2'
+    )
+  })
+
+  it('keeps the appendix that follows the last section', async () => {
+    const lines = [
+      '\\section{Results}',
+      'Old results.',
+      '\\appendix',
+      '\\section{Proofs}',
+      'Proof body.',
+      '\\printbibliography',
+      '\\end{document}',
+    ]
+    const { result, writeFiles } = await call(
+      {
+        type: 'replace_section',
+        title: 'Results',
+        new_text: '\\section{Results}\nNew results.',
+      },
+      {},
+      lines
+    )
+    expect(writeFiles.mock.calls[0][2].files[0].content).toBe(
+      ['\\section{Results}', 'New results.', ...lines.slice(2)].join('\n')
+    )
+    expect(result.structuredContent.edits[0].replaced_lines).toEqual([1, 2])
+  })
+
+  it('stops at an appendix input and at printbibliography', async () => {
+    const { writeFiles } = await call(
+      {
+        type: 'replace_section',
+        title: 'Discussion',
+        new_text: '\\section{Discussion}\nNew.',
+      },
+      {},
+      [
+        '\\section{Discussion}',
+        'Old.',
+        '\\input{appendix}',
+        '\\printbibliography',
+      ]
+    )
+    expect(writeFiles.mock.calls[0][2].files[0].content).toBe(
+      '\\section{Discussion}\nNew.\n\\input{appendix}\n\\printbibliography'
+    )
+  })
+
+  it('warns when a section replacement removes far more lines than it adds', async () => {
+    const body = Array.from({ length: 12 }, (_, index) => `line ${index}`)
+    const { result } = await call(
+      {
+        type: 'replace_section',
+        title: 'Long',
+        new_text: '\\section{Long}\nshort',
+      },
+      {},
+      ['\\section{Long}', ...body, '\\end{document}']
+    )
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent.edits[0]).toMatchObject({
+      replaced_lines: [1, 13],
+      lines_removed: 13,
+      lines_added: 2,
+    })
+    expect(result.structuredContent.warnings).toEqual([
+      expect.stringContaining('edits[0]: replaced 13 lines with 2'),
+    ])
+    expect(result.content[0].text).toContain('warning: edits[0]')
+  })
+
   it('stops a subsection at the next section or subsection', async () => {
     const { writeFiles } = await call(
       {
