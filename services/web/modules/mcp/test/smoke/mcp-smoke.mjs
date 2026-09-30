@@ -296,6 +296,22 @@ for (const name of requiredTools) {
   if (!listed.tools.some(tool => tool.name === name))
     throw new Error(`missing tool: ${name}`)
 }
+
+// The edits argument advertises one schema variant per edit type, each with
+// its own required fields, even though the runtime schema is permissive.
+function advertisedEditTypes(toolName) {
+  const tool = listed.tools.find(item => item.name === toolName)
+  const variants = tool.inputSchema.properties.edits.items.anyOf || []
+  return variants.map(
+    variant =>
+      `${variant.properties.type.const}(${variant.required.filter(field => field !== 'type').join('+')})`
+  )
+}
+const editTypes = advertisedEditTypes('edit_file')
+if (editTypes.length !== 4)
+  throw new Error(`edit_file advertises ${editTypes.length} edit types`)
+if (advertisedEditTypes('suggest_edits').join() !== editTypes.join())
+  throw new Error('suggest_edits advertises different edit types')
 const projects = await client.callTool(
   { name: 'list_projects', arguments: {} },
   CallToolResultSchema
@@ -472,6 +488,7 @@ if (backedUp.structuredContent.lastSyncedVersion !== 4)
   throw new Error('backup_now did not report the version it pushed')
 
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
+console.log(`edit_file edits schema: ${editTypes.join(', ')}`)
 console.log(`read_file: ${read.structuredContent.path}`)
 console.log(`list_projects: ${projects.structuredContent.count} projects`)
 console.log(`get_review_queue: ${queue.content[0].text.split('\n')[0]}`)

@@ -939,7 +939,7 @@ describe('edit_file', () => {
     )
     expect(ambiguous.result.structuredContent.code).toBe('anchor_ambiguous')
     expect(ambiguous.result.structuredContent.next_action).toContain(
-      'unique anchor'
+      'pass occurrence'
     )
     const missing = await call({
       type: 'replace_anchor',
@@ -960,6 +960,206 @@ describe('edit_file', () => {
       { settings: { max_doc_length: 2 } }
     )
     expect(large.result.structuredContent.code).toBe('file_too_large')
+  })
+
+  const callEdits = async (edits, lines) => {
+    const writeFiles = vi.fn(async () => ({ version: 5, label: null }))
+    const { server } = setup({
+      settings: { max_doc_length: 10000 },
+      SnapshotService: {
+        readDoc: vi.fn(async () => ({ path: 'main.tex', lines })),
+      },
+      WriteService: { writeFiles },
+    })
+    const result = await server._registeredTools.edit_file.handler({
+      project: 'a'.repeat(24),
+      path: 'main.tex',
+      base_version: 4,
+      edits,
+      message: 'edit',
+    })
+    const written = writeFiles.mock.calls[0]?.[2].files[0].content
+    return { result, writeFiles, written }
+  }
+
+  it('lists the valid edit types for an unknown one', async () => {
+    const { result, writeFiles } = await callEdits(
+      [{ type: 'bogus', new_text: 'x' }],
+      ['one']
+    )
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('invalid_edit')
+    expect(result.structuredContent.valid_values).toEqual([
+      'replace_range',
+      'replace_anchor',
+      'insert_at_anchor',
+      'replace_section',
+    ])
+    expect(result.content[0].text).toContain(
+      'edits[0]: unknown edit type "bogus"; expected one of: replace_range, replace_anchor, insert_at_anchor, replace_section'
+    )
+    expect(writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('names the fields an edit is missing before running any edit', async () => {
+    const { result, writeFiles } = await callEdits(
+      [
+        { type: 'replace_range', start_line: 1, new_text: 'x' },
+        { type: 'replace_anchor', new_text: 'x' },
+      ],
+      ['one']
+    )
+    expect(result.structuredContent.code).toBe('invalid_edit')
+    expect(result.structuredContent.edit_index).toBe(1)
+    expect(result.structuredContent.message).toBe(
+      'edits[1]: replace_anchor requires anchor and new_text; missing or invalid: anchor'
+    )
+    expect(result.content[0].text).not.toContain('Invalid array length')
+    expect(writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('names the failing edit of a batch', async () => {
+    const { result, writeFiles } = await callEdits(
+      [
+        { type: 'replace_anchor', anchor: 'one', new_text: 'ONE' },
+        { type: 'replace_anchor', anchor: 'missing', new_text: 'x' },
+      ],
+      ['one', 'two']
+    )
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.edit_index).toBe(1)
+    expect(result.content[0].text).toContain('edits[1]: anchor not found')
+    expect(writeFiles).not.toHaveBeenCalled()
+  })
+
+  it('says how many occurrences exist when occurrence is out of range', async () => {
+    const { result } = await callEdits(
+      [{ type: 'replace_anchor', anchor: 'x', occurrence: 99, new_text: 'y' }],
+      ['x x', 'x']
+    )
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.message).toBe(
+      'edits[0]: anchor occurs 3 times, so there is no occurrence 99'
+    )
+    expect(result.structuredContent.candidate_lines).toEqual([1, 1, 2])
+    expect(result.structuredContent.next_action).toContain('between 1 and 3')
+  })
+
+  it('counts occurrence from 1', async () => {
+    const { written } = await callEdits(
+      [{ type: 'replace_anchor', anchor: 'x', occurrence: 1, new_text: 'y' }],
+      ['x x']
+    )
+    expect(written).toBe('y x')
+  })
+
+  it('inserts before or after an anchor', async () => {
+    const { result, written } = await callEdits(
+      [
+        {
+          type: 'insert_at_anchor',
+          anchor: 'two',
+          side: 'before',
+          new_text: 'A ',
+        },
+        {
+          type: 'insert_at_anchor',
+          anchor: 'two',
+          side: 'after',
+          new_text: '\nthree',
+        },
+      ],
+      ['one', 'two']
+    )
+    expect(written).toBe('one\nA two\nthree')
+    expect(result.structuredContent.edits).toEqual([
+      { type: 'insert_at_anchor', inserted_at_line: 2 },
+      { type: 'insert_at_anchor', inserted_at_line: 2 },
+    ])
+    expect(result.content[0].text).toContain(
+      'edits[1] insert_at_anchor: inserted at line 2'
+    )
+  })
+
+  it('requires a side for insert_at_anchor', async () => {
+    const { result } = await callEdits(
+      [{ type: 'insert_at_anchor', anchor: 'one', new_text: 'x' }],
+      ['one']
+    )
+    expect(result.structuredContent.message).toBe(
+      'edits[0]: insert_at_anchor requires anchor and side and new_text; missing or invalid: side'
+    )
+  })
+
+  it('deletes with an empty new_text', async () => {
+    const { written } = await callEdits(
+      [{ type: 'replace_anchor', anchor: ' two', new_text: '' }],
+      ['one two']
+    )
+    expect(written).toBe('one')
+  })
+
+  it('finds a section at any level when no level is given', async () => {
+    const { result, written } = await callEdits(
+      [
+        {
+          type: 'replace_section',
+          title: 'Good luck!',
+          new_text: '\\subsection{Good luck!}\nNew.',
+        },
+      ],
+      [
+        '\\section{Intro}',
+        'text',
+        '\\subsection{Good luck!}',
+        'old',
+        '\\end{document}',
+      ]
+    )
+    expect(result.isError).not.toBe(true)
+    expect(written).toBe(
+      '\\section{Intro}\ntext\n\\subsection{Good luck!}\nNew.\n\\end{document}'
+    )
+  })
+
+  it('refuses a section title that matches several headings', async () => {
+    const { result } = await callEdits(
+      [
+        {
+          type: 'replace_section',
+          title: 'Notes',
+          new_text: '\\section{Notes}\nx',
+        },
+      ],
+      ['\\section{Notes}', 'a', '\\subsection{Notes}', 'b']
+    )
+    expect(result.structuredContent.code).toBe('anchor_ambiguous')
+    expect(result.structuredContent.matches).toEqual([
+      { line: 1, level: 'section' },
+      { line: 3, level: 'subsection' },
+    ])
+    expect(result.content[0].text).toContain(
+      '2 headings are titled "Notes": section at line 1, subsection at line 3'
+    )
+    expect(result.structuredContent.next_action).toContain('pass level')
+  })
+
+  it('says where the title is when the level does not match', async () => {
+    const { result } = await callEdits(
+      [
+        {
+          type: 'replace_section',
+          title: 'Notes',
+          level: 'section',
+          new_text: '\\section{Notes}',
+        },
+      ],
+      ['\\subsection{Notes}', 'b']
+    )
+    expect(result.structuredContent.code).toBe('anchor_not_found')
+    expect(result.structuredContent.message).toContain(
+      'found at another level: subsection at line 1'
+    )
   })
 })
 

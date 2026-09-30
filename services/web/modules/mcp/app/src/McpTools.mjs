@@ -14,7 +14,11 @@ import {
 // Pure helper, safe to import here: it pulls in nothing that talks to a
 // database, so the smoke script still runs without one.
 import { positionToLineColumn } from '../../../review/app/src/TextPositions.mjs'
-import { applyStructuredEdits, editSchema } from './StructuredEdits.mjs'
+import {
+  applyStructuredEdits,
+  EDITS_DESCRIPTION,
+  editsSchema,
+} from './StructuredEdits.mjs'
 
 function normalizeStructuredContent(data) {
   if (Array.isArray(data)) return { items: data, count: data.length }
@@ -79,6 +83,10 @@ function editReportLines(data) {
     if (report.replaced_lines)
       lines.push(
         `edits[${index}] ${report.type}: replaced lines ${report.replaced_lines[0]}-${report.replaced_lines[1]}`
+      )
+    else if (report.inserted_at_line)
+      lines.push(
+        `edits[${index}] ${report.type}: inserted at line ${report.inserted_at_line}`
       )
   }
   for (const warning of data.warnings || []) lines.push(`warning: ${warning}`)
@@ -1224,12 +1232,12 @@ export function registerTools(
 
   server.tool(
     'edit_file',
-    `Apply structured edits to a text document. ${LABEL_GUIDANCE}`,
+    `Change part of a text document with structured edits, applied atomically against base_version (the project_version read_file or get_project returned). Returns the new project_version, the lines each edit replaced, a unified diff and the comments the change affected.\n${EDITS_DESCRIPTION}\n${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
       base_version: z.number().int().nonnegative(),
-      edits: z.array(editSchema),
+      edits: editsSchema,
       message: z.string(),
       agent: z.string().optional(),
       label: z.boolean().optional(),
@@ -1563,12 +1571,12 @@ export function registerTools(
 
   server.tool(
     'suggest_edits',
-    `Offer structured edits to a document as tracked changes a human accepts or rejects, instead of writing them straight into the document. ${LABEL_GUIDANCE}`,
+    `Offer structured edits to a document as tracked changes a human accepts or rejects in the review panel, instead of writing them straight into the document. Takes the same edits as edit_file and returns the ids of the suggestions it created.\n${EDITS_DESCRIPTION}\n${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
       base_version: z.number().int().nonnegative(),
-      edits: z.array(editSchema),
+      edits: editsSchema,
       message: z.string(),
       agent: z.string().optional(),
       act_as_agent: z.boolean().optional(),
