@@ -203,6 +203,18 @@ describe('BranchService classification', () => {
       '/same': 'both_same',
       '/unchanged': 'unchanged',
     })
+    const byPath = Object.fromEntries(
+      result.files.map(file => [file.path, file])
+    )
+    expect(byPath['/branch'].diff).toContain('-a')
+    expect(byPath['/branch'].diff).toContain('+b')
+    expect(byPath['/branch'].parent_diff).toBeUndefined()
+    expect(byPath['/parent'].diff).toBeUndefined()
+    expect(byPath['/parent'].parent_diff).toContain('+c')
+    expect(byPath['/diff'].diff).toContain('+b')
+    expect(byPath['/diff'].parent_diff).toContain('+c')
+    expect(byPath['/deleted'].diff).toContain('-a')
+    expect(byPath['/unchanged'].diff).toBeUndefined()
   })
 
   it('compares binary files by hash', async () => {

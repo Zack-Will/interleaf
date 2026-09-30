@@ -171,6 +171,56 @@ function diffSummary(data) {
   return lines.join('\n')
 }
 
+// A merge result names the files it writes instead of repeating their merged
+// content: a dry run is for deciding whether to merge, and diff_branch shows
+// what the branch changed.
+function mergeResultSummary(result) {
+  const { files = [], ...rest } = result
+  const planned = files.map(file => ({
+    path: file.path,
+    action: file.delete ? 'delete' : 'write',
+  }))
+  return {
+    ...rest,
+    files: planned,
+    files_to_write: planned.filter(file => file.action === 'write').length,
+    files_to_delete: planned.filter(file => file.action === 'delete').length,
+    conflict_count: (result.conflicts || []).length,
+  }
+}
+
+function mergeSummary(data) {
+  const merged = data.project_version != null
+  const lines = [
+    merged
+      ? `Merged into project_version ${data.project_version}`
+      : data.mergeable
+        ? 'Branch merge is clean (dry run, nothing written)'
+        : `${plural(data.conflict_count, 'file')} in conflict (nothing written)`,
+    `${plural(data.files_to_write, 'file')} to write, ${plural(data.files_to_delete, 'file')} to delete`,
+  ]
+  for (const conflict of data.conflicts || []) {
+    const reasons = (conflict.conflicts || [])
+      .map(entry => entry.reason)
+      .filter(Boolean)
+    const why = reasons.length ? ` (${reasons.join(', ')})` : ''
+    lines.push(`conflict: ${conflict.path}${why}`)
+  }
+  return lines.join('\n')
+}
+
+function branchDiffSummary(data) {
+  const lines = [
+    `${plural(data.files.length, 'file')} changed since the branch was made at version ${data.base_version}; ${data.unchanged_count} unchanged`,
+  ]
+  for (const file of data.files) {
+    lines.push(`${file.state}: ${file.path}`)
+    if (file.diff) lines.push(file.diff)
+    if (file.parent_diff) lines.push(`parent changed:\n${file.parent_diff}`)
+  }
+  return lines.join('\n')
+}
+
 function readFileSummary(data) {
   const lines = [
     `${data.path}; project_version: ${data.project_version}; ${data.total_lines} lines`,
@@ -1757,18 +1807,25 @@ export function registerTools(
 
   server.tool(
     'diff_branch',
-    'Compare a branch with its parent project: every file with its state since the branch was made (unchanged, branch_only, parent_only, both_same, both_differ).',
+    'Compare a branch with its parent project: every file the branch or the parent changed since the branch was made, with its state (branch_only, parent_only, both_same, both_differ), a unified diff of what the branch changed (diff) and, where the parent changed it too, of what the parent changed (parent_diff).',
     { branch: branchRefSchema, project: branchParentSchema },
     async ({ branch, project }) =>
-      run(async () => {
+      runSummarised(branchDiffSummary, async () => {
         const id = await branchProjectIdOf(branch, project)
-        return services.BranchService.diffBranch(id, userId)
+        const result = await services.BranchService.diffBranch(id, userId)
+        const files = result.files || []
+        const changed = files.filter(file => file.state !== 'unchanged')
+        return {
+          ...result,
+          files: changed,
+          unchanged_count: files.length - changed.length,
+        }
       })
   )
 
   server.tool(
     'merge_branch',
-    'Merge a branch into its parent. dry_run defaults to true: it reports mergeable and the conflicts and writes nothing. With dry_run:false a clean merge is written in one atomic write and returns project_version. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
+    'Merge a branch into its parent. dry_run defaults to true: it reports mergeable, the conflicts, and which files a merge would write or delete, and writes nothing (use diff_branch to see the changes themselves). With dry_run:false a clean merge is written in one atomic write and returns project_version. Landing a branch is a milestone, so a successful merge always creates a label (saved version) of its own.',
     {
       branch: branchRefSchema,
       project: branchParentSchema,
@@ -1784,7 +1841,8 @@ export function registerTools(
           message,
           agent: agent || clientName || 'mcp',
         })
-        return { isError: false, ...textResult(withProjectVersion(result)) }
+        const summary = mergeResultSummary(withProjectVersion(result))
+        return { isError: false, ...textResult(summary, mergeSummary(summary)) }
       } catch (error) {
         return errorResult(error)
       }

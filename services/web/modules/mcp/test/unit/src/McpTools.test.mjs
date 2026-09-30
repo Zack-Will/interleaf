@@ -761,6 +761,79 @@ describe('diff', () => {
   })
 })
 
+describe('branch output size', () => {
+  const branch = 'b'.repeat(24)
+
+  it('diff_branch lists changed files with their diffs only', async () => {
+    const { server } = setup({
+      BranchService: {
+        diffBranch: vi.fn(async () => ({
+          base_version: 3,
+          branch_version: 7,
+          parent_version: 9,
+          files: [
+            { path: 'a.tex', kind: 'doc', state: 'unchanged' },
+            {
+              path: 'b.tex',
+              kind: 'doc',
+              state: 'branch_only',
+              diff: '--- b.tex\n+++ b.tex\n@@ -1 +1 @@\n-x\n+y\n',
+            },
+          ],
+        })),
+      },
+    })
+    const result = await server._registeredTools.diff_branch.handler({
+      branch,
+    })
+    expect(result.structuredContent.files.map(file => file.path)).toEqual([
+      'b.tex',
+    ])
+    expect(result.structuredContent.unchanged_count).toBe(1)
+    expect(result.content[0].text).toContain('branch_only: b.tex')
+    expect(result.content[0].text).toContain('+y')
+  })
+
+  it('merge_branch dry run reports counts and conflicts, not content', async () => {
+    const { server } = setup({
+      BranchService: {
+        mergeBranch: vi.fn(async () => ({
+          mergeable: false,
+          files: [
+            { path: 'main.tex', content: 'the whole merged file' },
+            { path: 'old.tex', delete: true },
+          ],
+          conflicts: [
+            {
+              path: 'fig.png',
+              conflicts: [
+                { mine: [], theirs: [], reason: 'binary_both_changed' },
+              ],
+            },
+          ],
+          branch_version: 7,
+          parent_version: 9,
+          base_version: 3,
+        })),
+      },
+    })
+    const result = await server._registeredTools.merge_branch.handler({
+      branch,
+    })
+    expect(result.structuredContent.files).toEqual([
+      { path: 'main.tex', action: 'write' },
+      { path: 'old.tex', action: 'delete' },
+    ])
+    expect(result.structuredContent.files_to_write).toBe(1)
+    expect(result.structuredContent.files_to_delete).toBe(1)
+    expect(result.structuredContent.conflict_count).toBe(1)
+    expect(JSON.stringify(result)).not.toContain('the whole merged file')
+    expect(result.content[0].text).toContain(
+      'conflict: fig.png (binary_both_changed)'
+    )
+  })
+})
+
 describe('tool descriptions', () => {
   it('lists projects newest first with their last update time', async () => {
     const { server } = setup({
