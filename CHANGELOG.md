@@ -3,7 +3,9 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`). Upstream Overleaf changes are not listed here.
 
-## Unreleased
+## 0.1.1 (2026-10-01)
+
+Images: `ghcr.io/<owner>/interleaf:6.2.4`, `ghcr.io/<owner>/git-bridge:6.2.4`.
 
 MCP usability and safety fixes from an external evaluation of the tools
 through the claude.ai connector (issue ids H1–H3, M1–M10, L1–L5 refer to that
