@@ -1,6 +1,6 @@
 # Design: live preview (`modules/live-preview`, `services/live-preview`)
 
-Status: draft v0.1 (2026-10-11), not implemented. Feasibility evidence:
+Status: draft v0.2 (2026-10-11; v0.2 adds §3.4 collaboration), not implemented. Feasibility evidence:
 `rtex-spike/REPORT.md` and `rtex-spike/REPORT-acmart.md` (local spike repo, not in
 this repository); the numbers quoted below come from those runs on home-center.
 
@@ -147,7 +147,40 @@ Client to server: only `ping` and `resync`. The connection URL carries a ticket 
 the web module (§4.1); the service checks its HMAC and expiry and that it names this
 project.
 
-### 3.4 HTTP
+### 3.4 Collaboration
+
+A collaborator's edit should reach every open preview as fast as the user's own. The
+path is: collaborator's client flush, real-time, document-updater, applied-ops, the
+session, rtex, the WebSocket fan-out. Three things on that path would make remote edits
+slower than local ones, and each has a fix.
+
+- **The collaborator's flush delay.** Lowering the delay only for the user who turned
+  live preview on leaves everyone else at ShareJS's 500 ms. While a project has an
+  active session, the service publishes `livePreview.active` on `editor-events`, and
+  every editor client in the project lowers its flush delay to the live value whether
+  or not it shows the preview. Clients reset to the default when `livePreview.inactive`
+  arrives or their socket reconnects without a fresh `active`.
+- **Background passes starved by continuous typing.** rtex starts a pass after 300 ms
+  of quiet. With two people typing, the quiet period may never come, and pagination,
+  references and anything routed to the background stay stale. The session sends
+  `request_layout` when edits have kept a layout from starting for 3 s
+  (`LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS`), the same debounce/max-wait shape as Overleaf's
+  autocompile.
+- **Ordering across users.** Ops from all users are applied in document version order,
+  so two people editing the same paragraph converge on the same text the editors show.
+  rtex drops results for text that has changed since, so a burst never delivers stale
+  paragraphs. Every viewer receives the same frames in the same order.
+
+The `paragraph` frame carries the `user_id` of the last op that touched the unit.
+The overlay briefly outlines a paragraph changed by someone else in that user's
+cursor colour, so remote changes are visible as they happen.
+
+Acceptance (P1 for the server path, P3 end to end): two clients on the develop stack,
+one typing, the other measuring keystroke-to-paint for the remote edit. Target P95
+under 300 ms with both editing the same document, and a layout at least every 4 s
+during continuous typing.
+
+### 3.5 HTTP
 
 | Route | Notes |
 |---|---|
@@ -220,9 +253,9 @@ routes need a ticket too, so a project's fonts and pages are not readable by out
 | Stage | Deliverables | Status |
 |---|---|---|
 | **P0 rtex fork** | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes | ⏳ |
-| **P1 service** | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ⏳ |
+| **P1 service** | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ⏳ |
 | **P2 web module** | settings flag, ticket and snapshot routes, meta flag, nginx location, runit script | ⏳ |
-| **P3 overlay** | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, flush-delay hook | ⏳ |
+| **P3 overlay** | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test | ⏳ |
 | **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons | ⏳ |
 | **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG | ⏳ |
 
@@ -238,6 +271,7 @@ median 4.6 ms; CrossMem after its LuaLaTeX migration: 8 of 10).
 | 1.2-1.5 GB per session on a host with about 4 GB free | Session budget, idle reaping, LRU eviction; only `lualatex` projects with the preview open get a session. |
 | Templates rtex refuses (run-in headings, `\maketitle`, buffered abstracts) | Those units fall back to the background pass and say why. Fixes go to the fork and upstream, as with acmart. |
 | The 150 ms flush delay raises op traffic | Overleaf already uses 500 ms with collaborators; document-updater and project-history compress ops. Measure in P3; raise to 300 ms if needed. |
+| Collaborators' edits appear later than the user's own | Project-wide flush delay while a session is active, layout max-wait, two-client latency test (§3.4). |
 | Lost pub/sub messages leave the engine with stale text | Version check per op, `fromVersion` replay, periodic drift check (§3.2). |
 | Pass PDF and overlay disagree for a moment after a layout | The overlay clears on every layout and results are ordered by rtex's revision counters. |
 | ACM's camera-ready pipeline compiles the source itself | Accepted by the user: papers move to LuaLaTeX and follow its layout. |
@@ -255,3 +289,7 @@ median 4.6 ms; CrossMem after its LuaLaTeX migration: 8 of 10).
    for live paragraphs. (2026-10-11)
 6. We maintain a fork of rtex with upstreamable topic branches and contribute fixes
    back. (2026-10-11, user)
+7. Remote edits must render as promptly as local ones: the low flush delay applies to
+   every editor in a project with an active session, background passes have a 3 s
+   max-wait, and the two-client latency test is an acceptance criterion. (2026-10-11,
+   user)
