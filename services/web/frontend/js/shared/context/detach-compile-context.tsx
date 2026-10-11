@@ -1,4 +1,4 @@
-import { createContext, FC, useContext, useMemo } from 'react'
+import { createContext, FC, useContext, useMemo, useState } from 'react'
 import { CompileContext, useLocalCompileContext } from './local-compile-context'
 import useDetachStateWatcher from '../hooks/use-detach-state-watcher'
 import useDetachAction from '../hooks/use-detach-action'
@@ -13,6 +13,8 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
   children,
 }) => {
   const localCompileContext = useLocalCompileContext()
+  // Each preview window owns its own service socket and HTTP credentials.
+  const [previewUrl, setPreviewUrl] = useState<string>()
   if (!localCompileContext) {
     throw new Error(
       'DetachCompileProvider is only available inside LocalCompileProvider'
@@ -421,9 +423,10 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
       logEntryAnnotations,
       logEntries,
       pdfDownloadUrl: pdfFile?.pdfDownloadUrl,
-      pdfFile,
-      pdfUrl: pdfFile?.pdfUrl,
-      pdfViewer,
+      pdfFile: previewUrl ? undefined : pdfFile,
+      pdfUrl: previewUrl ?? pdfFile?.pdfUrl,
+      pdfViewer: previewUrl ? 'pdfjs' : pdfViewer,
+      setPreviewUrl,
       position,
       rawLog,
       recompileFromScratch,
@@ -479,6 +482,7 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
       logEntryAnnotations,
       logEntries,
       pdfFile,
+      previewUrl,
       pdfViewer,
       position,
       rawLog,

@@ -1,6 +1,8 @@
 # Design: live preview (`modules/live-preview`, `services/live-preview`)
 
-Status: P1 service and P2 wiring implemented (2026-10-11); P3/P4 frontend pending.
+Status: P1/P2 implemented; P3 frontend and minimal toggle implemented on
+`feat/live-preview-frontend` (2026-10-11), isolated verification complete, browser
+acceptance pending. Remaining P4 diagnostics/background integration is pending.
 P2 live verification: `doc/live-preview-p2-verification.md`. Feasibility evidence:
 `rtex-spike/REPORT.md` and `rtex-spike/REPORT-acmart.md` (local spike repo, not in
 this repository); the numbers quoted below come from those runs on home-center.
@@ -225,22 +227,28 @@ Registered last in `moduleImportSequence`, gated by `livePreview.enabled`
 | Route                                             | Access                     | Notes                                                                                                                                                                                                   |
 | ------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /project/:id/live-preview/ticket`           | read access to the project | Returns a ticket valid for 60 s: HMAC of project id, user id, `kind: 'open'`, expiry, with `LIVE_PREVIEW_TICKET_SECRET`. 404 `live_preview_disabled` when the flag is off, 409 `compiler_not_lualatex`. |
-| `GET /internal/project/:id/live-preview/snapshot` | private API, basic auth    | File list for materialisation: docs/versions from document-updater, root doc path, and immutable binary URLs via `HistoryManager.getFilestoreBlobURL`, the same helper CLSI uses. |
+| `GET /internal/project/:id/live-preview/snapshot` | private API, basic auth    | File list for materialisation: docs/versions from document-updater, root doc path, and immutable binary URLs via `HistoryManager.getFilestoreBlobURL`, the same helper CLSI uses.                       |
 
 ### 4.2 Frontend
 
-Lives in the module except for three small upstream edits.
+Implementation lives in the module, with small upstream viewer, compile-context,
+ShareJS and dropdown hooks.
 
 - `rootContextProviders`: `LivePreviewProvider` owns the socket, the paragraph state, the
   current layout and the toggle (`usePersistedState('live-preview:<projectId>')`). It
   runs in both the editor and the detached preview window. Each window opens its own
   socket, so detached mode needs no relay.
+  Detached windows receive compiler eligibility through the existing detach-state
+  channel because they do not join the editor socket; preview frames are never relayed.
 - Overlay renderer: one canvas per page inside `.page`, sized with pdf.js's
   `--scale-factor`, re-attached on `pagerendered` because pdf.js removes foreign
   children when it resets a page. Coordinates: display-list sp to bp
   (`sp / 65536 * 72 / 72.27`) from the page's top-left corner, then the page viewport.
   For each `paragraph` frame: paint the unit's previous rows (from the layout's
   placements) with the page background, then draw the new rows from glyph paths.
+  P3 extends placements with `row_rects: [{page,x,y,w,h}]`, derived from retained
+  page display lists by matching baseline/x and capture-unit ownership. Units with
+  missing geometry or degraded content wait for the next pass PDF.
   Living inside `.page` means dark mode's inversion applies to the overlay too.
 - Base pages: when a `layout` frame arrives, the PDF URL switches to the pass PDF and
   the overlay clears. pdf.js keeps the scroll position across documents already.
@@ -252,11 +260,13 @@ Lives in the module except for three small upstream edits.
 
 Upstream edits, each a few lines:
 
-| File                                             | Change                                                                                                          |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `pdf-js-viewer.tsx` + `pdf-preview-provider.tsx` | Put the `PDFJSWrapper` instance and `initialised` into the preview context, so the module can reach the viewer. |
-| `pdf-compile-button.tsx`                         | A **Live preview** item in the compile dropdown, shown when the meta flag is on and the compiler is `lualatex`. |
-| `share-js-doc.ts`                                | Read the flush delay from a small store the module can set, instead of the two constants.                       |
+| File                                                       | Change                                                                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `pdf-js-viewer.tsx` + `pdf-preview-provider.tsx`           | Put the `PDFJSWrapper` instance and `initialised` into the preview context, so the module can reach the viewer. |
+| `pdf-compile-button.tsx`                                   | A **Live preview** item in the compile dropdown, shown when the meta flag is on and the compiler is `lualatex`. |
+| `share-js-doc.ts`                                          | Read the flush delay from a small store the module can set, instead of the two constants.                       |
+| `pdf-js-wrapper.ts`                                        | Allow a plain HTTP PDF without CLSI range/cache metadata.                                                       |
+| `local-compile-context.tsx` + `detach-compile-context.tsx` | Suspend only autocompile and override only the pane's URL; keep manual builds and download URLs on CLSI.        |
 
 Plus the usual flag plumbing (`ProjectController` locals, `_meta.pug`, `meta.ts`,
 following `githubBackupEnabled`), the module paths in `overleafModuleImports`, and the
@@ -273,14 +283,14 @@ renewed on the authorized preview socket, so fonts and pages remain private.
 
 ## 6. Milestones
 
-| Stage                     | Deliverables                                                                                                                                                                                                                                                                             | Status |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| **P0 rtex fork**          | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes                                                                                                           | ⏳     |
-| **P1 service**            | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ✅ `feat/live-preview-service`; 68 unit tests |
-| **P2 web module**         | pinned rtex image layer, workspace install, settings flag, shared opening-ticket issuer, private live snapshot, meta flag, nginx/runit/init wiring, source-mounted develop stack | ✅ `feat/live-preview-wiring`; real MCP edit → paragraph/layout, PDF/glyph HTTP 200, active lease |
-| **P3 overlay**            | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test                                                                                                                  | ⏳     |
-| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons                                                                                                                                                                                     | ⏳     |
-| **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG                                                                                                                                | ⏳     |
+| Stage                     | Deliverables                                                                                                                                                                                                                                                                             | Status                                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **P0 rtex fork**          | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes                                                                                                           | ⏳                                                                                                |
+| **P1 service**            | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ✅ `feat/live-preview-service`; 68 unit tests                                                     |
+| **P2 web module**         | pinned rtex image layer, workspace install, settings flag, shared opening-ticket issuer, private live snapshot, meta flag, nginx/runit/init wiring, source-mounted develop stack                                                                                                         | ✅ `feat/live-preview-wiring`; real MCP edit → paragraph/layout, PDF/glyph HTTP 200, active lease |
+| **P3 overlay**            | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test                                                                                                                  | ✅ frontend and isolated tests; browser latency acceptance pending                                |
+| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons                                                                                                                                                                                     | ⏳                                                                                                |
+| **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG                                                                                                                                | ⏳                                                                                                |
 
 Each stage ends with a live check on the develop stack. P1 and P3 also re-run Cleave
 and CrossMem and compare against the spike numbers (Cleave: 12 of 14 edit targets live,

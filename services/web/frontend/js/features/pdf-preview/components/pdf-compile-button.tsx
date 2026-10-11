@@ -18,6 +18,7 @@ import OLButton from '@/shared/components/ol/ol-button'
 import OLButtonGroup from '@/shared/components/ol/ol-button-group'
 import { useLayoutContext } from '@/shared/context/layout-context'
 import { useCommandProvider } from '@/features/ide-react/hooks/use-command-provider'
+import { useLivePreviewContext } from '@modules/live-preview/frontend/js/live-preview-provider'
 
 const modifierKey = /Mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
@@ -34,6 +35,7 @@ function sendEventAndSet<T extends boolean>(
 }
 
 function PdfCompileButton() {
+  const livePreview = useLivePreviewContext()
   const {
     animateCompileDropdownArrow,
     autoCompile,
@@ -146,6 +148,17 @@ function PdfCompileButton() {
       />
 
       <DropdownMenu>
+        {livePreview?.available && (
+          <li role="none">
+            <DropdownItem
+              as="button"
+              trailingIcon={livePreview.enabled ? 'check' : null}
+              onClick={() => livePreview.setEnabled(!livePreview.enabled)}
+            >
+              Live preview
+            </DropdownItem>
+          </li>
+        )}
         <DropdownHeader>{t('auto_compile')}</DropdownHeader>
         <li role="none">
           <DropdownItem

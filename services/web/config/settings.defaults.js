@@ -1086,7 +1086,12 @@ module.exports = {
     pdfLogEntryHeaderActionComponents: [],
     pdfLogEntryComponents: [],
     pdfLogEntriesComponents: [],
-    pdfPreviewPromotions: [],
+    pdfPreviewPromotions: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/live-preview-overlay.tsx'
+      ),
+    ],
     diagnosticActions: [],
     sourceEditorCompletionSources: [],
     sourceEditorSymbolPalette: [],
@@ -1094,7 +1099,12 @@ module.exports = {
     sourceEditorToolbarButtonGroups: [],
     sourceEditorToolbarComponents: [],
     sourceEditorToolbarEndButtons: [],
-    rootContextProviders: [],
+    rootContextProviders: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/live-preview-provider.tsx'
+      ),
+    ],
     mainEditorLayoutModals: [],
     mainEditorLayoutPanels: [],
     pythonRunner: [],

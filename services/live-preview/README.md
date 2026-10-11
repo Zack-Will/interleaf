@@ -89,6 +89,13 @@ or unattributed results) and `fonts`, mapping rtex font ids to
 `{font_key, ids: 'glyph_index'|'char_code'}`. Layouts also carry `fonts` from changed
 pages, a service-monotonic `layout_version` and `pdf_url` without a ticket query.
 Append `?ticket=<access>` using the latest access token to fetch that URL.
+Each layout placement also includes `row_rects`, an array of
+`{page, x, y, w, h}` in page-origin sp (top-left, y down). These rectangles cover
+the unit's rows in the pass PDF, including rows attributed to the same capture
+unit. They are derived from page display lists, retained for unchanged pages and
+included on resync. They let clients erase the base text before painting live rows;
+fragment baselines alone do not contain widths or heights. An empty array means
+there is no matching base geometry, so the client waits for a subsequent pass.
 `hello` and `access` headers carry `{ access, access_expiry }`; access frames have
 no body and are specific to each viewer's project and user.
 Display-list font records and TeX positions
@@ -113,6 +120,50 @@ three layout PDFs. `GET /live-preview/glyphs/:fontKey?ids=1,2&ticket=` returns
 `{font_key, unitsPerEm, glyphs: {"1": {path, advance}}}`. The `ticket` query parameter
 on both routes accepts only project-bound access tokens, checked on every request.
 `GET /live-preview/health` reports process readiness and session count.
+
+## P3 browser frontend
+
+The frontend is in `services/web/modules/live-preview/frontend/js`. Enable
+`LIVE_PREVIEW_ENABLED=true` and use the same `LIVE_PREVIEW_TICKET_SECRET` in web
+and the preview service. Select LuaLaTeX in the project settings, then select
+**Live preview** in the Recompile dropdown. The preference is stored per project
+and shared with detached windows. Every preview window fetches its own opening
+ticket with CSRF and connects independently; the native detach channel supplies
+only compiler eligibility to the detached window, which does not join the editor
+socket. Keep real-time running for normal editor edits and lease notifications.
+
+Layouts load the pass PDF in the existing pdf.js viewer and reset overlays.
+Paragraphs erase the previous/base row rectangles and draw glyph paths, rules
+and colour stacks. Images, unsupported records, flags, literals and transformed
+content wait for a pass PDF. Errors preserve the previous live drawing; removal
+erases it. A remote edit briefly receives an outline in its author's cursor colour.
+Zoom/DPR/rotation use the page viewport, and canvases reattach on `pagerendered`.
+Autocompile is suspended while live mode is usable; busy/failed sessions restore
+normal autocompile. Recompile, keyboard shortcuts and downloads continue to use
+CLSI. The scroll restore remains the native `pdf-js-viewer` position/scale logic.
+
+Browser acceptance is deferred to the orchestrator. Use a develop project, two
+editor clients and a detached preview. Confirm private PDF/glyph requests use
+`ticket=<access>`, overlays survive zoom and page resets, scroll remains steady
+across layouts, remote keystroke-to-paint P95 is under 300 ms, and layouts arrive
+within 4 s of continuous typing. Also check a collaborator with live preview off:
+its ShareJS flush delay should be 150 ms until inactive, disconnect or lease expiry.
+Confirm CLSI Recompile/download, toggle-off restoration, busy fallback, access
+renewal, and reconnection/resync. These browser checks have not run on this host.
+
+Focused frontend checks, from `services/web` (one process at a time):
+
+```
+../../node_modules/.bin/mocha --require test/frontend/bootstrap.js 'modules/live-preview/test/frontend/js/*.test.{mjs,tsx}'
+node --max-old-space-size=1536 modules/live-preview/test/check-types.mjs
+ESLINT_FAST=1 ../../node_modules/.bin/eslint --max-warnings 0 modules/live-preview
+../../node_modules/.bin/prettier --check modules/live-preview
+```
+
+The TypeScript script uses the repository compiler options and resolves imports,
+but reports diagnostics only for the touched TS/TSX source and component tests.
+It does not check the entire monorepo. `ESLINT_FAST=1` skips the backend lint
+configuration's full-program type-aware pass on memory-constrained hosts.
 
 ## Verification
 
