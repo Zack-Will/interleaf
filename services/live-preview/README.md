@@ -141,6 +141,9 @@ The first live layout opens the PDF view even when a failed CLSI compile left
 the pane on logs. The logs button still opens normal compile diagnostics; that
 choice persists across live layouts in each window. Disabling live preview
 restores the normal compile view.
+The status badge reports Converged, Updating…, Stale or Pass limit reached from
+the convergence object, and includes the compile error count for passes that
+compiled with errors.
 Paragraphs erase the previous/base row rectangles and draw glyph paths, rules
 and colour stacks. Images, unsupported records, flags, literals and transformed
 content wait for a pass PDF. Errors preserve the previous live drawing; removal

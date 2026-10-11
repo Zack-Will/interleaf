@@ -6,6 +6,7 @@ import { getBackgroundColorForUserId } from '@/shared/utils/colors'
 import { debugConsole } from '@/utils/debugging'
 import { useLivePreviewContext } from './live-preview-provider'
 import { OverlayRenderer } from './overlay-renderer.mjs'
+import { layoutStatusLabel } from './status.mjs'
 
 export default function LivePreviewOverlay() {
   const live = useLivePreviewContext()
@@ -15,6 +16,7 @@ export default function LivePreviewOverlay() {
   const getAccess = live?.getAccess
   const layout = live?.layout
   const paragraphs = live?.paragraphs
+  const status = layoutStatusLabel(live?.convergence, layout?.compile)
 
   useEffect(() => {
     if (!enabled || !pdfJsWrapper || !getAccess) return
@@ -58,7 +60,7 @@ export default function LivePreviewOverlay() {
       }}
     >
       Live preview: {live.engine}
-      {live.convergence ? ` · ${live.convergence}` : ''}
+      {status ? ` · ${status}` : ''}
       {live.connection !== 'Connected' ? ` · ${live.connection}` : ''}
     </span>
   )

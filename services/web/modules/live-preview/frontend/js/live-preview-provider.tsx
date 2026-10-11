@@ -31,7 +31,13 @@ export type PreviewFrame = {
 type PreviewState = {
   engine: string
   connection: string
-  convergence?: string
+  convergence?: {
+    state: 'Converged' | 'Converging' | 'Stale' | 'PassLimitReached'
+    pass?: number
+    passes?: number
+    pending_since?: number
+    reasons?: string[]
+  }
   layout?: PreviewFrame['header']
   paragraphs: Map<number, PreviewFrame>
 }

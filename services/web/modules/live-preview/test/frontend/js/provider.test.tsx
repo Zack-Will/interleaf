@@ -21,6 +21,8 @@ import LivePreviewProvider, {
 } from '../../../frontend/js/live-preview-provider'
 import { getFlushDelay } from '@/shared/flush-delay.mjs'
 import LivePreviewCompileDropdownItem from '../../../frontend/js/compile-dropdown-item'
+import LivePreviewOverlay from '../../../frontend/js/live-preview-overlay'
+import { PdfPreviewProvider } from '@/features/pdf-preview/components/pdf-preview-provider'
 import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 const projectId = 'aaaaaaaaaaaaaaaaaaaaaaaa'
@@ -37,6 +39,9 @@ function Probe() {
         {String(live.enabled)}:{live.engine}:{live.layout?.layout_version}
       </span>
       <span data-testid="access">{live.getAccess()}</span>
+      <PdfPreviewProvider>
+        <LivePreviewOverlay />
+      </PdfPreviewProvider>
     </>
   )
 }
@@ -172,7 +177,7 @@ describe('LivePreviewProvider', function () {
       sockets[0].onmessage?.({
         data: encodeFrame('layout', {
           layout_version: 4,
-          convergence: 'Converged',
+          convergence: { state: 'Converged' },
           pdf_url: `/live-preview/pdf/${projectId}/4`,
           placements: [],
         }),
@@ -202,6 +207,75 @@ describe('LivePreviewProvider', function () {
     })
     expect(setAutoCompileSuspended.lastCall.args).to.deep.equal([false])
     expect(setPreviewUrl.lastCall.args).to.deep.equal([undefined])
+  })
+
+  it('renders convergence objects as short labels and reports compile error counts', async function () {
+    mount()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    await waitFor(() => expect(sockets).to.have.length(1))
+    act(() => {
+      sockets[0].onmessage?.({
+        data: encodeFrame('hello', { engine_state: 'Ready', access: 'token' }),
+      })
+    })
+    const statuses = [
+      { convergence: { state: 'Converged' }, label: 'Converged' },
+      {
+        convergence: { state: 'Converging', pass: 2, reasons: ['references'] },
+        label: 'Updating…',
+      },
+      { convergence: { state: 'Stale', pending_since: 3 }, label: 'Stale' },
+      {
+        convergence: {
+          state: 'PassLimitReached',
+          passes: 5,
+          reasons: ['references'],
+        },
+        label: 'Pass limit reached',
+      },
+    ]
+    for (const { convergence, label } of statuses) {
+      act(() => {
+        sockets[0].onmessage?.({
+          data: encodeFrame('layout', {
+            pdf_url: '/live-preview/pdf/p/1',
+            convergence,
+            compile: { state: 'Ok' },
+          }),
+        })
+      })
+      expect(screen.getByRole('status').textContent).to.equal(
+        `Live preview: Ready · ${label}`
+      )
+    }
+    for (const count of [1, 3]) {
+      act(() => {
+        sockets[0].onmessage?.({
+          data: encodeFrame('layout', {
+            pdf_url: '/live-preview/pdf/p/2',
+            convergence: { state: 'Stale', pending_since: 4 },
+            compile: { state: 'CompiledWithErrors', count },
+          }),
+        })
+      })
+      expect(screen.getByRole('status').textContent).to.equal(
+        `Live preview: Ready · Stale · ${count} compile ${count === 1 ? 'error' : 'errors'}`
+      )
+    }
+    act(() => {
+      sockets[0].onmessage?.({
+        data: encodeFrame('layout', {
+          pdf_url: '/live-preview/pdf/p/3',
+          convergence: { state: 'Converged' },
+          compile: { state: 'Ok' },
+        }),
+      })
+    })
+    expect(screen.getByRole('status').textContent).to.equal(
+      'Live preview: Ready · Converged'
+    )
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    expect(screen.queryByRole('status')).to.equal(null)
   })
 
   it('opens a detached preview independently after native compiler metadata arrives', async function () {
