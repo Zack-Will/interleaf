@@ -215,6 +215,7 @@ export interface Meta {
   'ol-learnedWords': string[]
   'ol-legacyEditorThemes': { name: string; dark: boolean }[]
   'ol-licenseQuantity'?: number
+  'ol-livePreviewEnabled': boolean
   'ol-loadingText': string
   'ol-localIndividualPlans': LocalIndividualPlans
   'ol-managedGroupSubscriptions': ManagedGroupSubscription[]

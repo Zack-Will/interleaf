@@ -1,0 +1,15 @@
+#!/bin/sh
+# rtex 0.0.3 resets openout_any=a when spawning TeX. Reassert the policy at
+# the final exec boundary; no project content is interpreted by this shell.
+set -eu
+export openin_any=p
+export openout_any=p
+export shell_escape=f
+if [ -n "${LIVE_PREVIEW_REAL_TEXLIVE_BIN:-}" ]; then
+  exec "$LIVE_PREVIEW_REAL_TEXLIVE_BIN/lualatex" -no-shell-escape "$@"
+fi
+# rtex prepends this wrapper's directory to PATH. Remove that one entry so
+# resolving the real binary cannot recurse into this wrapper.
+PATH=${PATH#*:}
+export PATH
+exec lualatex -no-shell-escape "$@"

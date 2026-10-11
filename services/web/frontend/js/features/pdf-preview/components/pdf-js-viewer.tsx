@@ -19,7 +19,7 @@ import { PDFFile } from '@ol-types/compile'
 
 type PdfJsViewerProps = {
   url: string
-  pdfFile: PDFFile
+  pdfFile?: PDFFile
 }
 
 function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
@@ -28,7 +28,13 @@ function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
   const { setError, firstRenderDone, highlights, position, setPosition } =
     useCompileContext()
 
-  const { setLoadingError } = usePdfPreviewContext()
+  const {
+    setLoadingError,
+    pdfJsWrapper,
+    setPdfJsWrapper,
+    initialised,
+    setInitialised,
+  } = usePdfPreviewContext()
 
   // state values persisted in localStorage to restore on load
   const [scale, setScale] = usePersistedState(
@@ -41,10 +47,6 @@ function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
   const [rawScale, setRawScale] = useState<number | null>(null)
   const [page, setPage] = useState<number | null>(null)
   const [totalPages, setTotalPages] = useState<number | null>(null)
-
-  // local state values
-  const [pdfJsWrapper, setPdfJsWrapper] = useState<PDFJSWrapper | null>()
-  const [initialised, setInitialised] = useState(false)
 
   const handlePageChange = useCallback(
     (newPage: number) => {
@@ -72,14 +74,15 @@ function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
         }
       }
     },
-    [setLoadingError]
+    [setLoadingError, setPdfJsWrapper]
   )
 
   useEffect(() => {
     return () => {
       setPdfJsWrapper(null)
+      setInitialised(false)
     }
-  }, [])
+  }, [setPdfJsWrapper, setInitialised])
 
   const [startFetch, setStartFetch] = useState(0)
 
@@ -168,7 +171,7 @@ function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
       pdfJsWrapper.eventBus.off('scalechanging', handleScaleChanged)
       pdfJsWrapper.eventBus.off('pagechanging', handlePageChanging)
     }
-  }, [pdfJsWrapper, firstRenderDone, startFetch])
+  }, [pdfJsWrapper, firstRenderDone, startFetch, setInitialised])
 
   // load the PDF document from the URL
   useEffect(() => {
@@ -203,7 +206,7 @@ function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
         abortController.abort()
       }
     }
-  }, [pdfJsWrapper, url, pdfFile, setError, setStartFetch])
+  }, [pdfJsWrapper, url, pdfFile, setError, setStartFetch, setInitialised])
 
   // listen for scroll events
   useEffect(() => {

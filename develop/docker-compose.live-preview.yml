@@ -1,0 +1,20 @@
+# Optional protocol acceptance overlay: no frontend build, no backup scheduler.
+# Use with docker-compose.yml, docker-compose.dev.yml and the host override.
+volumes:
+  live-preview-history-buckets:
+
+services:
+  # CE's filestore history routes read nested keys. The old dev history bucket
+  # uses flat keys; isolate acceptance blobs instead of changing that data.
+  history-v1:
+    environment:
+      NODE_CONFIG: '{"persistor":{"useSubdirectories":true}}'
+    volumes:
+      - live-preview-history-buckets:/buckets
+  filestore:
+    volumes:
+      - live-preview-history-buckets:/buckets:ro
+  web:
+    environment:
+      - WEBPACK_HOST=live-preview-proxy
+      - GITHUB_BACKUP_ENABLED=false

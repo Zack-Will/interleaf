@@ -1,0 +1,22 @@
+{
+  "name": "@overleaf/live-preview-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared live-preview wire codecs and signed tokens",
+  "exports": {
+    "./Tickets.mjs": "./Tickets.mjs",
+    "./Frames.mjs": "./Frames.mjs",
+    "./DisplayList.mjs": "./DisplayList.mjs"
+  },
+  "scripts": {
+    "test:unit": "vitest run --config vitest.config.mjs --no-file-parallelism"
+  },
+  "dependencies": {
+    "@overleaf/o-error": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "4.1.5"
+  },
+  "license": "AGPL-3.0-only"
+}

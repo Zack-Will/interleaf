@@ -528,6 +528,11 @@ module.exports = {
       },
     },
   },
+  livePreview: {
+    enabled: process.env.LIVE_PREVIEW_ENABLED === 'true',
+    ticketSecret: process.env.LIVE_PREVIEW_TICKET_SECRET,
+    serviceUrl: process.env.LIVE_PREVIEW_SERVICE_URL || 'http://127.0.0.1:3060',
+  },
   restrictedCountries: [],
   enableOnboardingEmails: process.env.ENABLE_ONBOARDING_EMAILS === 'true',
 
@@ -1067,6 +1072,12 @@ module.exports = {
     // Restart webpack after making changes.
     //
     createFileModes: [],
+    compileDropdownItems: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/compile-dropdown-item.tsx'
+      ),
+    ],
     devToolbar: [],
     gitBridge: [],
     publishModal: [],
@@ -1075,13 +1086,28 @@ module.exports = {
     tprFileViewRefreshButton: [],
     tprFileViewNotOriginalImporter: [],
     contactUsModal: [],
-    sourceEditorExtensions: [],
+    sourceEditorExtensions: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/source-editor-extension.ts'
+      ),
+    ],
     sourceEditorVisualExtensions: [],
     sourceEditorComponents: [],
     pdfLogEntryHeaderActionComponents: [],
     pdfLogEntryComponents: [],
-    pdfLogEntriesComponents: [],
-    pdfPreviewPromotions: [],
+    pdfLogEntriesComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/live-preview-logs.tsx'
+      ),
+    ],
+    pdfPreviewPromotions: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/live-preview-overlay.tsx'
+      ),
+    ],
     diagnosticActions: [],
     sourceEditorCompletionSources: [],
     sourceEditorSymbolPalette: [],
@@ -1089,7 +1115,12 @@ module.exports = {
     sourceEditorToolbarButtonGroups: [],
     sourceEditorToolbarComponents: [],
     sourceEditorToolbarEndButtons: [],
-    rootContextProviders: [],
+    rootContextProviders: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/live-preview-provider.tsx'
+      ),
+    ],
     mainEditorLayoutModals: [],
     mainEditorLayoutPanels: [],
     pythonRunner: [],
@@ -1176,6 +1207,7 @@ module.exports = {
     'git-bridge',
     'review',
     'github-backup',
+    'live-preview',
   ],
   viewIncludes: {},
 

@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { memo, useCallback } from 'react'
+import { ElementType, memo, useCallback } from 'react'
 import classNames from 'classnames'
 import { useDetachCompileContext as useCompileContext } from '../../../shared/context/detach-compile-context'
 import { useStopOnFirstError } from '../../../shared/hooks/use-stop-on-first-error'
@@ -18,6 +18,12 @@ import OLButton from '@/shared/components/ol/ol-button'
 import OLButtonGroup from '@/shared/components/ol/ol-button-group'
 import { useLayoutContext } from '@/shared/context/layout-context'
 import { useCommandProvider } from '@/features/ide-react/hooks/use-command-provider'
+import importOverleafModules from '../../../../macros/import-overleaf-module.macro'
+
+const compileDropdownItems = importOverleafModules('compileDropdownItems') as {
+  import: { default: ElementType }
+  path: string
+}[]
 
 const modifierKey = /Mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
@@ -146,6 +152,11 @@ function PdfCompileButton() {
       />
 
       <DropdownMenu>
+        {compileDropdownItems.map(
+          ({ import: { default: Component }, path }) => (
+            <Component key={path} />
+          )
+        )}
         <DropdownHeader>{t('auto_compile')}</DropdownHeader>
         <li role="none">
           <DropdownItem

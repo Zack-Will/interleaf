@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Interleaf live-preview internal project snapshot (P2 contract)",
+  "type": "object",
+  "required": ["projectId", "compiler", "rootDoc", "docs", "files"],
+  "properties": {
+    "projectId": { "type": "string", "pattern": "^[a-fA-F0-9]{24}$" },
+    "compiler": { "type": "string" },
+    "rootDoc": {
+      "type": "string",
+      "description": "Relative POSIX path of a document in docs"
+    },
+    "docs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "content", "version"],
+        "properties": {
+          "id": { "type": "string" },
+          "path": { "type": "string" },
+          "content": { "type": "string" },
+          "version": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "blobUrl"],
+        "properties": {
+          "id": { "type": "string" },
+          "path": { "type": "string" },
+          "blobUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Private filestore HTTP(S) URL; change URL when content changes"
+          }
+        }
+      }
+    }
+  }
+}

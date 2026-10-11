@@ -1,21 +1,23 @@
 # AGENTS.md — guidance for coding agents working in this fork
 
 This is Interleaf, a fork of the Overleaf monorepo (upstream `overleaf/overleaf`).
-The fork adds three web modules that make Overleaf Community Edition usable by AI agents and
-by Git without Server Pro. Design: `doc/design/agent-sync-architecture.md`. Read it before
+The fork adds web modules that make Overleaf Community Edition usable by AI agents and
+by Git without Server Pro, plus a live-preview service. Design: `doc/design/agent-sync-architecture.md`. Read it before
 touching these modules. `doc/agent-sync-usage.md` is the user-facing guide to the same
 features — how to enable them, get a token, connect a client, and what every tool does; keep
 it in step when you change a tool.
 
 ## Where our code lives
 
-| Module | Path | Purpose |
-|---|---|---|
-| `project-sync` | `services/web/modules/project-sync/` | Personal access tokens, token auth middleware, project reference parsing, version / snapshot / label / write services |
-| `mcp` | `services/web/modules/mcp/` | Streamable HTTP MCP endpoint (`/mcp`) and its tools; depends on `project-sync` |
-| `review` | `services/web/modules/review/` | Enables the native review panel (comments) in CE: thread/ranges routes, realtime events, `ReviewService`, Agent service user |
-| `git-bridge` | `services/web/modules/git-bridge/` (planned) | Web side of the official Java git-bridge contract |
-| `github-backup` | `services/web/modules/github-backup/` | One-way mirror of a project's git history to a GitHub repository: fetch from git-bridge, fast-forward push to GitHub. Design: `doc/design/github-backup.md` |
+| Module                  | Path                                                           | Purpose                                                                                                                                                                                 |
+| ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project-sync`          | `services/web/modules/project-sync/`                           | Personal access tokens, token auth middleware, project reference parsing, version / snapshot / label / write services                                                                   |
+| `mcp`                   | `services/web/modules/mcp/`                                    | Streamable HTTP MCP endpoint (`/mcp`) and its tools; depends on `project-sync`                                                                                                          |
+| `review`                | `services/web/modules/review/`                                 | Enables the native review panel (comments) in CE: thread/ranges routes, realtime events, `ReviewService`, Agent service user                                                            |
+| `git-bridge`            | `services/web/modules/git-bridge/` (planned)                   | Web side of the official Java git-bridge contract                                                                                                                                       |
+| `github-backup`         | `services/web/modules/github-backup/`                          | One-way mirror of a project's git history to a GitHub repository: fetch from git-bridge, fast-forward push to GitHub. Design: `doc/design/github-backup.md`                             |
+| `live-preview`          | `services/web/modules/live-preview/`, `services/live-preview/` | Gated LuaLaTeX preview: read-authorized opening tickets, private snapshots, rtex sessions and dedicated WebSocket/PDF/glyph endpoints. Design: `doc/design/live-preview.md`             |
+| `live-preview-protocol` | `libraries/live-preview-protocol/`                             | Shared browser/Node frame and display-list codecs, project-bound opening/access tickets. User guide: `doc/live-preview.md`; release evidence: `doc/design/live-preview-verification.md` |
 
 Everything new goes under these directories. Edits to upstream files must be minimal and justified
 in the commit message. Modules are registered in `moduleImportSequence` in

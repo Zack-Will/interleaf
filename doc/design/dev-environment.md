@@ -4,13 +4,13 @@
 
 ## 路线选择
 
-| 路线 | 适合 | 不适合的原因 |
-|---|---|---|
-| **`develop/` compose + dev overlay（推荐）** | 迭代模块代码：`services/web/modules` 热挂载，web 与 webpack 都 `--watch` | |
-| 根目录 `docker-compose.yml` | 无 | 拉的是官方发布镜像，不含我们的模块 |
-| `server-ce/` 自建镜像 | 最终验收、部署 | 从头编 TeX Live 和生产 webpack，3 核机器上极慢 |
-| `server-ce/test/` Cypress 套件 | 无（本机） | 依赖 Overleaf 内部镜像仓库，测的是预构建镜像 |
-| `services/web` acceptance 容器 | 模块 acceptance 测试 | 依赖 `saml-test` 私有镜像，需 override 去掉 |
+| 路线                                         | 适合                                                                     | 不适合的原因                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
+| **`develop/` compose + dev overlay（推荐）** | 迭代模块代码：`services/web/modules` 热挂载，web 与 webpack 都 `--watch` |                                                |
+| 根目录 `docker-compose.yml`                  | 无                                                                       | 拉的是官方发布镜像，不含我们的模块             |
+| `server-ce/` 自建镜像                        | 最终验收、部署                                                           | 从头编 TeX Live 和生产 webpack，3 核机器上极慢 |
+| `server-ce/test/` Cypress 套件               | 无（本机）                                                               | 依赖 Overleaf 内部镜像仓库，测的是预构建镜像   |
+| `services/web` acceptance 容器               | 模块 acceptance 测试                                                     | 依赖 `saml-test` 私有镜像，需 override 去掉    |
 
 ## `develop/` 环境事实
 
@@ -92,12 +92,49 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 services:
   redis:
     ports: !override
-      - "127.0.0.1:6380:6379"
+      - '127.0.0.1:6380:6379'
   mongo:
     image: mongo:8.2
 ```
 
 **首次端到端结果**：`/oauth/token/info` 与 `/mcp` 无令牌均返回 401；用内部 API 建管理员、令牌与项目后，MCP 走通 `get_project → read_file → write_files(v2, label) → 过期 base_version 被拒(version_conflict, next_action) → edit_file(v3, diff) → revert_to(v4)`；project-history 里三次改动的 origin 均为 `{kind:'mcp'}` 并各带一个 label。暴露的协议缺陷：数组型 `structuredContent` 被 SDK 拒绝（`list_projects` / `list_history` / `get_outline` / `search`），需改为对象。
+
+## Live-preview P2 协议验收
+
+从仓库根目录运行 `corepack yarn install` 和 `develop/bin/setup-live-preview`。
+后者下载并校验 rtex release `interleaf-0.0.3-2`，提取到被 git 忽略的
+`develop/.live-preview-rtex/`，并从本机 CE 6.2.4 镜像读取现成 manifest。
+预览容器使用该镜像的 TeX Live 2025、只读挂载源码，以 `www-data` 运行，最多一个会话。
+
+协议验收使用四份 compose 配置：`docker-compose.yml`、
+`docker-compose.dev.yml`、本机 `docker-compose.override.yml` 和
+`docker-compose.live-preview.yml`。最后一份关闭备份调度器，让 web 从轻量 nginx
+获取 manifest，并让 history-v1 / filestore 共享专用的嵌套路径 history 卷；原有
+develop history 卷的扁平文件布局保持原样。验收项目的历史保留在专用卷中。
+
+在 `develop/` 下逐个执行，等待一个容器启动后再执行下一个：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  -f docker-compose.override.yml -f docker-compose.live-preview.yml \
+  up -d --no-deps <service>
+```
+
+服务顺序为 mongo、redis、docstore、document-updater、filestore、history-v1、
+project-history、chat、web、live-preview、live-preview-proxy。chat 是开启 review
+后读取文档所需的依赖。此验收通过 MCP 编辑，省去 webpack、CLSI 和 real-time。
+`http://127.0.0.1:8088` 的入口转发 Web 路由和 `/live-preview/`，支持 WebSocket
+upgrade；正常 webpack 开发入口也加入了同样的预览代理。
+
+没有现成可用密码时，在 develop web 内用标准管理员脚本创建测试用户，按输出的
+activation URL 设置密码。凭据放在权限 600 的临时 JSON 文件，格式和测试命令见
+`services/live-preview/README.md`。脚本登录、创建 LuaLaTeX 项目、申请 PAT 和 ticket，
+启动真实 `test-client.mjs`，通过 MCP `edit_file` 验证 paragraph/layout 帧、
+`livePreview.active` 和 PDF/glyph HTTP 200，最后撤销 PAT。结果见
+`doc/design/live-preview-verification.md`。
+
+完成后用同样四份配置显式 `stop` 本次启动的 develop 服务；不要运行 toolkit 命令，
+不要操作生产容器，不要用 `down -v` 删除数据。
 
 ## 风险
 

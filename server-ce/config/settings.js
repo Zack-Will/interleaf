@@ -226,15 +226,24 @@ const settings = {
     intervalSeconds:
       parseInt(process.env.GITHUB_BACKUP_INTERVAL_SECONDS, 10) || 600,
     reposDir:
-      process.env.GITHUB_BACKUP_REPOS_DIR || '/var/lib/overleaf/data/github-backup',
-    apiBaseUrl: process.env.GITHUB_BACKUP_API_BASE_URL || 'https://api.github.com',
-    gitTimeoutMs: parseInt(process.env.GITHUB_BACKUP_GIT_TIMEOUT_MS, 10) || 300000,
+      process.env.GITHUB_BACKUP_REPOS_DIR ||
+      '/var/lib/overleaf/data/github-backup',
+    apiBaseUrl:
+      process.env.GITHUB_BACKUP_API_BASE_URL || 'https://api.github.com',
+    gitTimeoutMs:
+      parseInt(process.env.GITHUB_BACKUP_GIT_TIMEOUT_MS, 10) || 300000,
     accessTokenEncryptor: {
       cipherLabel: '2026.1-v3',
       cipherPasswords: {
         '2026.1-v3': process.env.GITHUB_BACKUP_CIPHER_PASSWORD,
       },
     },
+  },
+
+  livePreview: {
+    enabled: process.env.LIVE_PREVIEW_ENABLED === 'true',
+    ticketSecret: process.env.LIVE_PREVIEW_TICKET_SECRET,
+    serviceUrl: process.env.LIVE_PREVIEW_SERVICE_URL || 'http://127.0.0.1:3060',
   },
 
   restrictInvitesToExistingAccounts:

@@ -40,6 +40,7 @@ COPY package.json yarn.lock .yarnrc.yml /overleaf/
 COPY libraries/access-token-encryptor/package.json /overleaf/libraries/access-token-encryptor/package.json
 COPY libraries/eslint-plugin/package.json /overleaf/libraries/eslint-plugin/package.json
 COPY libraries/fetch-utils/package.json /overleaf/libraries/fetch-utils/package.json
+COPY libraries/live-preview-protocol/package.json /overleaf/libraries/live-preview-protocol/package.json
 COPY libraries/logger/package.json /overleaf/libraries/logger/package.json
 COPY libraries/metrics/package.json /overleaf/libraries/metrics/package.json
 COPY libraries/mongo-utils/package.json /overleaf/libraries/mongo-utils/package.json
@@ -74,6 +75,7 @@ ENV SENTRY_RELEASE=$SENTRY_RELEASE
 COPY libraries/access-token-encryptor/ /overleaf/libraries/access-token-encryptor/
 COPY libraries/eslint-plugin/ /overleaf/libraries/eslint-plugin/
 COPY libraries/fetch-utils/ /overleaf/libraries/fetch-utils/
+COPY libraries/live-preview-protocol/ /overleaf/libraries/live-preview-protocol/
 COPY libraries/logger/ /overleaf/libraries/logger/
 COPY libraries/metrics/ /overleaf/libraries/metrics/
 COPY libraries/mongo-utils/ /overleaf/libraries/mongo-utils/
@@ -114,6 +116,7 @@ FROM deps-prod AS pug
 COPY libraries/access-token-encryptor/ /overleaf/libraries/access-token-encryptor/
 COPY libraries/eslint-plugin/ /overleaf/libraries/eslint-plugin/
 COPY libraries/fetch-utils/ /overleaf/libraries/fetch-utils/
+COPY libraries/live-preview-protocol/ /overleaf/libraries/live-preview-protocol/
 COPY libraries/logger/ /overleaf/libraries/logger/
 COPY libraries/metrics/ /overleaf/libraries/metrics/
 COPY libraries/mongo-utils/ /overleaf/libraries/mongo-utils/

@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# This is a development asset cache, separate from all toolkit data.
+release=${RTEX_RELEASE:-interleaf-0.0.3-2}
+checksum=${RTEX_SHA256:-3e56e697c93dbc1cd3df39ad49b16d31dc3efa31438c3edcfefaa1dcf084e6c3}
+archive=$(mktemp)
+trap 'rm -f "$archive"' EXIT
+curl --fail --location --retry 3 \
+  "https://github.com/Zack-Will/realtime-tex/releases/download/${release}/rtex-x86_64-unknown-linux-gnu.tar.gz" \
+  --output "$archive"
+echo "$checksum  $archive" | sha256sum --check --strict
+mkdir -p .live-preview-rtex
+tar -xzf "$archive" -C .live-preview-rtex --strip-components=1
+chmod -R a+rX .live-preview-rtex
+
+# The optional protocol gateway serves the existing image's asset manifest so
+# web can render login/CSRF pages without running a webpack build.
+docker run --rm --entrypoint cat ghcr.io/zack-will/interleaf:6.2.4 \
+  /overleaf/services/web/public/manifest.json > .live-preview-rtex/manifest.json

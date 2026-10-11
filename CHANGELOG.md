@@ -1,7 +1,38 @@
 # Changelog
 
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
-`git-bridge`, `github-backup`). Upstream Overleaf changes are not listed here.
+`git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
+
+## 0.2.0 (2026-10-12)
+
+Images: `ghcr.io/<owner>/interleaf:6.2.5`, `ghcr.io/<owner>/git-bridge:6.2.5`.
+
+Opt-in LuaLaTeX live preview, with collaborative paragraph updates and complete
+background page passes. rtex is pinned to release `interleaf-0.0.3-2`.
+
+### Added
+
+- Live preview in the Recompile menu, PDF paragraph overlays, source gutter
+  markers, live diagnostics, collaborator outlines and independent detached
+  preview connections. Normal Recompile and PDF downloads continue through CLSI.
+- A gated web module, separate supervised rtex service and shared protocol
+  library, with private project snapshots and project-bound opening/access tokens.
+- Session budgets, viewerless LRU eviction, idle cleanup, crash recovery and Retry.
+- Chinese `ctexbook`/Fandol acceptance, real-paper memory measurements and operator
+  guidance in `doc/live-preview.md` and `doc/deploy-toolkit.md`.
+
+### Fixed
+
+- Snapshot materialization rejects unsafe paths and symbolic links, bounds file
+  counts/downloads, and replaces source files without changing retained hard links.
+- A trusted LuaLaTeX wrapper reasserts paranoid input/output and disabled shell
+  escape after rtex's native environment overrides.
+- Preview sockets enforce origin, connection, incoming-message and heartbeat
+  limits; PDFs and glyphs require fresh authorized requests and prevent stale caches.
+- Preview nginx preserves public Host ports for same-origin WebSocket connections
+  through proxies using nonstandard ports.
+- Source-service outages report Failed without restart loops, and startup removes
+  disposable session directories left by an earlier service process.
 
 ## 0.1.1 (2026-10-01)
 

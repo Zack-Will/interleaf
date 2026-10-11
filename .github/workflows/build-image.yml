@@ -28,6 +28,14 @@ on:
         description: 'TeX Live repository, must serve the same release as the base image'
         required: false
         default: 'https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final'
+      rtex_release:
+        description: 'Pinned release of Zack-Will/realtime-tex'
+        required: true
+        default: 'interleaf-0.0.3-2'
+      rtex_sha256:
+        description: 'SHA-256 of the Linux x86_64 rtex archive'
+        required: true
+        default: '3e56e697c93dbc1cd3df39ad49b16d31dc3efa31438c3edcfefaa1dcf084e6c3'
 
 permissions:
   contents: read
@@ -80,6 +88,8 @@ jobs:
             OVERLEAF_BASE_TAG=${{ inputs.base_image }}
             TEXLIVE_SCHEME=${{ inputs.texlive_scheme }}
             TEXLIVE_MIRROR=${{ inputs.texlive_mirror }}
+            RTEX_RELEASE=${{ inputs.rtex_release }}
+            RTEX_SHA256=${{ inputs.rtex_sha256 }}
           labels: |
             com.overleaf.ce.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

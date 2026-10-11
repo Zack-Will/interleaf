@@ -65,6 +65,8 @@ type PdfFile = Record<string, any>
 
 export type CompileContext = {
   autoCompile: boolean
+  setAutoCompileSuspended?: (value: boolean) => void
+  setPreviewUrl?: (value: string | undefined) => void
   clearingCache: boolean
   clsiServerId?: string
   codeCheckFailed: boolean
@@ -139,6 +141,7 @@ export const LocalCompileContext = createContext<CompileContext | undefined>(
 export const LocalCompileProvider: FC<React.PropsWithChildren> = ({
   children,
 }) => {
+  const [autoCompileSuspended, setAutoCompileSuspended] = useState(false)
   const { hasPremiumCompile, isProjectOwner } = useEditorContext()
   const { openDocWithId, openDocs } = useEditorManagerContext()
   const { currentDocument } = useEditorOpenDocContext()
@@ -665,7 +668,7 @@ export const LocalCompileProvider: FC<React.PropsWithChildren> = ({
   // the project is available for auto-compiling
   // (autocompile is enabled, the PDF preview is open, and the code check (if enabled) hasn't failed)
   const canAutoCompile = Boolean(
-    autoCompile && pdfPreviewOpen && !codeCheckFailed
+    autoCompile && !autoCompileSuspended && pdfPreviewOpen && !codeCheckFailed
   )
 
   // show that the project has pending changes
@@ -748,6 +751,7 @@ export const LocalCompileProvider: FC<React.PropsWithChildren> = ({
     () => ({
       animateCompileDropdownArrow,
       autoCompile,
+      setAutoCompileSuspended,
       clearCache,
       clearingCache,
       clsiServerId,
