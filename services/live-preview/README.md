@@ -112,6 +112,14 @@ Client messages are text JSON, exclusively `{"cmd":"ping"}` or
 paragraph overlays newer than it; resync is rate limited to once per second.
 This includes removal frames until a pass incorporates the removal. Error frames
 are broadcast as notifications while resync retains the last good drawing.
+Background and error-paragraph headers include `path`, `doc_id` and
+`range: {start, end}` when the unit still exists. The range is half-open, in UTF-16
+code units of the document, converted from rtex's per-file UTF-8 spans. Background
+headers also include `versions.source_revision`, so an older layout cannot clear
+a newer notice. A boundary-change event without a unit id has no source range.
+Resync sends pending background/error notices after the last good drawings, plus
+the latest diagnostics per rtex source. Diagnostic filenames inside the project
+are relative paths, suitable for the editor's normal file/line navigation.
 Text, edits and extra fields close the socket with 1008. Slow consumers exceeding
 8 MiB of buffered output close with 1013. The dev client prints decoded frames:
 
@@ -166,7 +174,7 @@ Focused frontend checks, from `services/web` (one process at a time):
 
 ```
 ../../node_modules/.bin/mocha --require test/frontend/bootstrap.js 'modules/live-preview/test/frontend/js/*.test.{mjs,tsx}'
-node --max-old-space-size=1536 modules/live-preview/test/check-types.mjs
+node --max-old-space-size=1400 modules/live-preview/test/check-types.mjs
 ESLINT_FAST=1 ../../node_modules/.bin/eslint --max-warnings 0 modules/live-preview
 ../../node_modules/.bin/prettier --check modules/live-preview
 ```
@@ -195,6 +203,43 @@ rtex fork: set `RTEX_TEST_ROOT` (default
 The collaboration result measures **op publish to WS paragraph**, excluding client
 flush and paint (P3). It asserts P95 <300 ms and layout intervals ≤4 seconds under
 continuous interleaved edits from two simulated editors, with two preview sockets.
+To use the pinned release, set `LIVE_PREVIEW_RTEX_BINARY` to
+`develop/.live-preview-rtex/bin/rtex` and `RTEX_TEXDIR` to its
+`share/rtex/tex` directory (absolute paths). The same fork TeX Live environment
+supplies LuaLaTeX and the font roots. Acceptance also checks a real background
+notification with CJK/emoji source offsets.
+
+## P4 editor integration
+
+The module uses the existing `sourceEditorExtensions` and
+`pdfLogEntriesComponents` slots. Background reasons and TeX paragraph errors
+appear as gutter dots on each affected source line of the open document. Tooltips
+show the reasons/error messages. CodeMirror maps existing ranges through edits;
+a live update clears its unit, and a layout clears only incorporated units whose
+notice is no newer than the layout. Paragraph errors keep the previous drawing.
+Live diagnostics form a separately labelled group in the existing logs pane,
+alongside CLSI entries. They use native file/line navigation and disappear when
+live mode is off. The native tab counts continue to count CLSI entries; the live
+group is shown in each logs tab. A clean background pass clears old diagnostics;
+fresh warnings remain visible.
+
+Busy and failed sessions explain that normal compilation still works. Failure
+has a Retry button that obtains a new opening ticket and reopens this window's
+socket. The PDF-pane notice is dismissible; Retry remains in the status badge.
+Changing away from LuaLaTeX turns off the persisted live preference and shows a
+notice. Changing back exposes the dropdown item but requires enabling live mode
+again. New UI strings use the same i18next English locale as github-backup.
+
+Both roots keep independent preview sockets, PDFs, overlays, badges and access
+credentials. The detached root receives compiler metadata through the native
+detach channel. The editor provider remains mounted when its PDF is detached,
+and still consumes the project's active lease to lower the ShareJS flush delay.
+Unmounting either root closes only its own socket and leaves the preference
+enabled. Remote registered users use the collaborator cursor colour helper;
+`anonymous:<hash>` and `anonymous-user` use a neutral grey outline.
+
+Browser checks for the orchestrator are in
+[`doc/live-preview-p4-verification.md`](../../doc/live-preview-p4-verification.md).
 
 Type 1 support is ported from Henry Yang's MIT-licensed
 `realtime-tex-vsc-plugin/src/type1.ts`; [LICENSE.type1](LICENSE.type1) preserves

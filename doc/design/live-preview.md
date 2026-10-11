@@ -1,8 +1,8 @@
 # Design: live preview (`modules/live-preview`, `services/live-preview`)
 
-Status: P1/P2 implemented; P3 frontend and minimal toggle implemented on
-`feat/live-preview-frontend` (2026-10-11), isolated verification complete, browser
-acceptance pending. Remaining P4 diagnostics/background integration is pending.
+Status: P1-P3 implemented and browser-tested on `feat/live-preview-frontend`.
+P4 editor integration is implemented on `feat/live-preview-editor` (2026-10-12);
+its browser acceptance remains with the orchestrator.
 P2 live verification: `doc/live-preview-p2-verification.md`. Feasibility evidence:
 `rtex-spike/REPORT.md` and `rtex-spike/REPORT-acmart.md` (local spike repo, not in
 this repository); the numbers quoted below come from those runs on home-center.
@@ -143,16 +143,16 @@ entries separately from the Node-only ticket entry.
 Server to client, binary frames with a one-byte type and a JSON header, then the
 display list in rtex's binary format where there is one:
 
-| Frame         | Header                                                                                     | Body              |
-| ------------- | ------------------------------------------------------------------------------------------ | ----------------- |
-| `hello`       | session state, `layout_version`, engine state, pages total, `access`, `access_expiry`      |                   |
-| `paragraph`   | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing` | unit display list |
-| `layout`      | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile`         |                   |
-| `background`  | `par_id`, `reasons`                                                                        |                   |
-| `diagnostics` | rtex's diagnostics items                                                                   |                   |
-| `engine`      | `Starting` / `Ready` / `Restarting` / `Failed`, reason                                     |                   |
-| `busy`        | why live preview is unavailable                                                            |                   |
-| `access`      | `access`, `access_expiry` (Unix milliseconds), fresh HTTP credentials for this viewer      |                   |
+| Frame         | Header                                                                                         | Body              |
+| ------------- | ---------------------------------------------------------------------------------------------- | ----------------- |
+| `hello`       | session state, `layout_version`, engine state, pages total, `access`, `access_expiry`          |                   |
+| `paragraph`   | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing`     | unit display list |
+| `layout`      | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile`             |                   |
+| `background`  | `par_id`, `reasons`, `path`, `doc_id`, UTF-16 `range: {start,end}`, `versions.source_revision` |                   |
+| `diagnostics` | rtex's diagnostics items                                                                       |                   |
+| `engine`      | `Starting` / `Ready` / `Restarting` / `Failed`, reason                                         |                   |
+| `busy`        | why live preview is unavailable                                                                |                   |
+| `access`      | `access`, `access_expiry` (Unix milliseconds), fresh HTTP credentials for this viewer          |                   |
 
 Client to server: only `ping` and `resync`. The connection URL carries a ticket from
 the web module (§4.1); the service checks its HMAC and expiry and that it names this
@@ -262,6 +262,16 @@ ShareJS and dropdown hooks.
   `background` reasons in a tooltip on the paragraph's gutter marker; rtex diagnostics
   merged into the logs pane.
 
+P4 uses the existing `sourceEditorExtensions` and `pdfLogEntriesComponents`
+slots, without editor/logs component edits. Background and error-paragraph
+frames attach source ranges converted from rtex's UTF-8 spans; the open document
+gets mapped gutter markers until a live result or a containing layout catches up.
+Logs keep CLSI entries and a separate live group with native file/line links.
+Session failures offer Retry, budget exhaustion explains the normal-compile
+fallback, and a compiler change disables the persisted preference with a notice.
+Both editor and detached roots retain independent sockets; see
+[`../live-preview-p4-verification.md`](../live-preview-p4-verification.md).
+
 Upstream edits, each a few lines:
 
 | File                                                       | Change                                                                                                          |
@@ -292,8 +302,8 @@ renewed on the authorized preview socket, so fonts and pages remain private.
 | **P0 rtex fork**          | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes                                                                                                           | ⏳                                                                                                |
 | **P1 service**            | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ✅ `feat/live-preview-service`; 68 unit tests                                                     |
 | **P2 web module**         | pinned rtex image layer, workspace install, settings flag, shared opening-ticket issuer, private live snapshot, meta flag, nginx/runit/init wiring, source-mounted develop stack                                                                                                         | ✅ `feat/live-preview-wiring`; real MCP edit → paragraph/layout, PDF/glyph HTTP 200, active lease |
-| **P3 overlay**            | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test                                                                                                                  | ✅ frontend and isolated tests; browser latency acceptance pending                                |
-| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons                                                                                                                                                                                     | ⏳                                                                                                |
+| **P3 overlay**            | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test                                                                                                                  | ✅ implemented and browser-tested                                                                 |
+| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons                                                                                                                                                                                     | ✅ implemented; isolated checks complete; browser acceptance pending                              |
 | **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG                                                                                                                                | ⏳                                                                                                |
 
 Each stage ends with a live check on the develop stack. P1 and P3 also re-run Cleave
