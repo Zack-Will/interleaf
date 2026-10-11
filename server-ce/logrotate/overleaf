@@ -1,3 +1,4 @@
+# Includes live-preview.log from the optional live-preview runit service.
 /var/log/overleaf/*.log {
   daily
   missingok

@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+source /etc/overleaf/env.sh
+
+# Keep a disabled service supervised without a restart loop. Recreating the
+# container after enabling the feature starts the engine service normally.
+if [ "$LIVE_PREVIEW_ENABLED" != "true" ]; then
+    exec sleep infinity
+fi
+
+export LIVE_PREVIEW_HOST=127.0.0.1
+export LIVE_PREVIEW_PORT=3060
+export RTEX_TEXDIR=/usr/local/share/rtex/tex
+exec /sbin/setuser www-data /usr/bin/node /overleaf/services/live-preview/app.js >> /var/log/overleaf/live-preview.log 2>&1
