@@ -101,4 +101,20 @@ describe('fonts', () => {
       'cmr10.pfb'
     )
   })
+  it('rejects fonts from another session even when the forged display list registers them', async () => {
+    const fonts = new FontRegistry({
+      settings: { fontRoots: ['/fonts'], baseDir: '/data' },
+      filesystem: { realpath: async file => file },
+    })
+    const mapping = fonts.registerDisplayList(
+      'attacker',
+      fontList('/data/victim/private.otf')
+    )
+    await expect(
+      fonts.glyphs('attacker', mapping[1].font_key, [1])
+    ).rejects.toMatchObject({ code: 'font_unavailable' })
+    expect(await fonts.trustedFile('/data/victim/private.otf', 'victim')).toBe(
+      '/data/victim/private.otf'
+    )
+  })
 })

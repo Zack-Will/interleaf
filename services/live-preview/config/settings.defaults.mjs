@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 export function settingsFromEnv(env = process.env) {
   return {
     host: env.LIVE_PREVIEW_HOST || '127.0.0.1',
@@ -6,6 +8,18 @@ export function settingsFromEnv(env = process.env) {
     ticketSecret: env.LIVE_PREVIEW_TICKET_SECRET,
     accessTtlMs: Number(env.LIVE_PREVIEW_ACCESS_TTL_MS || 900000),
     maxSessions: Number(env.LIVE_PREVIEW_MAX_SESSIONS || 2),
+    maxProjectConnections: Number(
+      env.LIVE_PREVIEW_MAX_PROJECT_CONNECTIONS || 16
+    ),
+    maxUserConnections: Number(env.LIVE_PREVIEW_MAX_USER_CONNECTIONS || 8),
+    heartbeatMs: Number(env.LIVE_PREVIEW_HEARTBEAT_MS || 30000),
+    allowedOrigins: (env.LIVE_PREVIEW_ALLOWED_ORIGINS || '')
+      .split(',')
+      .filter(Boolean),
+    maxSnapshotEntries: 2000,
+    maxFileBytes: 32 * 1024 ** 2,
+    maxSnapshotBytes: 256 * 1024 ** 2,
+    maxResponseBytes: 64 * 1024 ** 2,
     idleMs: Number(env.LIVE_PREVIEW_IDLE_MS || 300000),
     activeLeaseRefreshMs: Number(
       env.LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS || 30000
@@ -15,6 +29,11 @@ export function settingsFromEnv(env = process.env) {
     driftMs: 30000,
     rtexBinary: env.LIVE_PREVIEW_RTEX_BINARY || '/usr/local/bin/rtex',
     texDir: env.RTEX_TEXDIR || '/usr/local/share/rtex/tex',
+    texmfRoot:
+      env.LIVE_PREVIEW_TEXMF_ROOT ||
+      (env.RTEX_TEXLIVE_BIN
+        ? path.resolve(env.RTEX_TEXLIVE_BIN, '../..')
+        : '/usr/local/texlive'),
     // RLIMIT_AS, inherited by LuaLaTeX children, equivalent to ulimit -v.
     memoryBytes: Number(env.LIVE_PREVIEW_MEMORY_MB || 2048) * 1024 * 1024,
     commandTimeoutMs: 30000,

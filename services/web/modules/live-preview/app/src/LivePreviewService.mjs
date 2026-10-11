@@ -12,7 +12,16 @@ export function requireEnabled(settings) {
 }
 
 function relativePath(path) {
-  return path.replace(/^\//, '')
+  const relative = path.replace(/^\//, '')
+  if (
+    relative.includes('\\') ||
+    relative.includes('\0') ||
+    relative.split('/').some(part => !part || part === '.' || part === '..') ||
+    ['build', '.live-preview-pdfs'].includes(relative.split('/')[0])
+  ) {
+    throw new LivePreviewError('invalid_path', 'Unsafe project file path', 400)
+  }
+  return relative
 }
 
 function rootPath(project, docs) {
@@ -93,16 +102,42 @@ export function createLivePreviewService({
       'overleaf.history.id': 1,
     })
     const entities = getEntities(project)
+    if (
+      entities.docs.length + entities.files.length >
+      (settings.maxSnapshotEntries ?? 2000)
+    ) {
+      throw new LivePreviewError(
+        'snapshot_too_large',
+        'Too many project files',
+        413
+      )
+    }
+    for (const entry of [...entities.docs, ...entities.files])
+      relativePath(entry.path)
     const docs = []
+    let bytes = 0
     // Bound document-updater traffic on large projects. These reads never flush
     // or touch the project state hash used by incremental CLSI compiles.
     for (const { doc, path } of entities.docs) {
       const id = String(doc._id)
       const current = await getDocument(projectId, id, -1)
+      const content = current.lines.join('\n')
+      const size = Buffer.byteLength(content)
+      bytes += size
+      if (
+        size > (settings.maxFileBytes ?? 32 * 1024 ** 2) ||
+        bytes > (settings.maxResponseBytes ?? 64 * 1024 ** 2)
+      ) {
+        throw new LivePreviewError(
+          'snapshot_too_large',
+          'Project text exceeds byte budget',
+          413
+        )
+      }
       docs.push({
         id,
         path: relativePath(path),
-        content: current.lines.join('\n'),
+        content,
         version: current.version,
       })
     }

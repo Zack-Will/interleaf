@@ -96,9 +96,10 @@ export class FontRegistry {
     }
   }
 
-  async trustedFile(filename) {
+  async trustedFile(filename, projectId) {
     const resolved = await this.fs.realpath(filename)
-    const roots = [...this.settings.fontRoots, this.settings.baseDir]
+    const roots = [...this.settings.fontRoots]
+    if (projectId) roots.push(path.join(this.settings.baseDir, projectId))
     if (
       !roots.some(root =>
         resolved.startsWith(`${path.resolve(root)}${path.sep}`)
@@ -114,18 +115,18 @@ export class FontRegistry {
     return resolved
   }
 
-  async locate(filename) {
+  async locate(filename, projectId) {
     const file = path.isAbsolute(filename)
       ? filename
       : await this.locateFont(filename)
-    return this.trustedFile(file)
+    return this.trustedFile(file, projectId)
   }
 
-  async load(font) {
+  async load(font, projectId) {
     let filename = font.filename
     let encoding
     if (!filename || /\.tfm$/i.test(filename)) {
-      const mapFile = await this.locate('pdftex.map')
+      const mapFile = await this.locate('pdftex.map', projectId)
       const entries = parseMapFile(await this.fs.readFile(mapFile, 'utf8'))
       const entry = entries.get(font.name || path.basename(filename, '.tfm'))
       if (!entry?.fontFile) {
@@ -134,11 +135,14 @@ export class FontRegistry {
       filename = entry.fontFile
       if (entry.encFile) {
         encoding = parseEncFile(
-          await this.fs.readFile(await this.locate(entry.encFile), 'utf8')
+          await this.fs.readFile(
+            await this.locate(entry.encFile, projectId),
+            'utf8'
+          )
         )
       }
     }
-    const file = await this.locate(filename)
+    const file = await this.locate(filename, projectId)
     const bytes = await this.fs.readFile(file)
     if (/\.(pfb|pfa)$/i.test(file)) {
       const type1 = parseType1(bytes)
@@ -164,6 +168,11 @@ export class FontRegistry {
         404
       )
     }
+    // A display list cannot grant another session's uploaded font by naming
+    // its absolute path, even if that font was already loaded into the cache.
+    if (entry.font.filename && path.isAbsolute(entry.font.filename)) {
+      await this.trustedFile(entry.font.filename, projectId)
+    }
     if (
       !Array.isArray(ids) ||
       !ids.length ||
@@ -177,7 +186,7 @@ export class FontRegistry {
       )
     }
     if (!entry.loading) {
-      entry.loading = this.load(entry.font).catch(error => {
+      entry.loading = this.load(entry.font, projectId).catch(error => {
         entry.loading = null
         throw error
       })

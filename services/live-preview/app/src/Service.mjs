@@ -22,10 +22,19 @@ export async function createService({
 }) {
   if (
     !settings.ticketSecret ||
+    !Number.isSafeInteger(settings.maxSessions) ||
     settings.maxSessions < 1 ||
+    !Number.isSafeInteger(settings.maxProjectConnections) ||
+    settings.maxProjectConnections < 1 ||
+    !Number.isSafeInteger(settings.maxUserConnections) ||
+    settings.maxUserConnections < 1 ||
+    !Number.isSafeInteger(settings.heartbeatMs) ||
+    settings.heartbeatMs < 1 ||
     settings.layoutMaxWaitMs <= 0 ||
     !Number.isSafeInteger(settings.accessTtlMs) ||
-    settings.accessTtlMs < 2
+    settings.accessTtlMs < 2 ||
+    !Number.isSafeInteger(settings.memoryBytes) ||
+    settings.memoryBytes < 0
   ) {
     throw new PreviewError(
       'invalid_config',
@@ -63,6 +72,7 @@ export async function createService({
   const server = createServer({ settings, manager, fonts, onError })
 
   async function start() {
+    await materializer.cleanupStale()
     await consumer.start()
     await new Promise((resolve, reject) => {
       server.server.once('error', reject)

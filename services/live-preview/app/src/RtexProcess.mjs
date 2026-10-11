@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PreviewError } from './Errors.mjs'
 
 /** serve has no request ids: at most one command may be on the wire. */
@@ -36,7 +37,25 @@ export class RtexProcess extends EventEmitter {
       shell: false,
       detached: true,
       cwd: directory,
-      env: { ...process.env, RTEX_TEXDIR: this.settings.texDir },
+      env: {
+        ...process.env,
+        RTEX_TEXDIR: path.join(directory, 'build/rtex-support'),
+        openin_any: 'p',
+        openout_any: 'p',
+        shell_escape: 'f',
+        RTEX_TEXLIVE_BIN: fileURLToPath(
+          new URL('../../bin/tex/', import.meta.url)
+        ),
+        LIVE_PREVIEW_REAL_TEXLIVE_BIN: process.env.RTEX_TEXLIVE_BIN || '',
+        // Paranoid kpathsea permits absolute paths under these two roots.
+        // luaotfload opens Unicode/font data by absolute path: allow the
+        // installed, service-read-only TeX tree and this session, never /etc.
+        // Its writable font cache stays inside the disposable session tree.
+        TEXMFOUTPUT: this.settings.texmfRoot || '/usr/local/texlive',
+        TEXMF_OUTPUT_DIRECTORY: directory,
+        TEXMFVAR: directory,
+        TEXMFCACHE: directory,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     this.exited = new Promise(resolve => {

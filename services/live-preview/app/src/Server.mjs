@@ -1,4 +1,5 @@
 import http from 'node:http'
+import fs from 'node:fs/promises'
 import express from 'express'
 import { expressify } from '@overleaf/promise-utils'
 import { WebSocketServer } from 'ws'
@@ -10,6 +11,7 @@ import {
 import { createSocketAccess } from './SocketAccess.mjs'
 import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 import { PreviewError } from './Errors.mjs'
+import { assertNoSymlinks } from './Materializer.mjs'
 
 export function createServer({ settings, manager, fonts, onError = () => {} }) {
   const app = express()
@@ -19,6 +21,24 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
     noServer: true,
     maxPayload: 4096,
     perMessageDeflate: false,
+  })
+  const projectConnections = new Map()
+  const userConnections = new Map()
+  const heartbeat = setInterval(() => {
+    for (const client of websocket.clients) {
+      if (!client.alive) {
+        client.terminate()
+      } else {
+        client.alive = false
+        client.ping()
+      }
+    }
+  }, settings.heartbeatMs)
+  heartbeat.unref()
+  app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store')
+    res.set('Referrer-Policy', 'no-referrer')
+    next()
   })
 
   app.get('/live-preview/health', (req, res) =>
@@ -36,9 +56,8 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
         Date.now(),
         settings.accessTtlMs
       )
-      const file = manager.sessions
-        .get(projectId)
-        ?.pdfs.get(Number(layoutVersion))
+      const session = manager.sessions.get(projectId)
+      const file = session?.pdfs.get(Number(layoutVersion))
       if (!file) {
         throw new PreviewError(
           'pdf_not_found',
@@ -46,7 +65,10 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
           404
         )
       }
-      res.set('Cache-Control', 'private, max-age=60')
+      await assertNoSymlinks(fs, session.directory, file)
+      // Versions restart at one after an engine/service restart. Revalidation
+      // cannot safely identify the old layout by URL alone.
+      res.set('Cache-Control', 'private, no-store')
       await new Promise((resolve, reject) => {
         res.sendFile(file, error => {
           // A viewer can close its PDF request during a layout switch.
@@ -76,8 +98,21 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
               .split(',')
               .map(value => (/^\d+$/.test(value) ? Number(value) : NaN))
           : []
+      if (
+        !ids.length ||
+        ids.length > 1024 ||
+        ids.some(id => !Number.isSafeInteger(id) || id < 0 || id > 65535)
+      ) {
+        throw new PreviewError(
+          'invalid_glyph_ids',
+          'Expected up to 1024 glyph ids',
+          400
+        )
+      }
       const glyphs = await fonts.glyphs(claims.project, req.params.fontKey, ids)
-      res.set('Cache-Control', 'private, max-age=31536000, immutable')
+      // The engine's font key identifies a path, not its content. A font file
+      // can change on restart; require authorization on every HTTP request.
+      res.set('Cache-Control', 'private, no-store')
       res.json(glyphs)
     })
   )
@@ -109,7 +144,47 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
         settings.ticketSecret,
         projectId
       )
+      const origin = request.headers.origin
+      if (origin) {
+        const parsed = new URL(origin)
+        const allowed = settings.allowedOrigins.length
+          ? settings.allowedOrigins.includes(parsed.origin)
+          : parsed.host === request.headers.host
+        if (!['http:', 'https:'].includes(parsed.protocol) || !allowed) {
+          throw new PreviewError(
+            'invalid_origin',
+            'Preview requires the site origin',
+            403
+          )
+        }
+      }
+      if (
+        (projectConnections.get(projectId) || 0) >=
+          settings.maxProjectConnections ||
+        (userConnections.get(claims.user) || 0) >= settings.maxUserConnections
+      ) {
+        throw new PreviewError(
+          'connection_limit',
+          'Too many preview connections',
+          429
+        )
+      }
       websocket.handleUpgrade(request, socket, head, ws => {
+        for (const [counts, key] of [
+          [projectConnections, projectId],
+          [userConnections, claims.user],
+        ]) {
+          counts.set(key, (counts.get(key) || 0) + 1)
+          ws.once('close', () => {
+            const remaining = counts.get(key) - 1
+            if (remaining) counts.set(key, remaining)
+            else counts.delete(key)
+          })
+        }
+        ws.alive = true
+        ws.on('pong', () => {
+          ws.alive = true
+        })
         connect(ws, claims).catch(onError)
       })
     } catch (error) {
@@ -165,6 +240,7 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
   }
 
   async function close() {
+    clearInterval(heartbeat)
     for (const client of websocket.clients) {
       client.terminate()
     }

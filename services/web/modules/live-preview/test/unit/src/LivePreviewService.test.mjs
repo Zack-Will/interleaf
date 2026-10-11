@@ -194,4 +194,33 @@ describe('LivePreviewService', () => {
       'blob_missing'
     )
   })
+  it('rejects unsafe paths and excess entities before contacting document-updater', async () => {
+    deps.getEntities.returns({
+      docs: [{ doc: { _id: 'root' }, path: '/../secret' }],
+      files: [],
+    })
+    expect((await rejection(service.snapshot(PROJECT))).code).to.equal(
+      'invalid_path'
+    )
+    expect(deps.getDocument.called).to.equal(false)
+    deps.getEntities.returns({
+      docs: Array(2001).fill({ doc: { _id: 'root' }, path: '/main.tex' }),
+      files: [],
+    })
+    expect((await rejection(service.snapshot(PROJECT))).code).to.equal(
+      'snapshot_too_large'
+    )
+    expect(deps.getDocument.called).to.equal(false)
+  })
+  it('bounds UTF-8 document and aggregate snapshot bytes', async () => {
+    settings.maxFileBytes = 10
+    expect((await rejection(service.snapshot(PROJECT))).code).to.equal(
+      'snapshot_too_large'
+    )
+    settings.maxFileBytes = 32
+    settings.maxResponseBytes = 20
+    expect((await rejection(service.snapshot(PROJECT))).code).to.equal(
+      'snapshot_too_large'
+    )
+  })
 })

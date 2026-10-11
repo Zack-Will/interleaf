@@ -53,7 +53,13 @@ describe('RtexProcess', () => {
       '--binary-dl',
     ])
     expect(options.shell).toBe(false)
-    expect(options.env.RTEX_TEXDIR).toBe('/tex')
+    expect(options.env.RTEX_TEXDIR).toBe('/project/build/rtex-support')
+    expect(options.env.openin_any).toBe('p')
+    expect(options.env.openout_any).toBe('p')
+    expect(options.env.shell_escape).toBe('f')
+    expect(options.env.TEXMFOUTPUT).toBe('/usr/local/texlive')
+    expect(options.env.TEXMF_OUTPUT_DIRECTORY).toBe('/project')
+    expect(options.env.TEXMFCACHE).toBe('/project')
   })
   it('correlates serial commands and buffers pre-reply events until attribution callback', async () => {
     const ordered = []

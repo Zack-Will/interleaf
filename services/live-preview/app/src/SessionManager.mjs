@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Attribution } from './Attribution.mjs'
 import { utf16Offset } from './Offsets.mjs'
+import { assertNoSymlinks } from './Materializer.mjs'
 import {
   encodeFrame,
   decodeFrame,
@@ -367,8 +368,11 @@ export class SessionManager {
           )
         }
         const directory = path.join(session.directory, '.live-preview-pdfs')
+        await assertNoSymlinks(this.fs, session.directory, event.pass_pdf)
+        await assertNoSymlinks(this.fs, session.directory, directory)
         await this.fs.mkdir(directory, { recursive: true })
         const destination = path.join(directory, `${session.layoutVersion}.pdf`)
+        await assertNoSymlinks(this.fs, session.directory, destination)
         await this.fs.copyFile(event.pass_pdf, destination)
         session.pdfs.set(session.layoutVersion, destination)
         pdfUrl = `/live-preview/pdf/${session.projectId}/${session.layoutVersion}`
@@ -492,6 +496,23 @@ export class SessionManager {
     await this.restart(session, 'Engine exited')
   }
 
+  async failSource(session, error) {
+    session.state = 'Failed'
+    ++session.engineGeneration
+    clearInterval(session.activeTimer)
+    clearTimeout(session.layoutTimer)
+    session.layoutTimer = null
+    this.broadcast(session, 'engine', {
+      state: 'Failed',
+      code: error.code || 'source_unavailable',
+      reason:
+        'Live preview could not read project sources. Retry when the source service is available.',
+    })
+    await session.engine?.stop()
+    await this.publish(session, 'livePreview.inactive')
+    session.activePublished = false
+  }
+
   stop(projectId) {
     const session = this.sessions.get(projectId)
     if (!session) {
@@ -517,7 +538,7 @@ export class SessionManager {
       socket.close(1001, 'Live preview stopped')
     }
     if (session.activePublished) {
-      await this.publish(session, 'livePreview.inactive')
+      await this.publish(session, 'livePreview.inactive').catch(this.onError)
     }
     this.fonts.releaseProject(projectId)
     if (session.directory) {

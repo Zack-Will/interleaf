@@ -25,6 +25,11 @@ describe('SessionManager', () => {
     time = 0
     engines = []
     filesystem = {
+      lstat: sinon.stub().resolves({
+        isSymbolicLink: () => false,
+        isDirectory: () => true,
+        isFile: () => false,
+      }),
       mkdir: sinon.stub().resolves(),
       copyFile: sinon.stub().resolves(),
       rm: sinon.stub().resolves(),
@@ -492,5 +497,30 @@ describe('SessionManager', () => {
     viewer.bufferedAmount = 9 * 1024 * 1024
     manager.broadcast(session, 'engine', { state: 'Ready' })
     expect(viewer.close.calledWith(1013)).toBe(true)
+  })
+  it('rejects linked PDF input and retention directories', async () => {
+    const session = await manager.open('p', socket())
+    filesystem.lstat.resolves({ isSymbolicLink: () => true })
+    await expect(
+      manager.handleEvent(session, {
+        event: 'LayoutUpdate',
+        pass_pdf: '/tmp/p/build/pass.pdf',
+      })
+    ).rejects.toMatchObject({ code: 'invalid_path' })
+    expect(filesystem.copyFile.called).toBe(false)
+  })
+  it('reports source failure once, stops the engine and permits manual retry', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    await manager.failSource(session, { code: 'upstream_failed' })
+    expect(decodeFrame(viewer.send.lastCall.args[0])).toMatchObject({
+      type: 'engine',
+      header: { state: 'Failed', code: 'upstream_failed' },
+    })
+    expect(engines[0].stop.calledOnce).toBe(true)
+    const count = engines.length
+    await vi.advanceTimersByTimeAsync(90000)
+    expect(engines.length).toBe(count)
+    expect(await manager.open('p', socket())).not.toBe(session)
   })
 })

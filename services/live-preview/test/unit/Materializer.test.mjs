@@ -69,4 +69,69 @@ describe('Materializer', () => {
     snapshot.rootDoc = 'missing.tex'
     await expect(materializer.materialize(project)).rejects.toThrow('Root')
   })
+  it.each(['file', 'parent', 'root'])(
+    'rejects %s symlinks without changing their target',
+    async kind => {
+      const outside = path.join(directory, 'outside')
+      await fs.mkdir(outside)
+      const target = path.join(outside, 'sentinel')
+      await fs.writeFile(target, 'unchanged')
+      const root = path.join(directory, 'session')
+      await fs.mkdir(root)
+      let relative = 'input.tex'
+      if (kind === 'root') {
+        await fs.rm(root, { recursive: true })
+        await fs.symlink(outside, root)
+      } else if (kind === 'parent') {
+        await fs.symlink(outside, path.join(root, 'chapter'))
+        relative = 'chapter/sentinel'
+      } else {
+        await fs.symlink(target, path.join(root, relative))
+      }
+      await expect(
+        materializer.write(root, relative, 'overwrite')
+      ).rejects.toMatchObject({ code: 'invalid_path' })
+      expect(await fs.readFile(target, 'utf8')).toBe('unchanged')
+    }
+  )
+  it('bounds file count, UTF-8 bytes, binary bytes and aggregate bytes', async () => {
+    materializer.settings.maxSnapshotEntries = 1
+    await expect(materializer.materialize(project)).rejects.toMatchObject({
+      code: 'snapshot_too_large',
+    })
+    materializer.settings.maxSnapshotEntries = 2
+    materializer.settings.maxFileBytes = 8
+    await expect(materializer.materialize(project)).rejects.toMatchObject({
+      code: 'file_too_large',
+    })
+    materializer.settings.maxFileBytes = 10
+    materializer.fetchBinary.resolves(Buffer.alloc(11))
+    await expect(materializer.materialize(project)).rejects.toMatchObject({
+      code: 'file_too_large',
+    })
+    materializer.fetchBinary.resolves(Buffer.alloc(3))
+    materializer.settings.maxSnapshotBytes = 11
+    await expect(materializer.materialize(project)).rejects.toMatchObject({
+      code: 'snapshot_too_large',
+    })
+    await expect(fs.access(path.join(directory, project))).rejects.toThrow()
+  })
+  it('removes stale project directories on startup, preserving unrelated files', async () => {
+    await materializer.materialize(project)
+    await fs.writeFile(path.join(directory, 'README'), 'keep')
+    await materializer.cleanupStale()
+    await expect(fs.access(path.join(directory, project))).rejects.toThrow()
+    expect(await fs.readFile(path.join(directory, 'README'), 'utf8')).toBe(
+      'keep'
+    )
+  })
+  it('atomically replaces source hard links without mutating the retained build snapshot', async () => {
+    const result = await materializer.materialize(project)
+    const source = path.join(result.directory, 'main.tex')
+    const retained = path.join(result.directory, 'retained.tex')
+    await fs.link(source, retained)
+    await materializer.write(result.directory, 'main.tex', 'changed')
+    expect(await fs.readFile(source, 'utf8')).toBe('changed')
+    expect(await fs.readFile(retained, 'utf8')).toBe('中文😀')
+  })
 })
