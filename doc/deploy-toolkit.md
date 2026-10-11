@@ -108,6 +108,25 @@ signed blob URLs inside a snapshot, so it is the internal name, not the site
 URL. `GIT_BRIDGE_PUBLIC_BASE_URL` is what users are shown to clone from, so it
 is the public one.
 
+The toolkit also decides where git-bridge calls the web API, and gets it wrong
+on CE: for any image version 4.2 or later it uses `http://sharelatex:3000/api/v0/`,
+the web-api process. On Server Pro that process serves the git-bridge API; here
+it does not mount the modules' public API routes, so port 3000 answers every
+API path with Express's `Cannot GET` page, git-bridge
+fails to parse it, and every clone ends in `403`. Override the URL so the calls
+go through the container's nginx on port 80, in `config/docker-compose.override.yml`:
+
+```yaml
+services:
+  git-bridge:
+    environment:
+      GIT_BRIDGE_API_BASE_URL: "http://sharelatex/api/v0/"
+```
+
+The override file is the toolkit's place for local settings and survives
+toolkit upgrades. After changing it, `bin/docker-compose up -d --no-deps git-bridge`
+recreates git-bridge alone.
+
 ## 5. Start and verify
 
 ```bash
@@ -167,6 +186,10 @@ Drop `.cls` and `.sty` files under `data/texmf-local/tex/latex/<name>/`, then ru
   toolkit directory instead.
 - The production image installs only `dependencies`, so anything imported at
   runtime must not sit in `devDependencies`.
+- git-bridge was unusable in production for weeks while the web API worked when
+  tested through the site: the toolkit pointed it at `sharelatex:3000` (see
+  step 4). Test git access with a real `git clone`, not only with `curl`
+  against the public URL, which takes a different path to web.
 - Migrations run on the first boot of the new image, before the application is
   reachable. If that boot fails for another reason, the database has already
   moved forward; fixing the image is safer than starting the old one again.
