@@ -21,6 +21,8 @@ import { setFlushDelay } from '@/shared/flush-delay.mjs'
 import { createLease } from './flush-delay.mjs'
 import { connectPreview } from './connection.mjs'
 import { accessUrl } from './protocol.mjs'
+import { markerStore, updateEditorState } from './editor-state.mjs'
+import type { Marker } from './source-editor-extension'
 
 export type PreviewFrame = {
   type: string
@@ -40,6 +42,16 @@ type PreviewState = {
   }
   layout?: PreviewFrame['header']
   paragraphs: Map<number, PreviewFrame>
+  markers: Map<number, Marker>
+  diagnostics: Map<string, LiveDiagnostic[]>
+}
+
+type LiveDiagnostic = {
+  severity: string
+  file?: string | null
+  line?: number | null
+  message: string
+  context?: string | null
 }
 
 type LivePreviewContextValue = PreviewState & {
@@ -48,6 +60,9 @@ type LivePreviewContextValue = PreviewState & {
   active: boolean
   setEnabled: (enabled: boolean) => void
   getAccess: () => string
+  retry: () => void
+  notice?: string
+  dismissNotice: () => void
 }
 
 const LivePreviewContext = createContext<LivePreviewContextValue | undefined>(
@@ -62,6 +77,8 @@ const emptyState = (): PreviewState => ({
   engine: 'Starting',
   connection: 'Disconnected',
   paragraphs: new Map(),
+  markers: new Map(),
+  diagnostics: new Map(),
 })
 
 export default function LivePreviewProvider({ children }: PropsWithChildren) {
@@ -87,6 +104,46 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
   )
   const enabled = available && preference
   const [state, setState] = useState<PreviewState>(emptyState)
+  const [retryCount, setRetryCount] = useState(0)
+  const retry = useCallback(() => setRetryCount(count => count + 1), [])
+  const [compilerNotice, setCompilerNotice] = useState(false)
+  const [sharedCompilerNotice, setSharedCompilerNotice] = useDetachStateWatcher(
+    'live-preview-compiler-notice',
+    compilerNotice,
+    'detacher',
+    'detached'
+  )
+  const previousCompiler = useRef(compiler)
+  const notice =
+    compilerNotice || sharedCompilerNotice
+      ? 'live_preview_compiler_changed'
+      : enabled && state.engine === 'Busy'
+        ? 'live_preview_busy'
+        : enabled && state.engine === 'Failed'
+          ? 'live_preview_failed'
+          : undefined
+  const [dismissedNotice, setDismissedNotice] = useState<string>()
+  const dismissNotice = useCallback(() => setDismissedNotice(notice), [notice])
+
+  useEffect(() => {
+    if (
+      previousCompiler.current === 'lualatex' &&
+      compiler !== 'lualatex' &&
+      preference
+    ) {
+      setEnabled(false)
+      setCompilerNotice(true)
+    }
+    previousCompiler.current = compiler
+  }, [compiler, preference, setEnabled])
+
+  useEffect(() => {
+    setDismissedNotice(undefined)
+    if (enabled) {
+      setCompilerNotice(false)
+      setSharedCompilerNotice(false)
+    }
+  }, [enabled, state.engine, retryCount, setSharedCompilerNotice])
   const access = useRef('')
   const getAccess = useCallback(() => access.current, [])
   const [lease] = useState(() =>
@@ -121,33 +178,35 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
           setPreviewUrl?.(accessUrl(header.pdf_url, access.current))
         }
         setState(previous => {
+          const editor = updateEditorState(previous, { type, header })
+          const next = { ...previous, ...editor }
           switch (type) {
             case 'hello':
               return {
-                ...previous,
+                ...next,
                 engine: header.engine_state,
                 paragraphs: new Map(),
               }
             case 'layout':
-              if (!header.pdf_url) return previous
+              if (!header.pdf_url) return next
               return {
-                ...previous,
+                ...next,
                 layout: header,
                 convergence: header.convergence,
                 paragraphs: new Map(),
               }
             case 'paragraph': {
-              if (header.status === 'error') return previous
+              if (header.status === 'error') return next
               const paragraphs = new Map(previous.paragraphs)
               paragraphs.set(header.par_id, { type, header, body })
-              return { ...previous, paragraphs }
+              return { ...next, paragraphs }
             }
             case 'engine':
-              return { ...previous, engine: header.state }
+              return { ...next, engine: header.state }
             case 'busy':
-              return { ...previous, engine: 'Busy' }
+              return { ...next, engine: 'Busy' }
             default:
-              return previous
+              return next
           }
         })
       },
@@ -156,7 +215,12 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
       close()
       setPreviewUrl?.(undefined)
     }
-  }, [enabled, projectId, setPreviewUrl])
+  }, [enabled, projectId, setPreviewUrl, retryCount])
+
+  useEffect(() => {
+    markerStore.set(enabled ? state.markers : new Map())
+  }, [enabled, state.markers])
+  useEffect(() => () => markerStore.set(new Map()), [])
 
   const suspended =
     enabled &&
@@ -179,8 +243,22 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
       active: suspended,
       setEnabled,
       getAccess,
+      retry,
+      notice: dismissedNotice === notice ? undefined : notice,
+      dismissNotice,
     }),
-    [state, available, enabled, suspended, setEnabled, getAccess]
+    [
+      state,
+      available,
+      enabled,
+      suspended,
+      setEnabled,
+      getAccess,
+      retry,
+      notice,
+      dismissedNotice,
+      dismissNotice,
+    ]
   )
   return (
     <LivePreviewContext.Provider value={value}>

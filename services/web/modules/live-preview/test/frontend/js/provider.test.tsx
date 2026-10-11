@@ -39,6 +39,10 @@ function Probe() {
         {String(live.enabled)}:{live.engine}:{live.layout?.layout_version}
       </span>
       <span data-testid="access">{live.getAccess()}</span>
+      <span data-testid="drawing">{live.paragraphs.get(9)?.header.status}</span>
+      <span data-testid="markers">
+        {live.markers.get(9)?.reasons.join('; ')}
+      </span>
       <PdfPreviewProvider>
         <LivePreviewOverlay />
       </PdfPreviewProvider>
@@ -207,6 +211,161 @@ describe('LivePreviewProvider', function () {
     })
     expect(setAutoCompileSuspended.lastCall.args).to.deep.equal([false])
     expect(setPreviewUrl.lastCall.args).to.deep.equal([undefined])
+    expect(screen.getByRole('status').textContent).to.include(
+      'unavailable right now'
+    )
+    expect(screen.getByRole('alert').textContent).to.include(
+      'Normal compilation still works'
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Dismiss live preview notice' })
+    )
+    expect(screen.queryByRole('alert')).to.equal(null)
+  })
+
+  it('retries a failed engine with a fresh socket and restores autocompile during failure', async function () {
+    mount()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    await waitFor(() => expect(sockets).to.have.length(1))
+    act(() =>
+      sockets[0].onmessage?.({
+        data: encodeFrame('engine', { state: 'Failed' }),
+      })
+    )
+    expect(screen.getByRole('status').textContent).to.include('engine failed')
+    expect(setAutoCompileSuspended.lastCall.args).to.deep.equal([false])
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(sockets).to.have.length(2))
+    expect(sockets[0].close).to.have.been.calledOnce
+    expect(fetchMock.callHistory.calls(ticketUrl)).to.have.length(2)
+    expect(sockets[1].close).not.to.have.been.called
+    expect(screen.queryByRole('alert')).to.equal(null)
+  })
+
+  it('turns live mode off with a dismissible notice when the detached compiler changes', async function () {
+    localStorage.setItem(`live-preview:${projectId}`, 'true')
+    mount('lualatex', 'detached')
+    await waitFor(() => expect(sockets).to.have.length(1))
+    const changeCompiler = (compiler: string) =>
+      act(() => {
+        for (const handler of detachHandlers)
+          handler({
+            event: 'state-live-preview-compiler',
+            data: { value: compiler },
+          })
+      })
+    changeCompiler('pdflatex')
+    expect(sockets[0].close).to.have.been.called
+    expect(screen.queryByRole('menuitem', { name: 'Live preview' })).to.equal(
+      null
+    )
+    expect(screen.getByRole('alert').textContent).to.include('compiler changed')
+    expect(localStorage.getItem(`live-preview:${projectId}`)).to.equal(null)
+    changeCompiler('lualatex')
+    expect(screen.getByTestId('state').textContent).to.include('false:')
+    expect(sockets).to.have.length(1)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Dismiss live preview notice' })
+    )
+    expect(screen.queryByRole('alert')).to.equal(null)
+  })
+
+  for (const closeFirst of ['editor', 'detached']) {
+    it(`keeps the other socket open when the ${closeFirst} window closes`, async function () {
+      localStorage.setItem(`live-preview:${projectId}`, 'true')
+      const editor = mount('lualatex', 'detacher')
+      const detached = mount('lualatex', 'detached')
+      await waitFor(() => expect(sockets).to.have.length(2))
+      act(() => socket.emit('livePreview.active', { leaseMs: 75000 }))
+      expect(getFlushDelay(2000)).to.equal(150)
+      act(() => {
+        sockets[1].onmessage?.({
+          data: encodeFrame('hello', {
+            engine_state: 'Ready',
+            access: 'detached-access',
+          }),
+        })
+        sockets[1].onmessage?.({
+          data: encodeFrame('layout', {
+            pdf_url: '/live-preview/pdf/p/1',
+            layout_version: 1,
+            placements: [],
+          }),
+        })
+      })
+      expect(setPreviewUrl).to.have.been.calledWith(
+        '/live-preview/pdf/p/1?ticket=detached-access'
+      )
+      expect(screen.getAllByRole('status')[1].textContent).to.include('Ready')
+      if (closeFirst === 'editor') editor.unmount()
+      else detached.unmount()
+      const closedIndex = closeFirst === 'editor' ? 0 : 1
+      expect(sockets[closedIndex].close).to.have.been.calledOnce
+      expect(sockets[1 - closedIndex].close).not.to.have.been.called
+      expect(localStorage.getItem(`live-preview:${projectId}`)).to.equal('true')
+    })
+  }
+
+  it('receives the compiler-change notice even if storage disables the detached socket first', async function () {
+    localStorage.setItem(`live-preview:${projectId}`, 'true')
+    mount('lualatex', 'detached')
+    await waitFor(() => expect(sockets).to.have.length(1))
+    act(() => {
+      localStorage.removeItem(`live-preview:${projectId}`)
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: `live-preview:${projectId}` })
+      )
+    })
+    expect(sockets[0].close).to.have.been.calledOnce
+    act(() => {
+      for (const handler of detachHandlers)
+        handler({
+          event: 'state-live-preview-compiler-notice',
+          data: { value: true },
+        })
+    })
+    expect(screen.getByRole('alert').textContent).to.include('compiler changed')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    await waitFor(() => expect(sockets).to.have.length(2))
+    expect(screen.queryByRole('alert')).to.equal(null)
+  })
+
+  it('keeps the last drawing on TeX errors and marks the source until a live update or containing layout', async function () {
+    mount()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    await waitFor(() => expect(sockets).to.have.length(1))
+    const send = (type: string, header: Record<string, any>) =>
+      act(() => sockets[0].onmessage?.({ data: encodeFrame(type, header) }))
+    send('paragraph', { par_id: 9, status: 'ok' })
+    send('paragraph', {
+      par_id: 9,
+      status: 'error',
+      reasons: [],
+      diagnostics: [{ message: 'Undefined control sequence' }],
+      versions: { source_revision: 3 },
+    })
+    expect(screen.getByTestId('drawing').textContent).to.equal('ok')
+    expect(screen.getByTestId('markers').textContent).to.equal(
+      'Undefined control sequence'
+    )
+    send('layout', {
+      placements: [{ par_id: 9 }],
+      versions: { source_revision: 2 },
+    })
+    expect(screen.getByTestId('markers').textContent).to.equal(
+      'Undefined control sequence'
+    )
+    send('layout', {
+      placements: [{ par_id: 9 }],
+      versions: { source_revision: 3 },
+    })
+    expect(screen.getByTestId('markers').textContent).to.equal('')
+    send('background', { par_id: 9, reasons: ['Unverified macro'] })
+    expect(screen.getByTestId('markers').textContent).to.equal(
+      'Unverified macro'
+    )
+    send('paragraph', { par_id: 9, status: 'ok' })
+    expect(screen.getByTestId('markers').textContent).to.equal('')
   })
 
   it('renders convergence objects as short labels and reports compile error counts', async function () {

@@ -1086,12 +1086,22 @@ module.exports = {
     tprFileViewRefreshButton: [],
     tprFileViewNotOriginalImporter: [],
     contactUsModal: [],
-    sourceEditorExtensions: [],
+    sourceEditorExtensions: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/source-editor-extension.ts'
+      ),
+    ],
     sourceEditorVisualExtensions: [],
     sourceEditorComponents: [],
     pdfLogEntryHeaderActionComponents: [],
     pdfLogEntryComponents: [],
-    pdfLogEntriesComponents: [],
+    pdfLogEntriesComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/live-preview-logs.tsx'
+      ),
+    ],
     pdfPreviewPromotions: [
       Path.resolve(
         __dirname,

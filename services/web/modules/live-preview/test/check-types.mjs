@@ -1,5 +1,5 @@
-// Use the real compiler options, but check diagnostics only for P3's TS sources.
-// Imports are resolved normally. Run with --max-old-space-size=1536 on small hosts.
+// Use the real compiler options, but check diagnostics only for touched TS sources.
+// Imports are resolved normally. Run with --max-old-space-size=1400 on small hosts.
 import ts from 'typescript'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,15 +14,12 @@ const sources = [
   'modules/live-preview/frontend/js/live-preview-provider.tsx',
   'modules/live-preview/frontend/js/live-preview-overlay.tsx',
   'modules/live-preview/frontend/js/compile-dropdown-item.tsx',
+  'modules/live-preview/frontend/js/source-editor-extension.ts',
+  'modules/live-preview/frontend/js/live-preview-logs.tsx',
+  'modules/live-preview/frontend/js/user-color.ts',
+  'modules/live-preview/test/frontend/js/editor.test.ts',
+  'modules/live-preview/test/frontend/js/logs.test.tsx',
   'modules/live-preview/test/frontend/js/provider.test.tsx',
-  'modules/live-preview/test/frontend/js/preview-view.test.tsx',
-  'frontend/js/features/pdf-preview/components/pdf-preview-provider.tsx',
-  'frontend/js/features/pdf-preview/components/pdf-js-viewer.tsx',
-  'frontend/js/features/pdf-preview/components/pdf-compile-button.tsx',
-  'frontend/js/features/pdf-preview/util/pdf-js-wrapper.ts',
-  'frontend/js/features/ide-react/editor/share-js-doc.ts',
-  'frontend/js/shared/context/local-compile-context.tsx',
-  'frontend/js/shared/context/detach-compile-context.tsx',
 ]
 const files = sources.map(file => path.join(root, file))
 const ambient = [

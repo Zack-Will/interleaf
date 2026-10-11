@@ -1,8 +1,10 @@
 import { DropdownItem } from '@/shared/components/dropdown/dropdown-menu'
 import { useLivePreviewContext } from './live-preview-provider'
+import { useTranslation } from 'react-i18next'
 
 export default function LivePreviewCompileDropdownItem() {
   const live = useLivePreviewContext()
+  const { t } = useTranslation()
   if (!live?.available) return null
   return (
     <li role="none">
@@ -11,7 +13,7 @@ export default function LivePreviewCompileDropdownItem() {
         trailingIcon={live.enabled ? 'check' : null}
         onClick={() => live.setEnabled(!live.enabled)}
       >
-        Live preview
+        {t('live_preview')}
       </DropdownItem>
     </li>
   )

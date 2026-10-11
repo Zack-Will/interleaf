@@ -1,16 +1,21 @@
 import { useEffect, useRef } from 'react'
 import { usePdfPreviewContext } from '@/features/pdf-preview/components/pdf-preview-provider'
+import { useDetachCompileContext } from '@/shared/context/detach-compile-context'
 import { getJSON } from '@/infrastructure/fetch-json'
 import getMeta from '@/utils/meta'
-import { getBackgroundColorForUserId } from '@/shared/utils/colors'
+import { useTranslation } from 'react-i18next'
 import { debugConsole } from '@/utils/debugging'
 import { useLivePreviewContext } from './live-preview-provider'
 import { OverlayRenderer } from './overlay-renderer.mjs'
 import { layoutStatusLabel } from './status.mjs'
+import { livePreviewUserColor } from './user-color'
 
 export default function LivePreviewOverlay() {
   const live = useLivePreviewContext()
+  const { t } = useTranslation()
   const { pdfJsWrapper } = usePdfPreviewContext()
+  const { activeOverallTheme } = useDetachCompileContext()
+  const dark = activeOverallTheme === 'dark'
   const renderer = useRef<OverlayRenderer>()
   const enabled = live?.active
   const getAccess = live?.getAccess
@@ -25,7 +30,7 @@ export default function LivePreviewOverlay() {
       getAccess,
       fetchJSON: getJSON,
       currentUser: getMeta('ol-user_id'),
-      userColor: getBackgroundColorForUserId,
+      userColor: livePreviewUserColor,
       onError: (error: unknown) =>
         debugConsole.warn('Live preview overlay', error),
     })
@@ -46,22 +51,54 @@ export default function LivePreviewOverlay() {
       void renderer.current?.paragraph(frame)
   }, [paragraphs, layout, enabled, pdfJsWrapper])
 
-  if (!live?.enabled) return null
+  if (!live?.enabled && !live?.notice) return null
+  const engineMessage =
+    live?.engine === 'Busy'
+      ? t('live_preview_busy')
+      : live?.engine === 'Failed'
+        ? t('live_preview_failed')
+        : live?.engine
   return (
-    <span
-      role="status"
-      data-testid="live-preview-status"
+    <div
       style={{
         position: 'absolute',
         bottom: 8,
         left: 8,
-        pointerEvents: 'none',
+        right: 8,
+        zIndex: 5,
         fontSize: 12,
+        padding: 6,
+        background: dark ? 'var(--bg-dark-primary)' : 'var(--bg-light-primary)',
+        color: dark ? 'var(--content-primary-dark)' : 'var(--content-primary)',
       }}
     >
-      Live preview: {live.engine}
-      {status ? ` · ${status}` : ''}
-      {live.connection !== 'Connected' ? ` · ${live.connection}` : ''}
-    </span>
+      {live?.enabled && (
+        <span role="status" data-testid="live-preview-status">
+          {t('live_preview')}: {engineMessage}
+          {status ? ` · ${status}` : ''}
+          {live.connection !== 'Connected' ? ` · ${live.connection}` : ''}
+          {live.engine === 'Failed' && (
+            <>
+              {' '}
+              <button type="button" onClick={live.retry}>
+                {t('live_preview_retry')}
+              </button>
+            </>
+          )}
+        </span>
+      )}
+      {live?.notice && (
+        <div role="alert">
+          {t(live.notice)}{' '}
+          <button
+            type="button"
+            onClick={live.dismissNotice}
+            aria-label={t('live_preview_dismiss')}
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
