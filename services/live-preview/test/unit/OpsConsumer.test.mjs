@@ -93,6 +93,11 @@ describe('OpsConsumer', () => {
     expect(fetchDocument.calledWith('p', 'd', 0)).toBe(true)
     expect(doc.content).toBe('中😀xyabc')
     expect(doc.version).toBe(2)
+    await consume({ v: 0, op: [{ p: 3, i: 'x' }] })
+    await consume({ v: 1, op: [{ p: 4, i: 'y' }] })
+    expect(fetchDocument.callCount).toBe(1)
+    expect(session.engine.command.callCount).toBe(2)
+    expect(doc.content).toBe('中😀xyabc')
     expect(
       session.engine.command
         .getCalls()
@@ -105,6 +110,9 @@ describe('OpsConsumer', () => {
     await consume({ v: 0, op: [{ p: 0, i: 'bad' }] })
     expect(doc.version).toBe(2)
     expect(session.engine.command.called).toBe(false)
+    expect(fetchDocument.called).toBe(false)
+    await consume({ v: 1, op: [{ retain: 4, insert: 'old' }] })
+    expect(fetchDocument.called).toBe(false)
   })
   it('falls back to whole document when replay is unavailable', async () => {
     fetchDocument.onFirstCall().rejects(new Error('ops expired'))

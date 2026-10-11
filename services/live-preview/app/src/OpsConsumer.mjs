@@ -87,12 +87,15 @@ export class OpsConsumer {
   }
 
   async applyOrRecover(session, doc, op) {
-    if (!isTextOp(op)) {
-      await this.refetch(session, doc, op.meta?.user_id)
+    if (op.v < doc.version) {
       return
     }
-    if (op.v !== doc.version) {
+    if (op.v > doc.version) {
       await this.recover(session, doc)
+      return
+    }
+    if (!isTextOp(op)) {
+      await this.refetch(session, doc, op.meta?.user_id)
       return
     }
     try {
