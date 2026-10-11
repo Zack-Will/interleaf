@@ -15,6 +15,7 @@ const sources = [
   'modules/live-preview/frontend/js/live-preview-overlay.tsx',
   'modules/live-preview/frontend/js/compile-dropdown-item.tsx',
   'modules/live-preview/test/frontend/js/provider.test.tsx',
+  'modules/live-preview/test/frontend/js/preview-view.test.tsx',
   'frontend/js/features/pdf-preview/components/pdf-preview-provider.tsx',
   'frontend/js/features/pdf-preview/components/pdf-js-viewer.tsx',
   'frontend/js/features/pdf-preview/components/pdf-compile-button.tsx',

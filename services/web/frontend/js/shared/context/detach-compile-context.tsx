@@ -1,4 +1,12 @@
-import { createContext, FC, useContext, useMemo, useState } from 'react'
+import {
+  createContext,
+  FC,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import { CompileContext, useLocalCompileContext } from './local-compile-context'
 import useDetachStateWatcher from '../hooks/use-detach-state-watcher'
 import useDetachAction from '../hooks/use-detach-action'
@@ -15,6 +23,10 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
   const localCompileContext = useLocalCompileContext()
   // Each preview window owns its own service socket and HTTP credentials.
   const [previewUrl, setPreviewUrl] = useState<string>()
+  const [previewShowLogs, setPreviewShowLogs] = useState(false)
+  useEffect(() => {
+    if (!previewUrl) setPreviewShowLogs(false)
+  }, [previewUrl])
   if (!localCompileContext) {
     throw new Error(
       'DetachCompileProvider is only available inside LocalCompileProvider'
@@ -297,13 +309,13 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
     'detached',
     'detacher'
   )
-  const setShowLogs = useDetachAction(
+  const setNormalShowLogs = useDetachAction(
     'setShowLogs',
     _setShowLogs,
     'detached',
     'detacher'
   )
-  const toggleLogs = useDetachAction(
+  const toggleNormalLogs = useDetachAction(
     'toggleLogs',
     _toggleLogs,
     'detached',
@@ -399,6 +411,16 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
   )
 
   useCompileTriggers(startCompile, setChangedAt)
+  // Live PDFs start in the PDF view even if CLSI left the pane on logs.
+  // Keep an explicit logs selection across later live layouts in this window.
+  const setShowLogs = previewUrl ? setPreviewShowLogs : setNormalShowLogs
+  const toggleLogs = useCallback(() => {
+    if (previewUrl) {
+      setPreviewShowLogs(shown => !shown)
+    } else {
+      toggleNormalLogs()
+    }
+  }, [previewUrl, toggleNormalLogs])
   useLogEvents(setShowLogs)
 
   const value = useMemo(
@@ -443,7 +465,7 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
       toggleLogs,
       setStopOnFirstError,
       setStopOnValidationError,
-      showLogs,
+      showLogs: previewUrl ? previewShowLogs : showLogs,
       showCompileTimeWarning,
       startCompile,
       stopCompile,
@@ -483,6 +505,7 @@ export const DetachCompileProvider: FC<React.PropsWithChildren> = ({
       logEntries,
       pdfFile,
       previewUrl,
+      previewShowLogs,
       pdfViewer,
       position,
       rawLog,

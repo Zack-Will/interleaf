@@ -137,6 +137,10 @@ only compiler eligibility to the detached window, which does not join the editor
 socket. Keep real-time running for normal editor edits and lease notifications.
 
 Layouts load the pass PDF in the existing pdf.js viewer and reset overlays.
+The first live layout opens the PDF view even when a failed CLSI compile left
+the pane on logs. The logs button still opens normal compile diagnostics; that
+choice persists across live layouts in each window. Disabling live preview
+restores the normal compile view.
 Paragraphs erase the previous/base row rectangles and draw glyph paths, rules
 and colour stacks. Images, unsupported records, flags, literals and transformed
 content wait for a pass PDF. Errors preserve the previous live drawing; removal
