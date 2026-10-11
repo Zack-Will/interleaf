@@ -46,6 +46,23 @@ RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
       &&  kpsewhich IEEEtran.cls ; \
     fi
 
+# The fork publishes the engine and its matching support files together.
+# Keep them outside TEXMFLOCAL, which toolkit operators can mount over.
+ARG RTEX_RELEASE=interleaf-0.0.3-1
+ARG RTEX_SHA256=84b484d6fb9abb243a695ff4c80ce4bbf0da7a0b8dfc4976f5478bc69eb61395
+ENV RTEX_TEXDIR=/usr/local/share/rtex/tex
+RUN curl --fail --location --retry 3 \
+      "https://github.com/Zack-Will/realtime-tex/releases/download/${RTEX_RELEASE}/rtex-x86_64-unknown-linux-gnu.tar.gz" \
+      --output /tmp/rtex.tar.gz \
+ && echo "${RTEX_SHA256}  /tmp/rtex.tar.gz" | sha256sum --check --strict \
+ && mkdir /tmp/rtex \
+ && tar -xzf /tmp/rtex.tar.gz -C /tmp/rtex --strip-components=1 \
+ && install -m 755 /tmp/rtex/bin/rtex /usr/local/bin/rtex \
+ && mkdir -p /usr/local/share/rtex \
+ && cp -R /tmp/rtex/share/rtex/tex /usr/local/share/rtex/tex \
+ && chmod -R a+rX /usr/local/share/rtex \
+ && rm -rf /tmp/rtex /tmp/rtex.tar.gz
+
 WORKDIR /overleaf
 
 # Add required source files for yarn install

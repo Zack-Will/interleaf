@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@overleaf/logger": "workspace:*",
+    "@overleaf/metrics": "workspace:*",
     "@overleaf/o-error": "workspace:*",
     "@overleaf/promise-utils": "workspace:*",
     "@overleaf/redis-wrapper": "workspace:*",

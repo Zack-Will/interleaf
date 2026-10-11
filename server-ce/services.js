@@ -29,6 +29,9 @@ module.exports = [
   {
     name: 'history-v1',
   },
+  {
+    name: 'live-preview',
+  },
 ]
 
 if (require.main === module) {

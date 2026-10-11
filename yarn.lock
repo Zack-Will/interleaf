@@ -5963,6 +5963,23 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@overleaf/live-preview@workspace:services/live-preview":
+  version: 0.0.0-use.local
+  resolution: "@overleaf/live-preview@workspace:services/live-preview"
+  dependencies:
+    "@overleaf/logger": "workspace:*"
+    "@overleaf/metrics": "workspace:*"
+    "@overleaf/o-error": "workspace:*"
+    "@overleaf/promise-utils": "workspace:*"
+    "@overleaf/redis-wrapper": "workspace:*"
+    express: "npm:4.22.1"
+    fontkit: "npm:2.0.4"
+    sinon: "npm:^9.2.4"
+    vitest: "npm:4.1.5"
+    ws: "npm:^8.18.0"
+  languageName: unknown
+  linkType: soft
+
 "@overleaf/logger@npm:*, @overleaf/logger@workspace:*, @overleaf/logger@workspace:libraries/logger":
   version: 0.0.0-use.local
   resolution: "@overleaf/logger@workspace:libraries/logger"
