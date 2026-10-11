@@ -528,6 +528,11 @@ module.exports = {
       },
     },
   },
+  livePreview: {
+    enabled: process.env.LIVE_PREVIEW_ENABLED === 'true',
+    ticketSecret: process.env.LIVE_PREVIEW_TICKET_SECRET,
+    serviceUrl: process.env.LIVE_PREVIEW_SERVICE_URL || 'http://127.0.0.1:3060',
+  },
   restrictedCountries: [],
   enableOnboardingEmails: process.env.ENABLE_ONBOARDING_EMAILS === 'true',
 
@@ -1176,6 +1181,7 @@ module.exports = {
     'git-bridge',
     'review',
     'github-backup',
+    'live-preview',
   ],
   viewIncludes: {},
 
