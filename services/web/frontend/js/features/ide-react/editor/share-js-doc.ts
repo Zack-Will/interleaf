@@ -29,6 +29,10 @@ import {
   RawEditOperation,
 } from 'overleaf-editor-core/lib/types'
 import { HistoryOTShareDoc } from '../../../../../types/share-doc'
+import {
+  getFlushDelay,
+  subscribeFlushDelay,
+} from '@modules/live-preview/frontend/js/flush-delay.mjs'
 
 // All times below are in milliseconds
 const SINGLE_USER_FLUSH_DELAY = 2000
@@ -62,6 +66,8 @@ export class ShareJsDoc extends EventEmitter {
   private queuedMessages: Message[] = []
   private detachEditorWatchdogManager: (() => void) | null = null
   private _timeoutTimer: number | null = null
+  private flushDelayFallback = SINGLE_USER_FLUSH_DELAY
+  private unsubscribeFlushDelay?: () => void
 
   constructor(
     readonly doc_id: string,
@@ -113,7 +119,7 @@ export class ShareJsDoc extends EventEmitter {
     this._doc = new Doc(this.connection, this.doc_id, {
       type: sharejsType,
     })
-    this._doc.setFlushDelay(SINGLE_USER_FLUSH_DELAY)
+    this._doc.setFlushDelay(getFlushDelay(this.flushDelayFallback))
     this._doc.on('change', (...args: any[]) => {
       const isRemote = args[3]
       if (!isRemote && !this.pendingOpCreatedAt) {
@@ -135,7 +141,8 @@ export class ShareJsDoc extends EventEmitter {
     this._doc.on('remoteop', (...args: any[]) => {
       // As soon as we're working with a collaborator, start sending
       // ops more frequently for low latency.
-      this._doc.setFlushDelay(MULTI_USER_FLUSH_DELAY)
+      this.flushDelayFallback = MULTI_USER_FLUSH_DELAY
+      this._doc.setFlushDelay(getFlushDelay(this.flushDelayFallback))
       return this.trigger('remoteop', ...args)
     })
     this._doc.on('flipped_pending_to_inflight', () => {
@@ -402,12 +409,18 @@ export class ShareJsDoc extends EventEmitter {
   }
 
   attachToCM6(cm6: EditorFacade) {
+    this.unsubscribeFlushDelay?.()
+    this.unsubscribeFlushDelay = subscribeFlushDelay(() => {
+      this._doc.setFlushDelay(getFlushDelay(this.flushDelayFallback))
+    })
     this.attachToEditor(cm6, () => {
       cm6.attachShareJs(this._doc, getMeta('ol-maxDocLength'))
     })
   }
 
   detachFromCM6() {
+    this.unsubscribeFlushDelay?.()
+    this.unsubscribeFlushDelay = undefined
     this.maybeDetachEditorWatchdogManager()
     if (this._doc.detach_cm6) {
       this._doc.detach_cm6()

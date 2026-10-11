@@ -56,20 +56,26 @@ export default class PDFJSWrapper {
     handleFetchError,
   }: {
     url: string
-    pdfFile: PDFFile
+    pdfFile?: PDFFile
     abortController: AbortController
     handleFetchError: (error: any) => void
   }) {
     this.url = url
 
-    const rangeTransport = this.pdfCachingTransportFactory({
-      url,
-      pdfFile,
-      abortController,
-      handleFetchError,
-    })
+    const rangeTransport =
+      pdfFile &&
+      this.pdfCachingTransportFactory({
+        url,
+        pdfFile,
+        abortController,
+        handleFetchError,
+      })
     let rangeChunkSize = DEFAULT_RANGE_CHUNK_SIZE
-    if (rangeTransport && pdfFile.size < 2 * DEFAULT_RANGE_CHUNK_SIZE) {
+    if (
+      rangeTransport &&
+      pdfFile &&
+      pdfFile.size < 2 * DEFAULT_RANGE_CHUNK_SIZE
+    ) {
       // pdf.js disables the "bulk" download optimization when providing a
       //  custom range transport. Restore it by bumping the chunk size.
       rangeChunkSize = pdfFile.size
