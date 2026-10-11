@@ -21,6 +21,7 @@ Configuration is in `config/settings.defaults.mjs`. In addition to the settings
 above: `LIVE_PREVIEW_RTEX_BINARY`, `LIVE_PREVIEW_DATA_DIR`,
 `LIVE_PREVIEW_MAX_SESSIONS`, `LIVE_PREVIEW_MEMORY_MB`,
 `LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` (3000), `LIVE_PREVIEW_IDLE_MS` (300000),
+`LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` (30000),
 `LIVE_PREVIEW_HOST`, `LIVE_PREVIEW_PORT`, `LIVE_PREVIEW_WEB_URL`,
 `LIVE_PREVIEW_WEB_USER`, `LIVE_PREVIEW_WEB_PASSWORD`,
 `LIVE_PREVIEW_DOCUMENT_UPDATER_URL` and `LIVE_PREVIEW_REDIS_HOST/PORT/PASSWORD`.
@@ -48,6 +49,15 @@ at WS upgrade and on each HTTP request; existing sockets continue after ticket
 expiry. The browser obtains a fresh ticket for subsequent PDF/glyph requests.
 
 ## Wire protocol
+
+While a session is active, the service publishes `livePreview.active` on native
+`editor-events` at startup and every `LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS`
+(default 30000). Its event argument is `{ leaseMs: 75000 }` (the Redis envelope
+contains `payload: [{ leaseMs: 75000 }]`). Every editor, including editors joining
+later without a preview, lowers its flush delay until `leaseMs` after the last
+`active`. Each refresh renews that lease. Expiry or `livePreview.inactive` restores
+the default immediately; reconnecting clears the lease until a fresh `active`.
+Refreshes stop when the session stops or its engine fails.
 
 Connect to `/live-preview/ws?project=<id>&ticket=<ticket>`.
 Every server message is a binary WebSocket message:

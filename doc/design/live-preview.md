@@ -43,14 +43,14 @@ module lowers that delay to about 150 ms. That is the only change to the editing
 
 Rejected alternatives:
 
-| Alternative | Why not |
-|---|---|
-| Client sends its unsaved buffer to the engine directly | Two sources of truth for document text. Every edit would have to be rebased against the OT stream, and collaborators would see each other's speculative text. Lowering the flush delay gets the same latency with no merge logic. |
-| rtex inside the web process (napi binding to the C library) | A crashed or hung engine would take the web process with it, and rtex holds 1-1.5 GB per session. Web restarts would also kill every session. |
-| Run rtex inside CLSI | CLSI is a compile-and-exit service with per-compile directories it prunes and full syncs that delete unknown files. A long-lived engine fights all three. |
-| Separate sidecar container | Needs its own TeX Live (5 GB) or a shared volume with the main image's. The engine must use the same TeX tree as the CLSI build or fonts and line breaks drift. |
-| Push results through real-time's socket.io | socket.io 0.9 has no binary frames, every message fans out to every socket in the room through Redis, and restricted users need a pass-list edit. Live results go only to clients that have the preview open. |
-| Draw whole pages from display lists | A full page renderer (Type 1, OpenType, images, TikZ fallback) before the first useful result. pdf.js already renders the pages; we only paint what changed. |
+| Alternative                                                 | Why not                                                                                                                                                                                                                           |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client sends its unsaved buffer to the engine directly      | Two sources of truth for document text. Every edit would have to be rebased against the OT stream, and collaborators would see each other's speculative text. Lowering the flush delay gets the same latency with no merge logic. |
+| rtex inside the web process (napi binding to the C library) | A crashed or hung engine would take the web process with it, and rtex holds 1-1.5 GB per session. Web restarts would also kill every session.                                                                                     |
+| Run rtex inside CLSI                                        | CLSI is a compile-and-exit service with per-compile directories it prunes and full syncs that delete unknown files. A long-lived engine fights all three.                                                                         |
+| Separate sidecar container                                  | Needs its own TeX Live (5 GB) or a shared volume with the main image's. The engine must use the same TeX tree as the CLSI build or fonts and line breaks drift.                                                                   |
+| Push results through real-time's socket.io                  | socket.io 0.9 has no binary frames, every message fans out to every socket in the room through Redis, and restricted users need a pass-list edit. Live results go only to clients that have the preview open.                     |
+| Draw whole pages from display lists                         | A full page renderer (Type 1, OpenType, images, TikZ fallback) before the first useful result. pdf.js already renders the pages; we only paint what changed.                                                                      |
 
 What it costs: one new runit service, one nginx location, a fork of rtex built in our
 image workflow, and about 1.2 GB of memory per project with live preview open.
@@ -67,11 +67,11 @@ float column geometry replay, image resource index mapping, with regression test
 
 Patches this design needs:
 
-| Patch | Why | Upstreamable |
-|---|---|---|
+| Patch                                        | Why                                                                                                                            | Upstreamable          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
 | Always report the pass PDF in `LayoutUpdate` | Today `pdf_fallback` is set only when a page is degraded (`session/passes.rs:781`). We draw every base page from the pass PDF. | Yes, as a config flag |
-| Verifier: honour Form XObject `/BBox` | `rtex verify` layer 2 fails on every PDF figure (`rtex-verify/src/pdftext.rs`). We use verify in CI. | Yes |
-| `serve`: binary display lists | JSON display lists are 3x the binary size. Length-prefixed binary frames on stdout, opt-in. | Yes |
+| Verifier: honour Form XObject `/BBox`        | `rtex verify` layer 2 fails on every PDF figure (`rtex-verify/src/pdftext.rs`). We use verify in CI.                           | Yes                   |
+| `serve`: binary display lists                | JSON display lists are 3x the binary size. Length-prefixed binary frames on stdout, opt-in.                                    | Yes                   |
 
 Building: the fork's own CI builds and tests rtex and publishes a release
 (`interleaf-<upstream version>-<n>`, e.g. `interleaf-0.0.3-1`) with the Linux x86_64
@@ -98,7 +98,7 @@ One session per project, shared by every viewer of that project.
 - **Materialise:** fetch the project snapshot from the web module's internal route
   (§4.2) into `/var/lib/overleaf/data/live-preview/<projectId>/`: docs as text, binary
   files from their filestore blob URLs. Then `rtex serve --project <dir> --main
-  <rootDoc>` with `RTEX_TEXDIR`, no `--shell-escape`, and the build directory inside
+<rootDoc>` with `RTEX_TEXDIR`, no `--shell-escape`, and the build directory inside
   the session directory.
 - **Stop:** 5 minutes after the last socket closes. Also when the project's compiler
   leaves `lualatex`, the root doc changes (restart instead), or the project is deleted.
@@ -136,15 +136,15 @@ One session per project, shared by every viewer of that project.
 Server to client, binary frames with a one-byte type and a JSON header, then the
 display list in rtex's binary format where there is one:
 
-| Frame | Header | Body |
-|---|---|---|
-| `hello` | session state, `layout_version`, engine state, pages total | |
-| `paragraph` | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing` | unit display list |
-| `layout` | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile` | |
-| `background` | `par_id`, `reasons` | |
-| `diagnostics` | rtex's diagnostics items | |
-| `engine` | `Starting` / `Ready` / `Restarting` / `Failed`, reason | |
-| `busy` | why live preview is unavailable | |
+| Frame         | Header                                                                                     | Body              |
+| ------------- | ------------------------------------------------------------------------------------------ | ----------------- |
+| `hello`       | session state, `layout_version`, engine state, pages total                                 |                   |
+| `paragraph`   | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing` | unit display list |
+| `layout`      | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile`         |                   |
+| `background`  | `par_id`, `reasons`                                                                        |                   |
+| `diagnostics` | rtex's diagnostics items                                                                   |                   |
+| `engine`      | `Starting` / `Ready` / `Restarting` / `Failed`, reason                                     |                   |
+| `busy`        | why live preview is unavailable                                                            |                   |
 
 Client to server: only `ping` and `resync`. The connection URL carries a ticket from
 the web module (§4.1); the service checks its HMAC and expiry and that it names this
@@ -159,10 +159,15 @@ slower than local ones, and each has a fix.
 
 - **The collaborator's flush delay.** Lowering the delay only for the user who turned
   live preview on leaves everyone else at ShareJS's 500 ms. While a project has an
-  active session, the service publishes `livePreview.active` on `editor-events`, and
+  active session, the service publishes `livePreview.active` on `editor-events` at
+  startup and every `LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` (default 30000 ms), with
+  event argument `{ leaseMs: 75000 }` (native Redis `payload` is an argument array).
+  This refresh lets editors joining later learn about the active session, and
   every editor client in the project lowers its flush delay to the live value whether
-  or not it shows the preview. Clients reset to the default when `livePreview.inactive`
-  arrives or their socket reconnects without a fresh `active`.
+  or not it shows the preview. The low delay is a lease valid until `leaseMs` after
+  the last `active`; each refresh renews it. Clients reset to the default on lease
+  expiry, immediately when `livePreview.inactive` arrives, or on reconnect until a
+  fresh `active`. The service stops refreshing when the session stops or fails.
 - **Background passes starved by continuous typing.** rtex starts a pass after 300 ms
   of quiet. With two people typing, the quiet period may never come, and pagination,
   references and anything routed to the background stay stale. The session sends
@@ -185,11 +190,11 @@ during continuous typing.
 
 ### 3.5 HTTP
 
-| Route | Notes |
-|---|---|
-| `GET /live-preview/pdf/:projectId/:layoutVersion?ticket=` | The pass PDF. Kept for the last three layouts. |
-| `GET /live-preview/glyphs/:fontKey?ids=1,2,3&ticket=` | Glyph outlines as compact path data with advance and units-per-em. `fontKey` is a hash of rtex's font description (file, subfont, size-independent). Cached in memory and with `Cache-Control: immutable`. |
-| `GET /live-preview/health` | For the verify script. |
+| Route                                                     | Notes                                                                                                                                                                                                      |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /live-preview/pdf/:projectId/:layoutVersion?ticket=` | The pass PDF. Kept for the last three layouts.                                                                                                                                                             |
+| `GET /live-preview/glyphs/:fontKey?ids=1,2,3&ticket=`     | Glyph outlines as compact path data with advance and units-per-em. `fontKey` is a hash of rtex's font description (file, subfont, size-independent). Cached in memory and with `Cache-Control: immutable`. |
+| `GET /live-preview/health`                                | For the verify script.                                                                                                                                                                                     |
 
 Glyph outlines come from the font files rtex names (OpenType/TrueType through a
 font parser, Type 1 through a small charstring decoder as the VS Code extension does).
@@ -203,10 +208,10 @@ Registered last in `moduleImportSequence`, gated by `livePreview.enabled`
 
 ### 4.1 Routes
 
-| Route | Access | Notes |
-|---|---|---|
-| `POST /project/:id/live-preview/ticket` | read access to the project | Returns a ticket valid for 60 s: HMAC of project id, user id, expiry, with `LIVE_PREVIEW_TICKET_SECRET`. 404 `live_preview_disabled` when the flag is off, 409 `compiler_not_lualatex`. |
-| `GET /internal/project/:id/live-preview/snapshot` | private API, basic auth | The file list for materialisation: docs from document-updater, binary files as filestore blob URLs, root doc path. Reuses ClsiManager's resource building through a small exported helper. |
+| Route                                             | Access                     | Notes                                                                                                                                                                                      |
+| ------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /project/:id/live-preview/ticket`           | read access to the project | Returns a ticket valid for 60 s: HMAC of project id, user id, expiry, with `LIVE_PREVIEW_TICKET_SECRET`. 404 `live_preview_disabled` when the flag is off, 409 `compiler_not_lualatex`.    |
+| `GET /internal/project/:id/live-preview/snapshot` | private API, basic auth    | The file list for materialisation: docs from document-updater, binary files as filestore blob URLs, root doc path. Reuses ClsiManager's resource building through a small exported helper. |
 
 ### 4.2 Frontend
 
@@ -233,11 +238,11 @@ Lives in the module except for three small upstream edits.
 
 Upstream edits, each a few lines:
 
-| File | Change |
-|---|---|
+| File                                             | Change                                                                                                          |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `pdf-js-viewer.tsx` + `pdf-preview-provider.tsx` | Put the `PDFJSWrapper` instance and `initialised` into the preview context, so the module can reach the viewer. |
-| `pdf-compile-button.tsx` | A **Live preview** item in the compile dropdown, shown when the meta flag is on and the compiler is `lualatex`. |
-| `share-js-doc.ts` | Read the flush delay from a small store the module can set, instead of the two constants. |
+| `pdf-compile-button.tsx`                         | A **Live preview** item in the compile dropdown, shown when the meta flag is on and the compiler is `lualatex`. |
+| `share-js-doc.ts`                                | Read the flush delay from a small store the module can set, instead of the two constants.                       |
 
 Plus the usual flag plumbing (`ProjectController` locals, `_meta.pug`, `meta.ts`,
 following `githubBackupEnabled`), the module paths in `overleafModuleImports`, and the
@@ -253,14 +258,14 @@ routes need a ticket too, so a project's fonts and pages are not readable by out
 
 ## 6. Milestones
 
-| Stage | Deliverables | Status |
-|---|---|---|
-| **P0 rtex fork** | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes | ⏳ |
-| **P1 service** | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ⏳ |
-| **P2 web module** | settings flag, ticket and snapshot routes, meta flag, nginx location, runit script | ⏳ |
-| **P3 overlay** | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test | ⏳ |
-| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons | ⏳ |
-| **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG | ⏳ |
+| Stage                     | Deliverables                                                                                                                                                                                                                                                                             | Status |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| **P0 rtex fork**          | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes                                                                                                           | ⏳     |
+| **P1 service**            | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ⏳     |
+| **P2 web module**         | settings flag, ticket and snapshot routes, meta flag, nginx location, runit script                                                                                                                                                                                                       | ⏳     |
+| **P3 overlay**            | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test                                                                                                                  | ⏳     |
+| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons                                                                                                                                                                                     | ⏳     |
+| **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG                                                                                                                                | ⏳     |
 
 Each stage ends with a live check on the develop stack. P1 and P3 also re-run Cleave
 and CrossMem and compare against the spike numbers (Cleave: 12 of 14 edit targets live,
@@ -268,16 +273,16 @@ median 4.6 ms; CrossMem after its LuaLaTeX migration: 8 of 10).
 
 ## 7. Risks
 
-| Risk | Mitigation |
-|---|---|
+| Risk                                                                               | Mitigation                                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | rtex is 0.0.x and one person's project; its API and display-list format may change | Pin a commit; keep rtex behind the service's own protocol (§3.3) so the browser never sees rtex's format directly except the display list, whose revision is checked. |
-| 1.2-1.5 GB per session on a host with about 4 GB free | Session budget, idle reaping, LRU eviction; only `lualatex` projects with the preview open get a session. |
-| Templates rtex refuses (run-in headings, `\maketitle`, buffered abstracts) | Those units fall back to the background pass and say why. Fixes go to the fork and upstream, as with acmart. |
-| The 150 ms flush delay raises op traffic | Overleaf already uses 500 ms with collaborators; document-updater and project-history compress ops. Measure in P3; raise to 300 ms if needed. |
-| Collaborators' edits appear later than the user's own | Project-wide flush delay while a session is active, layout max-wait, two-client latency test (§3.4). |
-| Lost pub/sub messages leave the engine with stale text | Version check per op, `fromVersion` replay, periodic drift check (§3.2). |
-| Pass PDF and overlay disagree for a moment after a layout | The overlay clears on every layout and results are ordered by rtex's revision counters. |
-| ACM's camera-ready pipeline compiles the source itself | Accepted by the user: papers move to LuaLaTeX and follow its layout. |
+| 1.2-1.5 GB per session on a host with about 4 GB free                              | Session budget, idle reaping, LRU eviction; only `lualatex` projects with the preview open get a session.                                                             |
+| Templates rtex refuses (run-in headings, `\maketitle`, buffered abstracts)         | Those units fall back to the background pass and say why. Fixes go to the fork and upstream, as with acmart.                                                          |
+| The 150 ms flush delay raises op traffic                                           | Overleaf already uses 500 ms with collaborators; document-updater and project-history compress ops. Measure in P3; raise to 300 ms if needed.                         |
+| Collaborators' edits appear later than the user's own                              | Project-wide flush delay while a session is active, layout max-wait, two-client latency test (§3.4).                                                                  |
+| Lost pub/sub messages leave the engine with stale text                             | Version check per op, `fromVersion` replay, periodic drift check (§3.2).                                                                                              |
+| Pass PDF and overlay disagree for a moment after a layout                          | The overlay clears on every layout and results are ordered by rtex's revision counters.                                                                               |
+| ACM's camera-ready pipeline compiles the source itself                             | Accepted by the user: papers move to LuaLaTeX and follow its layout.                                                                                                  |
 
 ## 8. Decision log
 

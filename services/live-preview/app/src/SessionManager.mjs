@@ -111,8 +111,14 @@ export class SessionManager {
       )
     }
     this.startEngine(session)
-    await this.publish(session, 'livePreview.active')
+    await this.publishActive(session)
     session.activePublished = true
+    session.activeTimer = setInterval(() => {
+      this.enqueue(session, () => this.publishActive(session)).catch(
+        this.onError
+      )
+    }, this.settings.activeLeaseRefreshMs)
+    session.activeTimer.unref?.()
   }
 
   startEngine(session) {
@@ -146,13 +152,19 @@ export class SessionManager {
     return result
   }
 
-  async publish(session, message) {
+  publishActive(session) {
+    return this.publish(session, 'livePreview.active', [
+      { leaseMs: this.settings.activeLeaseMs },
+    ])
+  }
+
+  async publish(session, message, payload = []) {
     await this.publisher.publish(
       'editor-events',
       JSON.stringify({
         room_id: session.projectId,
         message,
-        payload: [],
+        payload,
         _id: `live-preview:${randomUUID()}`,
       })
     )
@@ -331,6 +343,7 @@ export class SessionManager {
     }
     if (session.crashAt !== null && this.now() - session.crashAt < 60000) {
       session.state = 'Failed'
+      clearInterval(session.activeTimer)
       clearTimeout(session.layoutTimer)
       session.layoutTimer = null
       this.broadcast(session, 'engine', {
@@ -355,6 +368,7 @@ export class SessionManager {
       return session.stopPromise
     }
     session.stopped = true
+    clearInterval(session.activeTimer)
     session.stopPromise = this.stopSession(session)
     return session.stopPromise
   }

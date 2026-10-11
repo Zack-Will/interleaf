@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import sinon from 'sinon'
 import { SessionManager } from '../../app/src/SessionManager.mjs'
 import { decodeFrame } from '../../app/src/Frames.mjs'
+import { settingsFromEnv } from '../../config/settings.defaults.mjs'
 
 function socket() {
   return Object.assign(new EventEmitter(), {
@@ -28,7 +29,7 @@ describe('SessionManager', () => {
       rm: sinon.stub().resolves(),
     }
     manager = new SessionManager({
-      settings: { maxSessions: 2, idleMs: 300000, layoutMaxWaitMs: 3000 },
+      settings: settingsFromEnv({}),
       materializer: {
         materialize: async projectId => ({
           directory: `/tmp/${projectId}`,
@@ -71,13 +72,44 @@ describe('SessionManager', () => {
     expect(active).toMatchObject({
       room_id: 'p',
       message: 'livePreview.active',
-      payload: [],
+      payload: [{ leaseMs: 75000 }],
     })
     expect(active._id).toMatch(/^live-preview:/)
     await manager.stop('p')
     expect(JSON.parse(manager.publisher.publish.lastCall.args[1]).message).toBe(
       'livePreview.inactive'
     )
+  })
+  it('refreshes the active lease for late editors and stops refreshing on shutdown', async () => {
+    await manager.open('p', socket())
+    await vi.advanceTimersByTimeAsync(29999)
+    expect(manager.publisher.publish.callCount).toBe(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(manager.publisher.publish.callCount).toBe(3)
+    for (const call of manager.publisher.publish.getCalls()) {
+      expect(JSON.parse(call.args[1])).toMatchObject({
+        message: 'livePreview.active',
+        payload: [{ leaseMs: 75000 }],
+      })
+    }
+    await manager.stop('p')
+    await vi.advanceTimersByTimeAsync(90000)
+    expect(manager.publisher.publish.callCount).toBe(4)
+    expect(
+      JSON.parse(manager.publisher.publish.lastCall.args[1])
+    ).toMatchObject({
+      message: 'livePreview.inactive',
+      payload: [],
+    })
+  })
+  it('uses the configured lease refresh interval', async () => {
+    manager.settings = settingsFromEnv({
+      LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS: '10000',
+    })
+    await manager.open('p', socket())
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(manager.publisher.publish.callCount).toBe(2)
   })
   it('waits for old engine shutdown before reopening the same project', async () => {
     const session = await manager.open('p', socket())
@@ -149,6 +181,9 @@ describe('SessionManager', () => {
     engines[1].emit('crash', { code: 1 })
     await session.queue
     expect(session.state).toBe('Failed')
+    const notices = manager.publisher.publish.callCount
+    await vi.advanceTimersByTimeAsync(90000)
+    expect(manager.publisher.publish.callCount).toBe(notices)
     const next = await manager.open('p', socket())
     expect(next).not.toBe(session)
     expect(engines.length).toBe(3)

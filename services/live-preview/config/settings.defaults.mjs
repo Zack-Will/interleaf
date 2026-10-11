@@ -6,6 +6,10 @@ export function settingsFromEnv(env = process.env) {
     ticketSecret: env.LIVE_PREVIEW_TICKET_SECRET,
     maxSessions: Number(env.LIVE_PREVIEW_MAX_SESSIONS || 2),
     idleMs: Number(env.LIVE_PREVIEW_IDLE_MS || 300000),
+    activeLeaseRefreshMs: Number(
+      env.LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS || 30000
+    ),
+    activeLeaseMs: 75000,
     layoutMaxWaitMs: Number(env.LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS || 3000),
     driftMs: 30000,
     rtexBinary: env.LIVE_PREVIEW_RTEX_BINARY || '/usr/local/bin/rtex',
