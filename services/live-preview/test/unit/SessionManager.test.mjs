@@ -231,6 +231,44 @@ describe('SessionManager', () => {
     expect(session.layout.placements[0].row_rects).toEqual([])
   })
 
+  it('resyncs last good drawings after errors and replays removals until a pass catches up', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    const paragraph = {
+      event: 'ParagraphUpdate',
+      par_id: 1,
+      status: 'ok',
+      versions: { source_revision: 1 },
+    }
+    await manager.handleEvent(session, paragraph)
+    await manager.handleEvent(session, { ...paragraph, status: 'error' })
+    manager.resync(session, viewer)
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.status).toBe('ok')
+    await manager.handleEvent(session, {
+      ...paragraph,
+      status: 'removed',
+      versions: { source_revision: 2 },
+    })
+    manager.resync(session, viewer)
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.status).toBe(
+      'removed'
+    )
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      pages_total: 1,
+      placements: [],
+      versions: { source_revision: 1 },
+    })
+    expect(session.paragraphs.has(1)).toBe(true)
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      pages_total: 1,
+      placements: [],
+      versions: { source_revision: 2 },
+    })
+    expect(session.paragraphs.has(1)).toBe(false)
+  })
+
   it('forces a layout after three seconds despite continuous edits', async () => {
     const session = await manager.open('p', socket())
     for (let index = 0; index < 30; index++) {

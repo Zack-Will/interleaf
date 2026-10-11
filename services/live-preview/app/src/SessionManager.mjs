@@ -266,9 +266,9 @@ export class SessionManager {
         { ...header, ...attribution, fonts },
         body
       )
-      if (event.status === 'removed') {
-        session.paragraphs.delete(event.par_id)
-      } else {
+      // Resync must reproduce the last good drawing or removal until the pass
+      // snapshot catches up. An error is a notification, not a replacement.
+      if (event.status !== 'error') {
         session.paragraphs.set(event.par_id, frame)
       }
     } else if (kind === 'LayoutUpdate') {

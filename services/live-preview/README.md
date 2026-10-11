@@ -108,6 +108,8 @@ and responses use `Cache-Control: private, max-age=31536000, immutable`.
 Client messages are text JSON, exclusively `{"cmd":"ping"}` or
 `{"cmd":"resync"}`. Ping gets a WS pong. Resync sends hello, the last layout and
 paragraph overlays newer than it; resync is rate limited to once per second.
+This includes removal frames until a pass incorporates the removal. Error frames
+are broadcast as notifications while resync retains the last good drawing.
 Text, edits and extra fields close the socket with 1008. Slow consumers exceeding
 8 MiB of buffered output close with 1013. The dev client prints decoded frames:
 
