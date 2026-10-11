@@ -108,7 +108,7 @@ Kept deliberately small. The only behavioural changes to core code are these.
 | `services/web/config/settings.defaults.js`                                        | +99/-6 | Settings for the new modules, their module import order and their frontend slots                       |
 | `server-ce/config/settings.js`                                                    | +61/-1 | The same settings for the production image                                                             |
 | `services/web/app/src/Features/Project/ProjectOptionsHandler.mjs`                 | +24    | Set a project's track-changes state, which the review panel needs                                      |
-| `server-ce/nginx/overleaf.conf`                                                   | +43/-1 | Proxy `/git/` and preview routes; preserve the public WebSocket Host port                              |
+| `server-ce/nginx/overleaf.conf`                                                   | +42    | Proxy `/git/` and preview routes; preserve the public WebSocket Host port                              |
 | `server-ce/Dockerfile`                                                            | +57    | Optional TeX Live scheme and checksum-pinned rtex installation                                         |
 | History panel: `origin.tsx`, `history-version.tsx`, `history-version-message.tsx` | +51    | Render the agent's name and the message it sent under the author line                                  |
 | `services/web/package.json`                                                       | +4/-2  | Runtime `diff` and shared protocol dependency                                                          |
@@ -132,7 +132,7 @@ WebSocket Origin checks; the fork's development gateway receives the same fix.
 | `server-ce/init_scripts/100_make_live_preview_data_dir.sh`                          | +9/-0               | Service-owned session storage and required secret        |
 | `server-ce/runit/live-preview-overleaf/run`                                         | +14/-0              | Supervised www-data service                              |
 | `server-ce/logrotate/overleaf`                                                      | +1/-0               | Preview log rotation                                     |
-| `server-ce/nginx/overleaf.conf`                                                     | +20/-1              | Loopback PDF/glyph/WebSocket proxy, preserving Host port |
+| `server-ce/nginx/overleaf.conf`                                                     | +19/-0              | Loopback PDF/glyph/WebSocket proxy, preserving Host port |
 | `server-ce/services.js`                                                             | +3/-0               | Production dependency installation                       |
 | `services/web/Dockerfile`                                                           | +3/-0               | Copy protocol workspace for development builds           |
 | `services/web/package.json`                                                         | +1/-0               | Shared protocol dependency                               |
