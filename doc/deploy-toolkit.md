@@ -110,8 +110,9 @@ is the public one.
 
 The toolkit also decides where git-bridge calls the web API, and gets it wrong
 on CE: for any image version 4.2 or later it uses `http://sharelatex:3000/api/v0/`,
-the separate web-api process that only Server Pro images run. On this image
-port 3000 answers every API path with Express's `Cannot GET` page, git-bridge
+the web-api process. On Server Pro that process serves the git-bridge API; here
+it does not mount the modules' public API routes, so port 3000 answers every
+API path with Express's `Cannot GET` page, git-bridge
 fails to parse it, and every clone ends in `403`. Override the URL so the calls
 go through the container's nginx on port 80, in `config/docker-compose.override.yml`:
 
