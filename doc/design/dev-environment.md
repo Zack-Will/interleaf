@@ -4,13 +4,13 @@
 
 ## 路线选择
 
-| 路线 | 适合 | 不适合的原因 |
-|---|---|---|
-| **`develop/` compose + dev overlay（推荐）** | 迭代模块代码：`services/web/modules` 热挂载，web 与 webpack 都 `--watch` | |
-| 根目录 `docker-compose.yml` | 无 | 拉的是官方发布镜像，不含我们的模块 |
-| `server-ce/` 自建镜像 | 最终验收、部署 | 从头编 TeX Live 和生产 webpack，3 核机器上极慢 |
-| `server-ce/test/` Cypress 套件 | 无（本机） | 依赖 Overleaf 内部镜像仓库，测的是预构建镜像 |
-| `services/web` acceptance 容器 | 模块 acceptance 测试 | 依赖 `saml-test` 私有镜像，需 override 去掉 |
+| 路线                                         | 适合                                                                     | 不适合的原因                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
+| **`develop/` compose + dev overlay（推荐）** | 迭代模块代码：`services/web/modules` 热挂载，web 与 webpack 都 `--watch` |                                                |
+| 根目录 `docker-compose.yml`                  | 无                                                                       | 拉的是官方发布镜像，不含我们的模块             |
+| `server-ce/` 自建镜像                        | 最终验收、部署                                                           | 从头编 TeX Live 和生产 webpack，3 核机器上极慢 |
+| `server-ce/test/` Cypress 套件               | 无（本机）                                                               | 依赖 Overleaf 内部镜像仓库，测的是预构建镜像   |
+| `services/web` acceptance 容器               | 模块 acceptance 测试                                                     | 依赖 `saml-test` 私有镜像，需 override 去掉    |
 
 ## `develop/` 环境事实
 
@@ -92,7 +92,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 services:
   redis:
     ports: !override
-      - "127.0.0.1:6380:6379"
+      - '127.0.0.1:6380:6379'
   mongo:
     image: mongo:8.2
 ```
@@ -131,7 +131,7 @@ activation URL 设置密码。凭据放在权限 600 的临时 JSON 文件，格
 `services/live-preview/README.md`。脚本登录、创建 LuaLaTeX 项目、申请 PAT 和 ticket，
 启动真实 `test-client.mjs`，通过 MCP `edit_file` 验证 paragraph/layout 帧、
 `livePreview.active` 和 PDF/glyph HTTP 200，最后撤销 PAT。结果见
-`doc/live-preview-p2-verification.md`。
+`doc/design/live-preview-verification.md`。
 
 完成后用同样四份配置显式 `stop` 本次启动的 develop 服务；不要运行 toolkit 命令，
 不要操作生产容器，不要用 `down -v` 删除数据。

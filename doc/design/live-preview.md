@@ -1,9 +1,9 @@
 # Design: live preview (`modules/live-preview`, `services/live-preview`)
 
-Status: P1-P3 implemented and browser-tested on `feat/live-preview-frontend`.
-P4 editor integration is implemented on `feat/live-preview-editor` (2026-10-12);
-its browser acceptance remains with the orchestrator.
-P2 live verification: `doc/live-preview-p2-verification.md`. Feasibility evidence:
+Status: implemented through P5 on `feat/live-preview-hardening` (2026-10-12).
+P1-P4 browser acceptance was completed by the orchestrator before this release pass.
+Release and historical verification: [live-preview-verification.md](live-preview-verification.md).
+Feasibility evidence:
 `rtex-spike/REPORT.md` and `rtex-spike/REPORT-acmart.md` (local spike repo, not in
 this repository); the numbers quoted below come from those runs on home-center.
 
@@ -205,16 +205,17 @@ during continuous typing.
 
 ### 3.5 HTTP
 
-| Route                                                     | Notes                                                                                                                                                                                                      |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /live-preview/pdf/:projectId/:layoutVersion?ticket=` | The pass PDF. Kept for the last three layouts.                                                                                                                                                             |
-| `GET /live-preview/glyphs/:fontKey?ids=1,2,3&ticket=`     | Glyph outlines as compact path data with advance and units-per-em. `fontKey` is a hash of rtex's font description (file, subfont, size-independent). Cached in memory and with `Cache-Control: immutable`. |
-| `GET /live-preview/health`                                | For the verify script.                                                                                                                                                                                     |
+| Route                                                     | Notes                                                                                                                                                                                                       |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /live-preview/pdf/:projectId/:layoutVersion?ticket=` | The pass PDF. Kept for the last three layouts.                                                                                                                                                              |
+| `GET /live-preview/glyphs/:fontKey?ids=1,2,3&ticket=`     | Glyph outlines as compact path data with advance and units-per-em. `fontKey` is a hash of rtex's font description (file, subfont, size-independent). Bounded in-memory cache; HTTP uses private `no-store`. |
+| `GET /live-preview/health`                                | For the verify script.                                                                                                                                                                                      |
 
 Glyph outlines come from the font files rtex names (OpenType/TrueType through a
 font parser, Type 1 through a small charstring decoder as the VS Code extension does).
 The browser downloads only the glyphs it draws: a Chinese paragraph needs a few hundred
-glyphs, not Fandol's 19 MB.
+glyphs. The P5 Chinese paragraph uses 55 unique FandolSong glyphs: 82,390 bytes
+of JSON compared with its 4,947,904-byte OTF font (1.67%).
 
 The `ticket` query parameter on PDF and glyph routes accepts only access tokens
 (`kind: 'access'`). Each request checks the HMAC, project/user claims and expiry;
@@ -270,7 +271,7 @@ Logs keep CLSI entries and a separate live group with native file/line links.
 Session failures offer Retry, budget exhaustion explains the normal-compile
 fallback, and a compiler change disables the persisted preference with a notice.
 Both editor and detached roots retain independent sockets; see
-[`../live-preview-p4-verification.md`](../live-preview-p4-verification.md).
+[live-preview-verification.md](live-preview-verification.md).
 
 Upstream edits, each a few lines:
 
@@ -288,34 +289,62 @@ nginx location in `server-ce/nginx/overleaf.conf`.
 
 ## 5. Security
 
-The engine runs LuaLaTeX as `www-data` without a sandbox, the same trust model as CE's
-CLSI (`LocalCommandRunner`). We add what rtex allows: no shell escape, a session
-directory outside the CLSI tree, `ulimit -v` per `rtex serve`, and rtex's own 5 s
-compile timeout. Opening tickets are short-lived and bound to one project. The
-glyph and PDF routes require separate project/user-bound access tokens issued and
-renewed on the authorized preview socket, so fonts and pages remain private.
+The engine runs as `www-data`, outside the CLSI tree. A trusted LuaLaTeX wrapper
+reasserts `openin_any=p`, `openout_any=p` and `-no-shell-escape` at the final exec
+boundary because pinned rtex resets `openout_any=a` internally. kpathsea permits
+absolute input under the installed, service-read-only TeX tree and the session
+output root. Font caches and a copy of trusted rtex support live inside that
+session. Full TeX Live 2025 acceptance checks the actual child environment, refuses
+`/etc/passwd` input and output outside the session, and confirms normal project
+input and disabled `write18`. These TeX filename controls do not provide an OS
+sandbox; keep the service account's access and writable directories narrow.
+
+Snapshots reject traversal, absolute paths, reserved paths and on-disk symbolic
+links. Atomic replacement preserves rtex's hard-linked build snapshots. Budgets
+are 2,000 entities, 32 MiB/file, 256 MiB/project, and 64 MiB/read of internal JSON;
+downloads are bounded while streaming and do not follow redirects. Web checks
+entity/path/text budgets before returning snapshots. The inherited `prlimit --as`
+default remains 2048 MiB per process, verified with full TeX Live and real papers.
+The project session budget, viewerless LRU eviction, five-minute idle reaping,
+stop cleanup and stale-directory cleanup on start bound retained resources.
+
+Opening tickets are short-lived and project-bound; HTTP requires separate access
+tokens. Fonts must be registered for the token's project, and an uploaded font
+must resolve inside that project's own directory or an installed font root.
+PDF retention and serving reject linked paths. Both HTTP routes use private
+`no-store` because layout versions and font paths can be reused after restarting.
+Glyph lists allow at most 1,024 integer IDs. Sockets accept at most 4 KiB/message,
+16 connections/project and eight/user, check browser Origin against Host or an
+explicit allowlist, and terminate clients missing ping/pong heartbeats. Slow
+consumers with more than 8 MiB queued are closed. CLI sockets without Origin still
+require tickets. Snapshot/document-updater outages produce clear Failed/busy
+frames and require explicit Retry, without an automatic session creation loop.
 
 ## 6. Milestones
 
-| Stage                     | Deliverables                                                                                                                                                                                                                                                                             | Status                                                                                            |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **P0 rtex fork**          | `Zack-Will/realtime-tex` with the four spike patches, the three patches in §2, CI building the binary; image stage in `server-ce/Dockerfile`; upstream PR for the acmart fixes                                                                                                           | ⏳                                                                                                |
-| **P1 service**            | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ✅ `feat/live-preview-service`; 68 unit tests                                                     |
-| **P2 web module**         | pinned rtex image layer, workspace install, settings flag, shared opening-ticket issuer, private live snapshot, meta flag, nginx/runit/init wiring, source-mounted develop stack                                                                                                         | ✅ `feat/live-preview-wiring`; real MCP edit → paragraph/layout, PDF/glyph HTTP 200, active lease |
-| **P3 overlay**            | viewer exposure, provider, overlay renderer with glyph paths, base pages from the pass PDF, project-wide flush-delay hook, remote-edit outline; two-client latency test                                                                                                                  | ✅ implemented and browser-tested                                                                 |
-| **P4 editor integration** | toggle, autocompile handling, detached window, status badge, diagnostics in logs, background reasons                                                                                                                                                                                     | ✅ implemented; isolated checks complete; browser acceptance pending                              |
-| **P5 hardening and docs** | memory budget under load, crash handling, CJK check with the thesis template, `doc/live-preview.md`, `changes-from-ce.md`, `deploy-toolkit.md`, CHANGELOG                                                                                                                                | ⏳                                                                                                |
+| Stage                     | Deliverables                                                                                                                                                                                                                                                                             | Status                                                                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P0 rtex fork**          | Pinned fork/support patches, pass PDFs, binary display lists, checksum-pinned image layer                                                                                                                                                                                                | ✅ external `interleaf` / `fix/acmart-heading-guard`, release `interleaf-0.0.3-2`; historical spike: 10 Lua + 3 acmart checks                 |
+| **P1 service**            | `services/live-preview`: sessions, materialisation, applied-ops consumer with version checks, structure events, idle reaping, budget, layout max-wait, `livePreview.active` events; WebSocket and HTTP routes; a test client that opens a session on the develop stack and prints frames | ✅ `feat/live-preview-service`; 68 unit tests                                                                                                 |
+| **P2 web module**         | pinned rtex image layer, workspace install, settings flag, shared opening-ticket issuer, private live snapshot, meta flag, nginx/runit/init wiring, source-mounted develop stack                                                                                                         | ✅ `feat/live-preview-wiring`; 14 historical web tests; real MCP → paragraph/layout and PDF/glyph HTTP 200                                    |
+| **P3 overlay**            | viewer exposure, provider, overlays, glyphs, base geometry, project-wide flush delay and collaborator outline                                                                                                                                                                            | ✅ `feat/live-preview-frontend`; browser-tested; P3/P4 frontend suite now 43 tests                                                            |
+| **P4 editor integration** | source markers, diagnostics, independent detached windows, toggle and Retry/fallback UX                                                                                                                                                                                                  | ✅ `feat/live-preview-editor`; browser-tested; 76 service + 16 protocol + 14 web + 41 frontend tests at handoff                               |
+| **P5 hardening and docs** | security regressions, resource measurements, crash/outage/restart acceptance, Chinese thesis fixture, user/operator/release docs                                                                                                                                                         | ✅ `feat/live-preview-hardening`; 95 service + 16 protocol + 16 web + 43 frontend tests; 8 protocol acceptance + 11 full-TeX hardening checks |
 
-Each stage ends with a live check on the develop stack. P1 and P3 also re-run Cleave
-and CrossMem and compare against the spike numbers (Cleave: 12 of 14 edit targets live,
-median 4.6 ms; CrossMem after its LuaLaTeX migration: 8 of 10).
+Historical P2 used the develop stack; P5 used isolated host processes and throwaway
+containers, with no develop services, browser or webpack. P1/P3 feasibility baselines
+remain Cleave 12/14 edit targets live (median 4.6 ms) and migrated CrossMem 8/10.
+The full-TeX release pass measures both real papers and Chinese paragraphs under
+production resource controls. Counts above distinguish historical handoff checks
+from the final release suites; evidence is consolidated in
+[live-preview-verification.md](live-preview-verification.md).
 
 ## 7. Risks
 
 | Risk                                                                               | Mitigation                                                                                                                                                            |
 | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | rtex is 0.0.x and one person's project; its API and display-list format may change | Pin a commit; keep rtex behind the service's own protocol (§3.3) so the browser never sees rtex's format directly except the display list, whose revision is checked. |
-| 1.2-1.5 GB per session on a host with about 4 GB free                              | Session budget, idle reaping, LRU eviction; only `lualatex` projects with the preview open get a session.                                                             |
+| About 1.75 GiB peak RSS per real-paper session                                     | Budget about 2 GiB/project plus existing services and OS headroom; use one session on small hosts, idle reaping and viewerless LRU eviction.                          |
 | Templates rtex refuses (run-in headings, `\maketitle`, buffered abstracts)         | Those units fall back to the background pass and say why. Fixes go to the fork and upstream, as with acmart.                                                          |
 | The 150 ms flush delay raises op traffic                                           | Overleaf already uses 500 ms with collaborators; document-updater and project-history compress ops. Measure in P3; raise to 300 ms if needed.                         |
 | Collaborators' edits appear later than the user's own                              | Project-wide flush delay while a session is active, layout max-wait, two-client latency test (§3.4).                                                                  |

@@ -1,10 +1,11 @@
-# Live preview service (P1/P2)
+# Live preview service
 
 Run `node services/live-preview/app.js` from the repository after `corepack yarn
 install` at the root. The service listens on `127.0.0.1:3060`. It is registered in
 the root workspace list and CE service list so the image's production workspace
-install includes its runtime dependencies. P2 wires the gated web module, nginx,
-runit and pinned rtex image layer.
+install includes its runtime dependencies. Interleaf 0.2.0 (image 6.2.5) ships the
+web/editor module, nginx/runit wiring, shared protocol library and checksum-pinned
+rtex release `interleaf-0.0.3-2`. See [the user guide](../../doc/live-preview.md).
 
 The service requires `LIVE_PREVIEW_TICKET_SECRET`, a working `rtex` and LuaLaTeX.
 Set `RTEX_TEXDIR` to rtex's support directory, and put TeX Live binaries on `PATH`
@@ -13,12 +14,27 @@ uses `prlimit --as` to impose an inherited per-process virtual memory limit,
 equivalent to `ulimit -v`, without a shell. Default: 2048 MiB. This is a virtual
 address space limit for each process, not a combined RSS limit for its process
 tree. The session budget limits concurrent project engines; it defaults to two.
-LuaLaTeX runs under the service account, without shell escape, with rtex's own
-compile timeout. Configure `LIVE_PREVIEW_FONT_ROOTS` for your TeX installation.
+LuaLaTeX runs under the service account with rtex's compile timeout. The trusted
+`bin/tex/lualatex` wrapper reasserts `openin_any=p`, `openout_any=p` and
+`-no-shell-escape` at final exec: rtex 0.0.3 otherwise resets `openout_any=a`.
+It forwards argv without interpreting project text. `RTEX_TEXLIVE_BIN` can still
+select the real installation; the wrapper saves that selection before rtex
+prepends its own wrapper directory to PATH.
+
+kpathsea permits absolute paths under the session output root and installed TeX
+tree (`LIVE_PREVIEW_TEXMF_ROOT`, default `/usr/local/texlive`, or inferred from
+`RTEX_TEXLIVE_BIN`). The TeX installation must be read-only to the service account.
+This permits luaotfload's Unicode/font data reads while denying `/etc/passwd`.
+Trusted support files are copied into `build/rtex-support`; font caches remain
+inside the session so stop/start cleanup owns them. Filename controls are not an
+OS sandbox. Configure `LIVE_PREVIEW_FONT_ROOTS` for the installation as well.
 
 Configuration is in `config/settings.defaults.mjs`. In addition to the settings
 above: `LIVE_PREVIEW_RTEX_BINARY`, `LIVE_PREVIEW_DATA_DIR`,
 `LIVE_PREVIEW_MAX_SESSIONS`, `LIVE_PREVIEW_MEMORY_MB`,
+`LIVE_PREVIEW_TEXMF_ROOT`, `LIVE_PREVIEW_MAX_PROJECT_CONNECTIONS` (16),
+`LIVE_PREVIEW_MAX_USER_CONNECTIONS` (8), `LIVE_PREVIEW_HEARTBEAT_MS` (30000),
+`LIVE_PREVIEW_ALLOWED_ORIGINS` (comma-separated full site origins),
 `LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` (3000), `LIVE_PREVIEW_IDLE_MS` (300000),
 `LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` (30000),
 `LIVE_PREVIEW_ACCESS_TTL_MS` (900000),
@@ -39,6 +55,14 @@ including unsaved edits in document-updater. Blob URLs must change when their
 content changes. Structure notifications are native web `editor-events` payloads;
 the service refetches the snapshot to get complete folder paths. Rename, move,
 delete and root changes restart the engine. Binary changes request a layout.
+
+Snapshots allow 2,000 entities, 32 MiB per file and 256 MiB total materialized
+bytes. Internal JSON reads allow 64 MiB. Limits are enforced while reading
+responses, including chunked bodies; redirects are refused and credentials never
+follow a blob URL. Web validates paths/entity/text sizes before returning a snapshot.
+Existing root/parent/file symbolic links are rejected on write, delete and PDF
+retention/serving. Source writes replace a temporary exclusive file atomically,
+so rtex's hard-linked retained snapshots cannot be modified through their inode.
 
 Tickets are `base64url(JSON).base64url(HMAC-SHA256)` without padding. JSON claims
 are `{ "project": "24-hex-id", "user": "user-id", "kind": "open", "expiry": 1234567890000 }`.
@@ -105,7 +129,11 @@ are unchanged. Size-independent font keys are server-derived SHA-256 hashes.
 Clients cannot register fonts or request filenames. Glyph paths are SVG compact
 path data in font units, **y up**, with `advance` and `unitsPerEm`. Type 1 requests
 use character codes and honor pdftex.map encoding when needed. Outlines are cached
-and responses use `Cache-Control: private, max-age=31536000, immutable`.
+in memory, with at most 4,096 per font. Both glyph/PDF responses use
+`Cache-Control: private, no-store`: font paths and layout versions can be reused
+after a restart, and every HTTP request rechecks authorization. Uploaded fonts
+must resolve inside the token's own project directory or an installed font root.
+Requests allow at most 1,024 integer IDs.
 
 Client messages are text JSON, exclusively `{"cmd":"ping"}` or
 `{"cmd":"resync"}`. Ping gets a WS pong. Resync sends hello, the last layout and
@@ -121,7 +149,12 @@ Resync sends pending background/error notices after the last good drawings, plus
 the latest diagnostics per rtex source. Diagnostic filenames inside the project
 are relative paths, suitable for the editor's normal file/line navigation.
 Text, edits and extra fields close the socket with 1008. Slow consumers exceeding
-8 MiB of buffered output close with 1013. The dev client prints decoded frames:
+8 MiB of buffered output close with 1013. Incoming messages are bounded to 4 KiB.
+Project/user connection slots are reserved at upgrade and released on close,
+including sockets waiting for initialization. Browser Origin must match Host or
+the configured origin allowlist. A 30-second server heartbeat terminates clients
+missing the next pong; CLI clients without Origin still require tickets.
+The dev client prints decoded frames:
 
 ```
 node services/live-preview/bin/test-client.mjs 'ws://127.0.0.1:3060/live-preview/ws?project=...&ticket=...'
@@ -161,14 +194,15 @@ Autocompile is suspended while live mode is usable; busy/failed sessions restore
 normal autocompile. Recompile, keyboard shortcuts and downloads continue to use
 CLSI. The scroll restore remains the native `pdf-js-viewer` position/scale logic.
 
-Browser acceptance is deferred to the orchestrator. Use a develop project, two
+P1-P4 browser acceptance was completed by the orchestrator before P5. For future
+rollouts, use a test project, two
 editor clients and a detached preview. Confirm private PDF/glyph requests use
 `ticket=<access>`, overlays survive zoom and page resets, scroll remains steady
 across layouts, remote keystroke-to-paint P95 is under 300 ms, and layouts arrive
 within 4 s of continuous typing. Also check a collaborator with live preview off:
 its ShareJS flush delay should be 150 ms until inactive, disconnect or lease expiry.
 Confirm CLSI Recompile/download, toggle-off restoration, busy fallback, access
-renewal, and reconnection/resync. These browser checks have not run on this host.
+renewal, and reconnection/resync. P5 did not start browsers, webpack or develop services.
 
 Focused frontend checks, from `services/web` (one process at a time):
 
@@ -209,6 +243,77 @@ To use the pinned release, set `LIVE_PREVIEW_RTEX_BINARY` to
 supplies LuaLaTeX and the font roots. Acceptance also checks a real background
 notification with CJK/emoji source offsets.
 
+## Release hardening and resource measurements
+
+P5 checks real paranoid input/output and shell escape, a four-page `ctexbook`,
+Fandol OTF outlines through the glyph HTTP route, real-paper edits, budget/LRU/idle
+limits, engine crashes, source outages and an actual SIGKILL/replacement of Node.
+Engine stdin EOF terminates the old rtex tree after a service crash. Clients
+reconnect with fresh tickets and rebuild; initial source failures require Retry
+so failed snapshots do not create an automatic session creation loop.
+
+Measurements use pinned `interleaf-0.0.3-2` and the local image
+`ghcr.io/zack-will/interleaf:6.2.4`'s full TeX Live 2025, with P5 code mounted
+read-only. One job runs at a time with two CPUs, a 3 GiB container limit and a
+2048 MiB inherited per-process address-space cap, as `www-data`. RSS is the sum
+for the rtex process group sampled every 100 ms; shared pages can be counted more
+than once. Node and other Overleaf services are excluded. Peak virtual size is
+the largest single process. `du -sk` measures session and build separately, with
+hard links counted once within each measurement. Sources/font caches are included.
+
+| Workload                              | Peak group RSS (KiB) | Group RSS at end (KiB) | Peak process virtual (KiB) | Session disk (KiB) | Build disk (KiB) |
+| ------------------------------------- | -------------------: | ---------------------: | -------------------------: | -----------------: | ---------------: |
+| Cleave, 13 pages, 10 edits            |            1,779,084 |                672,308 |                    645,800 |             73,272 |           56,512 |
+| Migrated CrossMem, 13 pages, 10 edits |            1,723,416 |                700,292 |                    650,728 |             74,416 |           57,136 |
+| Chinese ctexbook, 4 pages, live edit  |            1,264,364 |                670,404 |                    452,196 |             60,176 |           45,200 |
+
+End RSS is sampled after incorporated pages settle (15 seconds for papers,
+five seconds for Chinese); background work may still affect that sample. Both
+papers begin at 11 provisional pages and converge to 13. Cleave's ten selected
+edits emit ten live paragraph results. The selected CrossMem paragraph emits ten
+background notices and is incorporated into clean complete pages; fast-path
+eligibility remains conservative. These counts do not replace the broader spike
+edit-target census.
+
+Budget **2 GiB per active project**, plus Node, existing services and OS headroom.
+`LIVE_PREVIEW_MAX_SESSIONS=2` needs at least 4 GiB available for preview; use one
+on smaller hosts. Keep `LIVE_PREVIEW_MEMORY_MB=2048`: real LuaLaTeX succeeds under
+the cap, with room above observed virtual reservations. This is not a combined
+RSS or disk quota.
+
+The Chinese paragraph uses 55 distinct glyphs: **82,390 bytes** of outline JSON
+versus **4,947,904 bytes** for `FandolSong-Regular.otf` (1.67%). These are
+uncompressed bytes for one representative paragraph; repeated glyphs are cached.
+
+rtex rotates two background pass directories; the service retains three PDFs.
+Font caches add tens of MiB. Reserve about 100 MiB/project for measured workloads,
+plus uploaded project files. Idle reaping occurs five minutes after the last
+viewer closes. Stop/eviction removes the entire session/build/cache tree, and
+startup removes project-id directories from a prior run. Only one service
+process may own the data directory.
+
+Copy `<spike>/projects/{cleave,crossmem}` to `/tmp/interleaf-preview-papers/`.
+In the **CrossMem copy only**, remove `\usepackage[T1]{fontenc}` and
+`\usepackage{newtxtext,newtxmath}` from `figures/crossmem_figures_preamble.tex`,
+as described in the spike's `REPORT-acmart.md`. Keep the originals untouched.
+From the checkout root:
+
+```sh
+docker run --rm --init --cpus 2 --memory 3g --network none --read-only \
+  --user www-data --tmpfs /tmp:rw,mode=1777,size=1500m \
+  -v "$PWD:/repo:ro" -v /tmp/interleaf-preview-papers:/papers:ro \
+  -e HOME=/tmp \
+  -e LIVE_PREVIEW_RTEX_BINARY=/repo/develop/.live-preview-rtex/bin/rtex \
+  -e RTEX_TEXDIR=/repo/develop/.live-preview-rtex/share/rtex/tex \
+  --entrypoint node ghcr.io/zack-will/interleaf:6.2.4 \
+  /repo/services/live-preview/test/acceptance/hardening.mjs
+```
+
+This suite injects source/publisher clients and needs no Redis. The separate
+protocol acceptance uses its own throwaway Redis. Both stop all test processes
+and remove their session trees. Exact final numbers and transcripts are in
+[the consolidated verification](../../doc/design/live-preview-verification.md).
+
 ## P4 editor integration
 
 The module uses the existing `sourceEditorExtensions` and
@@ -238,8 +343,8 @@ Unmounting either root closes only its own socket and leaves the preference
 enabled. Remote registered users use the collaborator cursor colour helper;
 `anonymous:<hash>` and `anonymous-user` use a neutral grey outline.
 
-Browser checks for the orchestrator are in
-[`doc/live-preview-p4-verification.md`](../../doc/live-preview-p4-verification.md).
+Historical browser checks and release evidence are consolidated in
+[`doc/design/live-preview-verification.md`](../../doc/design/live-preview-verification.md).
 
 Type 1 support is ported from Henry Yang's MIT-licensed
 `realtime-tex-vsc-plugin/src/type1.ts`; [LICENSE.type1](LICENSE.type1) preserves

@@ -20,3 +20,10 @@ include `versions.source_revision` for layout ordering. These additions retain
 the existing frame encoding and type ids. A removed or unidentified unit may have
 no range. See `services/live-preview/README.md` for notification resync and
 diagnostics semantics.
+
+The release implementation limits client WebSocket messages to 4 KiB and accepts
+only ping/resync. Opening tickets authorize a single project; HTTP access tokens
+cannot open sockets. PDF/glyph requests recheck tokens and use private `no-store`
+responses, including after service restarts. See
+[the consolidated verification](../../doc/design/live-preview-verification.md)
+for the protocol, service and real-TeX acceptance results.
