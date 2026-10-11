@@ -73,13 +73,16 @@ Patches this design needs:
 | Verifier: honour Form XObject `/BBox` | `rtex verify` layer 2 fails on every PDF figure (`rtex-verify/src/pdftext.rs`). We use verify in CI. | Yes |
 | `serve`: binary display lists | JSON display lists are 3x the binary size. Length-prefixed binary frames on stdout, opt-in. | Yes |
 
-Building: a `rust:<ver>-bookworm` stage in `server-ce/Dockerfile` builds the pinned
-commit (precedent: git-bridge is built from source, `build-image.yml:96-109`). The
-binary goes to `/usr/local/bin/rtex`, the support files to `/usr/local/share/rtex/tex`
-(`RTEX_TEXDIR`), not `texmf-local`, which operators mount over
-(`doc/deploy-toolkit.md`, TeX Live section). The stage sits right after the TeX Live
-layers so application changes never rebuild it. It uses its own GitHub Actions cache
-scope because the TeX layers already fill most of the 10 GB cache.
+Building: the fork's own CI builds and tests rtex and publishes a release
+(`interleaf-<upstream version>-<n>`, e.g. `interleaf-0.0.3-1`) with the Linux x86_64
+archive and its SHA-256. `server-ce/Dockerfile` downloads the pinned release and checks
+the hash. Building in the fork keeps a Rust toolchain and a cargo cache out of the image
+build, whose GitHub Actions cache the TeX layers already nearly fill, and the fork's CI
+already runs rtex's tests against a real TeX Live. The binary goes to
+`/usr/local/bin/rtex`, the support files to `/usr/local/share/rtex/tex` (`RTEX_TEXDIR`),
+not `texmf-local`, which operators mount over (`doc/deploy-toolkit.md`, TeX Live
+section). The layer sits right after the TeX Live layers so application changes never
+download it again.
 
 ## 3. The live-preview service
 
@@ -289,7 +292,9 @@ median 4.6 ms; CrossMem after its LuaLaTeX migration: 8 of 10).
    for live paragraphs. (2026-10-11)
 6. We maintain a fork of rtex with upstreamable topic branches and contribute fixes
    back. (2026-10-11, user)
-7. Remote edits must render as promptly as local ones: the low flush delay applies to
+7. rtex is built and released by the fork's CI; the image downloads a pinned,
+   checksummed release instead of compiling Rust. (2026-10-11)
+8. Remote edits must render as promptly as local ones: the low flush delay applies to
    every editor in a project with an active session, background passes have a 3 s
    max-wait, and the two-client latency test is an acceptance criterion. (2026-10-11,
    user)
