@@ -3,6 +3,14 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
+## Unreleased
+
+### Fixed
+
+- `server-ce/config/env.sh` no longer aborts container start under `set -u` when
+  `OVERLEAF_REDIS_PASS` (or the web API credentials) are unset. Interleaf 6.2.5
+  needs `OVERLEAF_REDIS_PASS=` in `config/variables.env` as a workaround.
+
 ## 0.2.0 (2026-10-12)
 
 Images: `ghcr.io/<owner>/interleaf:6.2.5`, `ghcr.io/<owner>/git-bridge:6.2.5`.
