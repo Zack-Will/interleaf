@@ -4,6 +4,7 @@ import sinon from 'sinon'
 import { SessionManager } from '../../app/src/SessionManager.mjs'
 import { decodeFrame } from '../../app/src/Frames.mjs'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'
+import { binaryList, binaryRow } from '../helpers/display-list.mjs'
 
 function socket() {
   return Object.assign(new EventEmitter(), {
@@ -183,6 +184,53 @@ describe('SessionManager', () => {
     await vi.advanceTimersByTimeAsync(300001)
     expect(manager.sessions.has('p')).toBe(false)
   })
+  it('sends erase rectangles from changed pages, retains unchanged pages, and prunes deleted pages', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    const placements = [
+      {
+        par_id: 99,
+        fragments: [
+          {
+            page: 2,
+            first_line: 1,
+            last_line: 1,
+            x: 100,
+            xs: [100],
+            baselines: [200],
+          },
+        ],
+      },
+    ]
+    const layout = {
+      event: 'LayoutUpdate',
+      pages_total: 2,
+      placements,
+      versions: { source_revision: 0 },
+    }
+    await manager.handleEvent(session, {
+      ...layout,
+      pages_changed: [
+        { page: 2, dl_b64: binaryList(binaryRow()).toString('base64') },
+      ],
+    })
+    const expected = [{ page: 2, x: 100, y: 150, w: 300, h: 60 }]
+    expect(session.layout.placements[0].row_rects).toEqual(expected)
+    await manager.handleEvent(session, { ...layout, pages_changed: [] })
+    expect(session.layout.placements[0].row_rects).toEqual(expected)
+    manager.resync(session, viewer)
+    expect(
+      decodeFrame(viewer.send.lastCall.args[0]).header.placements[0].row_rects
+    ).toEqual(expected)
+    await manager.handleEvent(session, {
+      ...layout,
+      pages_total: 1,
+      pages_changed: [],
+    })
+    expect(session.pageLists.has(2)).toBe(false)
+    expect(session.layout.placements[0].row_rects).toEqual([])
+  })
+
   it('forces a layout after three seconds despite continuous edits', async () => {
     const session = await manager.open('p', socket())
     for (let index = 0; index < 30; index++) {

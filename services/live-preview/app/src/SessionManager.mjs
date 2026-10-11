@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { Attribution } from './Attribution.mjs'
 import { encodeFrame } from './Frames.mjs'
 import { PreviewError } from './Errors.mjs'
+import { decodeDisplayList, layoutRowRects } from './DisplayList.mjs'
 
 export class SessionManager {
   constructor({
@@ -75,6 +76,7 @@ export class SessionManager {
         attribution: new Attribution(),
         pdfs: new Map(),
         paragraphs: new Map(),
+        pageLists: new Map(),
         layoutVersion: 0,
         engineGeneration: 0,
         crashAt: null,
@@ -272,6 +274,14 @@ export class SessionManager {
     } else if (kind === 'LayoutUpdate') {
       const fonts = {}
       for (const page of pages || []) {
+        if (page.dl_b64) {
+          session.pageLists.set(
+            page.page,
+            decodeDisplayList(Buffer.from(page.dl_b64, 'base64'), {
+              geometryOnly: true,
+            })
+          )
+        }
         Object.assign(
           fonts,
           this.fonts.registerDisplayList(
@@ -279,6 +289,9 @@ export class SessionManager {
             Buffer.from(page.dl_b64 || '', 'base64')
           )
         )
+      }
+      for (const page of session.pageLists.keys()) {
+        if (page > event.pages_total) session.pageLists.delete(page)
       }
       session.layoutVersion += 1
       let pdfUrl = null
@@ -308,6 +321,7 @@ export class SessionManager {
         layout_version: session.layoutVersion,
         pdf_url: pdfUrl,
         fonts,
+        placements: layoutRowRects(event.placements || [], session.pageLists),
       }
       // Preserve paragraph results newer than the pass snapshot.
       for (const [id, frame] of session.paragraphs) {
@@ -338,6 +352,7 @@ export class SessionManager {
     await session.eventQueue
     session.attribution = new Attribution()
     session.paragraphs.clear()
+    session.pageLists.clear()
     session.state = 'Restarting'
     this.broadcast(session, 'engine', { state: 'Restarting', reason })
     this.startEngine(session)
