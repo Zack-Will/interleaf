@@ -27,16 +27,19 @@ export class SessionManager {
     })
     this.fs = filesystem
     this.sessions = new Map()
+    this.socketAccess = new WeakMap()
     this.admission = Promise.resolve()
   }
 
-  open(projectId, socket) {
-    const result = this.admission.then(() => this.admit(projectId, socket))
+  open(projectId, socket, getAccess) {
+    const result = this.admission.then(() =>
+      this.admit(projectId, socket, getAccess)
+    )
     this.admission = result.catch(() => {})
     return result
   }
 
-  async admit(projectId, socket) {
+  async admit(projectId, socket, getAccess) {
     let session = this.sessions.get(projectId)
     if (session?.stopped) {
       await session.stopPromise
@@ -92,6 +95,7 @@ export class SessionManager {
     }
     clearTimeout(session.idleTimer)
     session.sockets.add(socket)
+    this.socketAccess.set(socket, getAccess)
     session.lastUsed = this.now()
     socket.once('close', () => this.detach(session, socket))
     this.resync(session, socket)
@@ -172,6 +176,7 @@ export class SessionManager {
 
   detach(session, socket) {
     session.sockets.delete(socket)
+    this.socketAccess.delete(socket)
     session.lastUsed = this.now()
     if (!session.sockets.size && !session.stopped) {
       this.scheduleIdle(session)
@@ -214,6 +219,7 @@ export class SessionManager {
         layout_version: session.layoutVersion,
         engine_state: session.state,
         pages_total: session.layout?.pages_total || 0,
+        ...this.socketAccess.get(socket)?.(),
       })
     )
     if (session.layout) {

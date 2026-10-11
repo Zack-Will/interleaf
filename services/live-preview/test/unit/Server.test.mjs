@@ -3,8 +3,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import sinon from 'sinon'
 import WebSocket from 'ws'
 import { createServer } from '../../app/src/Server.mjs'
-import { createTicket } from '../../app/src/Tickets.mjs'
-import { decodeFrame } from '../../app/src/Frames.mjs'
+import {
+  createTicket,
+  createAccessToken,
+  verifyAccessToken,
+} from '../../app/src/Tickets.mjs'
+import { encodeFrame, decodeFrame } from '../../app/src/Frames.mjs'
 import { createHttpClients } from '../../app/src/HttpClients.mjs'
 import { createService } from '../../app/src/Service.mjs'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'
@@ -14,16 +18,22 @@ describe('HTTP and WebSocket', () => {
   let service
   let url
   let ticket
+  let access
   let manager
   beforeEach(async () => {
     ticket = createTicket(project, 'alice', 'secret')
+    access = createAccessToken(project, 'alice', 'secret')
     manager = {
       sessions: new Map(),
-      open: sinon.stub().resolves({}),
+      open: sinon.stub().callsFake(async (projectId, socket, getAccess) => {
+        socket.send(encodeFrame('hello', getAccess()))
+        return {}
+      }),
+      send: (socket, frame) => socket.send(frame),
       resync: sinon.spy(),
     }
     service = createServer({
-      settings: { ticketSecret: 'secret' },
+      settings: settingsFromEnv({ LIVE_PREVIEW_TICKET_SECRET: 'secret' }),
       manager,
       fonts: {
         glyphs: async () => ({ glyphs: { 1: { path: 'M0 0Z', advance: 10 } } }),
@@ -34,7 +44,7 @@ describe('HTTP and WebSocket', () => {
     url = `http://127.0.0.1:${service.server.address().port}`
   })
   afterEach(async () => service.close())
-  it('requires tickets for PDF and glyph routes, serves health', async () => {
+  it('requires access tokens for PDF and glyph routes, serves health', async () => {
     expect((await fetch(`${url}/live-preview/health`)).status).toBe(200)
     expect((await fetch(`${url}/live-preview/pdf/${project}/1`)).status).toBe(
       401
@@ -43,14 +53,53 @@ describe('HTTP and WebSocket', () => {
       401
     )
     expect(
-      (await fetch(`${url}/live-preview/pdf/${project}/1?ticket=${ticket}`))
+      (await fetch(`${url}/live-preview/pdf/${project}/1?ticket=${access}`))
         .status
     ).toBe(404)
     const response = await fetch(
-      `${url}/live-preview/glyphs/key?ids=1&ticket=${ticket}`
+      `${url}/live-preview/glyphs/key?ids=1&ticket=${access}`
     )
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toContain('immutable')
+  })
+  it('rejects opening tickets on HTTP and access tokens on WS even with a sixty-second TTL', async () => {
+    for (const route of [`pdf/${project}/1`, 'glyphs/key?ids=1']) {
+      const separator = route.includes('?') ? '&' : '?'
+      expect(
+        (
+          await fetch(
+            `${url}/live-preview/${route}${separator}ticket=${ticket}`
+          )
+        ).status
+      ).toBe(401)
+    }
+    const shortAccess = createAccessToken(
+      project,
+      'alice',
+      'secret',
+      Date.now(),
+      60000
+    )
+    const bad = new WebSocket(
+      `${url.replace('http:', 'ws:')}/live-preview/ws?project=${project}&ticket=${shortAccess}`
+    )
+    const [error] = await once(bad, 'error')
+    expect(error.message).toContain('401')
+    expect(manager.open.called).toBe(false)
+  })
+  it('returns project/user access credentials in hello after an authorized handshake', async () => {
+    const socket = new WebSocket(
+      `${url.replace('http:', 'ws:')}/live-preview/ws?project=${project}&ticket=${ticket}`
+    )
+    const [bytes] = await once(socket, 'message')
+    const hello = decodeFrame(bytes)
+    expect(hello.type).toBe('hello')
+    expect(verifyAccessToken(hello.header.access, 'secret', project).user).toBe(
+      'alice'
+    )
+    expect(hello.header.access_expiry).toBeGreaterThan(Date.now() + 890000)
+    socket.close()
+    await once(socket, 'close')
   })
   it('opens only authorized sockets and rejects text edits', async () => {
     const socket = new WebSocket(

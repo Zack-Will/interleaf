@@ -22,6 +22,7 @@ above: `LIVE_PREVIEW_RTEX_BINARY`, `LIVE_PREVIEW_DATA_DIR`,
 `LIVE_PREVIEW_MAX_SESSIONS`, `LIVE_PREVIEW_MEMORY_MB`,
 `LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` (3000), `LIVE_PREVIEW_IDLE_MS` (300000),
 `LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` (30000),
+`LIVE_PREVIEW_ACCESS_TTL_MS` (900000),
 `LIVE_PREVIEW_HOST`, `LIVE_PREVIEW_PORT`, `LIVE_PREVIEW_WEB_URL`,
 `LIVE_PREVIEW_WEB_USER`, `LIVE_PREVIEW_WEB_PASSWORD`,
 `LIVE_PREVIEW_DOCUMENT_UPDATER_URL` and `LIVE_PREVIEW_REDIS_HOST/PORT/PASSWORD`.
@@ -41,12 +42,21 @@ the service refetches the snapshot to get complete folder paths. Rename, move,
 delete and root changes restart the engine. Binary changes request a layout.
 
 Tickets are `base64url(JSON).base64url(HMAC-SHA256)` without padding. JSON claims
-are `{ "project": "24-hex-id", "user": "user-id", "expiry": 1234567890000 }`.
+are `{ "project": "24-hex-id", "user": "user-id", "kind": "open", "expiry": 1234567890000 }`.
 Expiry is Unix milliseconds, at most 60 seconds in the future. The HMAC input is
 the **encoded payload string**, signed with `LIVE_PREVIEW_TICKET_SECRET`.
-`app/src/Tickets.mjs` exports the issuer helper for P2 and tests. A ticket is checked
-at WS upgrade and on each HTTP request; existing sockets continue after ticket
-expiry. The browser obtains a fresh ticket for subsequent PDF/glyph requests.
+`app/src/Tickets.mjs` exports the issuer helper for P2 and tests. Web mints
+`kind: 'open'`; WS upgrades accept only that kind or legacy tickets without `kind`.
+Existing sockets continue after opening-ticket expiry.
+
+After an authorized handshake, `hello` includes `access` and `access_expiry` (Unix
+milliseconds). The access token uses the same HMAC format and secret, with project,
+user, `kind: 'access'` and expiry claims. Its lifetime is 15 minutes by default
+(`LIVE_PREVIEW_ACCESS_TTL_MS`). While the socket is open, the service sends a new
+`access` frame at 80% of that lifetime, before expiry. Resync also sends fresh
+credentials in `hello`. Clients retain the latest access token for HTTP requests;
+renewal requires no web request. Access tokens cannot open a WebSocket, and opening
+tickets cannot fetch PDFs or glyphs. Closing the socket stops renewal.
 
 ## Wire protocol
 
@@ -65,7 +75,7 @@ Every server message is a binary WebSocket message:
 ```
 offset  bytes  meaning
 0       1      type: hello=1, paragraph=2, layout=3, background=4,
-               diagnostics=5, engine=6, busy=7
+               diagnostics=5, engine=6, busy=7, access=8
 1       4      unsigned JSON header byte length, little-endian
 5       N      UTF-8 JSON header, no terminator
 5+N     rest   optional rtex display list (RTDL, revision 1)
@@ -76,7 +86,10 @@ rtex's `versions` and `edit_id`. Paragraphs also carry `user_id` (null for initi
 or unattributed results) and `fonts`, mapping rtex font ids to
 `{font_key, ids: 'glyph_index'|'char_code'}`. Layouts also carry `fonts` from changed
 pages, a service-monotonic `layout_version` and `pdf_url` without a ticket query.
-Append a fresh ticket to fetch that URL. Display-list font records and TeX positions
+Append `?ticket=<access>` using the latest access token to fetch that URL.
+`hello` and `access` headers carry `{ access, access_expiry }`; access frames have
+no body and are specific to each viewer's project and user.
+Display-list font records and TeX positions
 are unchanged. Size-independent font keys are server-derived SHA-256 hashes.
 Clients cannot register fonts or request filenames. Glyph paths are SVG compact
 path data in font units, **y up**, with `advance` and `unitsPerEm`. Type 1 requests
@@ -95,8 +108,9 @@ node services/live-preview/bin/test-client.mjs 'ws://127.0.0.1:3060/live-preview
 
 `GET /live-preview/pdf/:projectId/:layoutVersion?ticket=` returns one of the last
 three layout PDFs. `GET /live-preview/glyphs/:fontKey?ids=1,2&ticket=` returns
-`{font_key, unitsPerEm, glyphs: {"1": {path, advance}}}`. Both enforce project-bound
-tickets. `GET /live-preview/health` reports process readiness and session count.
+`{font_key, unitsPerEm, glyphs: {"1": {path, advance}}}`. The `ticket` query parameter
+on both routes accepts only project-bound access tokens, checked on every request.
+`GET /live-preview/health` reports process readiness and session count.
 
 ## Verification
 

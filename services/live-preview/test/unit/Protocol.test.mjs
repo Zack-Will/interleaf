@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import { createHmac } from 'node:crypto'
 import { utf8Offset, convertComponent } from '../../app/src/Offsets.mjs'
-import { createTicket, verifyTicket } from '../../app/src/Tickets.mjs'
+import {
+  createTicket,
+  verifyTicket,
+  createAccessToken,
+  verifyAccessToken,
+} from '../../app/src/Tickets.mjs'
 import { encodeFrame, decodeFrame, frameTypes } from '../../app/src/Frames.mjs'
 import { Attribution } from '../../app/src/Attribution.mjs'
 
@@ -31,6 +37,7 @@ describe('tickets', () => {
     expect(verifyTicket(ticket, 'secret', project, 2000)).toEqual({
       project,
       user: 'user',
+      kind: 'open',
       expiry: 61000,
     })
     expect(() => verifyTicket(ticket, 'secret', project, 61000)).toThrow(
@@ -43,6 +50,61 @@ describe('tickets', () => {
     expect(() => verifyTicket(ticket, 'secret', 'b'.repeat(24), 2000)).toThrow(
       'invalid'
     )
+  })
+  function signedClaims(claims) {
+    const payload = Buffer.from(JSON.stringify(claims)).toString('base64url')
+    const signature = createHmac('sha256', 'secret')
+      .update(payload)
+      .digest('base64url')
+    return `${payload}.${signature}`
+  }
+  it('accepts legacy opening tickets and rejects kind confusion both ways', () => {
+    const legacy = signedClaims({ project, user: 'user', expiry: 61000 })
+    expect(verifyTicket(legacy, 'secret', project, 1000).user).toBe('user')
+    const access = createAccessToken(project, 'user', 'secret', 1000, 60000)
+    expect(() => verifyTicket(access, 'secret', project, 1000)).toThrow()
+    for (const token of [
+      legacy,
+      createTicket(project, 'user', 'secret', 1000),
+    ]) {
+      expect(() => verifyAccessToken(token, 'secret', project, 1000)).toThrow()
+    }
+    const unknown = signedClaims({
+      project,
+      user: 'user',
+      expiry: 61000,
+      kind: 'other',
+    })
+    expect(() => verifyTicket(unknown, 'secret', project, 1000)).toThrow()
+    expect(() => verifyAccessToken(unknown, 'secret', project, 1000)).toThrow()
+  })
+  it('binds access tokens to project/user with a fifteen-minute expiry and claim checks', () => {
+    const token = createAccessToken(project, 'user', 'secret', 1000)
+    expect(verifyAccessToken(token, 'secret', project, 1000)).toEqual({
+      project,
+      user: 'user',
+      kind: 'access',
+      expiry: 901000,
+    })
+    expect(verifyAccessToken(token, 'secret', project, 900999).user).toBe(
+      'user'
+    )
+    expect(() => verifyAccessToken(token, 'secret', project, 901000)).toThrow()
+    expect(() => verifyAccessToken(token, 'secret', project, 0)).toThrow()
+    expect(() => verifyAccessToken(token, 'wrong', project, 1000)).toThrow()
+    expect(() =>
+      verifyAccessToken(token, 'secret', 'b'.repeat(24), 1000)
+    ).toThrow()
+    expect(() =>
+      verifyAccessToken(createAccessToken(project, '', 'secret'), 'secret')
+    ).toThrow()
+    const custom = createAccessToken(project, 'user', 'secret', 1000, 120000)
+    expect(
+      verifyAccessToken(custom, 'secret', project, 1000, 120000).expiry
+    ).toBe(121000)
+    expect(() =>
+      verifyAccessToken(custom, 'secret', project, 1000, 60000)
+    ).toThrow()
   })
   it('rejects malformed signatures and missing user', () => {
     expect(() => verifyTicket('garbage', 'secret')).toThrow()

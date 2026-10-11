@@ -2,7 +2,8 @@ import http from 'node:http'
 import express from 'express'
 import { expressify } from '@overleaf/promise-utils'
 import { WebSocketServer } from 'ws'
-import { verifyTicket, validateProject } from './Tickets.mjs'
+import { verifyTicket, verifyAccessToken, validateProject } from './Tickets.mjs'
+import { createSocketAccess } from './SocketAccess.mjs'
 import { encodeFrame } from './Frames.mjs'
 import { PreviewError } from './Errors.mjs'
 
@@ -24,7 +25,13 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
     expressify(async (req, res) => {
       const { projectId, layoutVersion } = req.params
       validateProject(projectId)
-      verifyTicket(req.query.ticket, settings.ticketSecret, projectId)
+      verifyAccessToken(
+        req.query.ticket,
+        settings.ticketSecret,
+        projectId,
+        Date.now(),
+        settings.accessTtlMs
+      )
       const file = manager.sessions
         .get(projectId)
         ?.pdfs.get(Number(layoutVersion))
@@ -52,7 +59,13 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
   app.get(
     '/live-preview/glyphs/:fontKey',
     expressify(async (req, res) => {
-      const claims = verifyTicket(req.query.ticket, settings.ticketSecret)
+      const claims = verifyAccessToken(
+        req.query.ticket,
+        settings.ticketSecret,
+        undefined,
+        Date.now(),
+        settings.accessTtlMs
+      )
       const ids =
         typeof req.query.ids === 'string'
           ? req.query.ids
@@ -87,13 +100,13 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
       }
       const projectId = url.searchParams.get('project')
       validateProject(projectId)
-      verifyTicket(
+      const claims = verifyTicket(
         url.searchParams.get('ticket'),
         settings.ticketSecret,
         projectId
       )
       websocket.handleUpgrade(request, socket, head, ws => {
-        connect(ws, projectId).catch(onError)
+        connect(ws, claims).catch(onError)
       })
     } catch (error) {
       socket.end(
@@ -102,7 +115,7 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
     }
   })
 
-  async function connect(ws, projectId) {
+  async function connect(ws, claims) {
     let session
     let resyncAt = 0
     ws.on('error', onError)
@@ -127,7 +140,13 @@ export function createServer({ settings, manager, fonts, onError = () => {} }) {
       }
     })
     try {
-      session = await manager.open(projectId, ws)
+      const getAccess = createSocketAccess({
+        socket: ws,
+        claims,
+        settings,
+        send: (socket, frame) => manager.send(socket, frame),
+      })
+      session = await manager.open(claims.project, ws, getAccess)
     } catch (error) {
       if (ws.readyState === 1) {
         ws.send(

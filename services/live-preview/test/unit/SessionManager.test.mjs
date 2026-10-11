@@ -80,6 +80,28 @@ describe('SessionManager', () => {
       'livePreview.inactive'
     )
   })
+  it('keeps hello access credentials specific to each viewer and refreshes on resync', async () => {
+    const first = socket()
+    const second = socket()
+    const getAccess = sinon.stub()
+    getAccess.onFirstCall().returns({ access: 'alice', access_expiry: 900000 })
+    getAccess
+      .onSecondCall()
+      .returns({ access: 'alice-new', access_expiry: 1000000 })
+    const session = await manager.open('p', first, getAccess)
+    await manager.open('p', second, () => ({
+      access: 'bob',
+      access_expiry: 900000,
+    }))
+    expect(decodeFrame(first.send.firstCall.args[0]).header.access).toBe(
+      'alice'
+    )
+    expect(decodeFrame(second.send.firstCall.args[0]).header.access).toBe('bob')
+    manager.resync(session, first)
+    expect(decodeFrame(first.send.lastCall.args[0]).header.access).toBe(
+      'alice-new'
+    )
+  })
   it('refreshes the active lease for late editors and stops refreshing on shutdown', async () => {
     await manager.open('p', socket())
     await vi.advanceTimersByTimeAsync(29999)

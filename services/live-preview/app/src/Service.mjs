@@ -23,11 +23,13 @@ export async function createService({
   if (
     !settings.ticketSecret ||
     settings.maxSessions < 1 ||
-    settings.layoutMaxWaitMs <= 0
+    settings.layoutMaxWaitMs <= 0 ||
+    !Number.isSafeInteger(settings.accessTtlMs) ||
+    settings.accessTtlMs < 2
   ) {
     throw new PreviewError(
       'invalid_config',
-      'Ticket secret and positive session/layout budgets are required'
+      'Ticket secret and positive session/layout budgets and access TTL are required'
     )
   }
   if (!fonts) {

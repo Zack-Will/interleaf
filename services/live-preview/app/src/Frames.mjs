@@ -8,6 +8,7 @@ export const frameTypes = Object.freeze({
   diagnostics: 5,
   engine: 6,
   busy: 7,
+  access: 8,
 })
 
 export function encodeFrame(type, header, body = Buffer.alloc(0)) {

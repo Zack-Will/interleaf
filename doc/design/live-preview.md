@@ -138,17 +138,25 @@ display list in rtex's binary format where there is one:
 
 | Frame         | Header                                                                                     | Body              |
 | ------------- | ------------------------------------------------------------------------------------------ | ----------------- |
-| `hello`       | session state, `layout_version`, engine state, pages total                                 |                   |
+| `hello`       | session state, `layout_version`, engine state, pages total, `access`, `access_expiry`      |                   |
 | `paragraph`   | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing` | unit display list |
 | `layout`      | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile`         |                   |
 | `background`  | `par_id`, `reasons`                                                                        |                   |
 | `diagnostics` | rtex's diagnostics items                                                                   |                   |
 | `engine`      | `Starting` / `Ready` / `Restarting` / `Failed`, reason                                     |                   |
 | `busy`        | why live preview is unavailable                                                            |                   |
+| `access`      | `access`, `access_expiry` (Unix milliseconds), fresh HTTP credentials for this viewer      |                   |
 
 Client to server: only `ping` and `resync`. The connection URL carries a ticket from
 the web module (§4.1); the service checks its HMAC and expiry and that it names this
-project.
+project. Web mints `kind: 'open'`; upgrades also accept legacy tickets without a
+kind, and reject `kind: 'access'`. The `hello` frame includes an HMAC-signed access
+token bound to the same project and user, with `kind: 'access'` and a 15-minute
+expiry (`LIVE_PREVIEW_ACCESS_TTL_MS`, default 900000 ms). While the socket remains
+open, the service sends a fresh token in an `access` frame at 80% of its lifetime,
+before expiry. Resync also sends fresh credentials in `hello`. Clients use the
+latest access token for PDF and glyph requests without returning to web for a new
+ticket. Closing the socket stops renewal.
 
 ### 3.4 Collaboration
 
@@ -201,6 +209,11 @@ font parser, Type 1 through a small charstring decoder as the VS Code extension 
 The browser downloads only the glyphs it draws: a Chinese paragraph needs a few hundred
 glyphs, not Fandol's 19 MB.
 
+The `ticket` query parameter on PDF and glyph routes accepts only access tokens
+(`kind: 'access'`). Each request checks the HMAC, project/user claims and expiry;
+opening tickets are rejected. WS upgrades reject access tokens even when their
+remaining lifetime is less than 60 seconds.
+
 ## 4. The web module (`services/web/modules/live-preview`)
 
 Registered last in `moduleImportSequence`, gated by `livePreview.enabled`
@@ -208,10 +221,10 @@ Registered last in `moduleImportSequence`, gated by `livePreview.enabled`
 
 ### 4.1 Routes
 
-| Route                                             | Access                     | Notes                                                                                                                                                                                      |
-| ------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST /project/:id/live-preview/ticket`           | read access to the project | Returns a ticket valid for 60 s: HMAC of project id, user id, expiry, with `LIVE_PREVIEW_TICKET_SECRET`. 404 `live_preview_disabled` when the flag is off, 409 `compiler_not_lualatex`.    |
-| `GET /internal/project/:id/live-preview/snapshot` | private API, basic auth    | The file list for materialisation: docs from document-updater, binary files as filestore blob URLs, root doc path. Reuses ClsiManager's resource building through a small exported helper. |
+| Route                                             | Access                     | Notes                                                                                                                                                                                                   |
+| ------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /project/:id/live-preview/ticket`           | read access to the project | Returns a ticket valid for 60 s: HMAC of project id, user id, `kind: 'open'`, expiry, with `LIVE_PREVIEW_TICKET_SECRET`. 404 `live_preview_disabled` when the flag is off, 409 `compiler_not_lualatex`. |
+| `GET /internal/project/:id/live-preview/snapshot` | private API, basic auth    | The file list for materialisation: docs from document-updater, binary files as filestore blob URLs, root doc path. Reuses ClsiManager's resource building through a small exported helper.              |
 
 ### 4.2 Frontend
 
@@ -253,8 +266,9 @@ nginx location in `server-ce/nginx/overleaf.conf`.
 The engine runs LuaLaTeX as `www-data` without a sandbox, the same trust model as CE's
 CLSI (`LocalCommandRunner`). We add what rtex allows: no shell escape, a session
 directory outside the CLSI tree, `ulimit -v` per `rtex serve`, and rtex's own 5 s
-compile timeout. Tickets are short-lived and bound to one project. The glyph and PDF
-routes need a ticket too, so a project's fonts and pages are not readable by outsiders.
+compile timeout. Opening tickets are short-lived and bound to one project. The
+glyph and PDF routes require separate project/user-bound access tokens issued and
+renewed on the authorized preview socket, so fonts and pages remain private.
 
 ## 6. Milestones
 

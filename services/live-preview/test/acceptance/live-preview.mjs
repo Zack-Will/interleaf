@@ -14,7 +14,7 @@ import redis from '@overleaf/redis-wrapper'
 import WebSocket from 'ws'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'
 import { createService } from '../../app/src/Service.mjs'
-import { createTicket } from '../../app/src/Tickets.mjs'
+import { createTicket, createAccessToken } from '../../app/src/Tickets.mjs'
 import { decodeFrame } from '../../app/src/Frames.mjs'
 
 const runFile = promisify(execFile)
@@ -152,10 +152,6 @@ async function connect(url, target) {
   return socket
 }
 
-function ticketQuery() {
-  return `ticket=${createTicket(project, 'viewer', secret)}`
-}
-
 async function run() {
   const redisPort = await freePort()
   await runFile('docker', [
@@ -250,7 +246,13 @@ async function run() {
   const address = await service.start()
   const url = `http://127.0.0.1:${address.port}`
   await connect(url, frames)
-  await waitFor(() => frames.find(frame => frame.type === 'hello'), 'hello')
+  const hello = await waitFor(
+    () => frames.find(frame => frame.type === 'hello'),
+    'hello'
+  )
+  assert.ok(hello.header.access)
+  assert.ok(hello.header.access_expiry > Date.now() + 890000)
+  const accessQuery = `ticket=${hello.header.access}`
   await waitFor(
     () => frames.find(frame => frame.type === 'layout' && frame.header.pdf_url),
     'initial PDF layout',
@@ -269,7 +271,7 @@ async function run() {
       notice =>
         notice.message === 'livePreview.active' &&
         notice.room_id === project &&
-        Array.isArray(notice.payload)
+        notice.payload[0]?.leaseMs === 75000
     )
   )
   log('PASS real rtex startup, LuaLaTeX layout and native active notice')
@@ -277,7 +279,7 @@ async function run() {
   const layout = frames.findLast(
     frame => frame.type === 'layout' && frame.header.pdf_url
   )
-  const pdf = await fetch(`${url}${layout.header.pdf_url}?${ticketQuery()}`)
+  const pdf = await fetch(`${url}${layout.header.pdf_url}?${accessQuery}`)
   assert.equal(pdf.status, 200)
   assert.equal(
     Buffer.from(await pdf.arrayBuffer()).toString('ascii', 0, 4),
@@ -289,7 +291,7 @@ async function run() {
   )
   assert.ok(font, 'rtex layout registered an OpenType font')
   const glyphResponse = await fetch(
-    `${url}/live-preview/glyphs/${font.font_key}?ids=36&${ticketQuery()}`
+    `${url}/live-preview/glyphs/${font.font_key}?ids=36&${accessQuery}`
   )
   assert.equal(glyphResponse.status, 200)
   const glyph = await glyphResponse.json()
@@ -301,14 +303,14 @@ async function run() {
   )
   assert.ok(type1Font, 'rtex math registered a Type 1 font')
   const type1Response = await fetch(
-    `${url}/live-preview/glyphs/${type1Font.font_key}?ids=120&${ticketQuery()}`
+    `${url}/live-preview/glyphs/${type1Font.font_key}?ids=120&${accessQuery}`
   )
   assert.equal(type1Response.status, 200)
   const type1Glyph = await type1Response.json()
   assert.ok(type1Glyph.glyphs[120].path.length > 0)
   assert.ok(type1Glyph.glyphs[120].advance > 0)
   log('PASS real Type 1 math glyph paths and advance metrics')
-  const wrongTicket = createTicket('f'.repeat(24), 'outsider', secret)
+  const wrongTicket = createAccessToken('f'.repeat(24), 'outsider', secret)
   assert.equal(
     (
       await fetch(
@@ -317,8 +319,22 @@ async function run() {
     ).status,
     404
   )
+  const openingTicket = createTicket(project, 'viewer', secret)
+  assert.equal(
+    (await fetch(`${url}${layout.header.pdf_url}?ticket=${openingTicket}`))
+      .status,
+    401
+  )
+  assert.equal(
+    (
+      await fetch(
+        `${url}/live-preview/glyphs/${font.font_key}?ids=36&ticket=${openingTicket}`
+      )
+    ).status,
+    401
+  )
   log(
-    'PASS fetchable PDF, OpenType glyph paths and project-bound authorization'
+    'PASS PDF and glyphs using hello access token, project binding and opening-ticket rejection'
   )
 
   const session = service.manager.sessions.get(project)

@@ -4,6 +4,7 @@ export function settingsFromEnv(env = process.env) {
     port: Number(env.LIVE_PREVIEW_PORT || 3060),
     baseDir: env.LIVE_PREVIEW_DATA_DIR || '/var/lib/overleaf/data/live-preview',
     ticketSecret: env.LIVE_PREVIEW_TICKET_SECRET,
+    accessTtlMs: Number(env.LIVE_PREVIEW_ACCESS_TTL_MS || 900000),
     maxSessions: Number(env.LIVE_PREVIEW_MAX_SESSIONS || 2),
     idleMs: Number(env.LIVE_PREVIEW_IDLE_MS || 300000),
     activeLeaseRefreshMs: Number(
