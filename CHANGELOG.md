@@ -33,6 +33,9 @@ background page passes. rtex is pinned to release `interleaf-0.0.3-2`.
   through proxies using nonstandard ports.
 - Source-service outages report Failed without restart loops, and startup removes
   disposable session directories left by an earlier service process.
+- Deployment docs: CE toolkit installs must override `GIT_BRIDGE_API_BASE_URL`
+  to `http://sharelatex/api/v0/`; the toolkit's default port 3000 does not serve the
+  git-bridge API on CE, which made every clone fail with 403.
 
 ## 0.1.1 (2026-10-01)
 
