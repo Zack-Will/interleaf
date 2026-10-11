@@ -12,3 +12,11 @@ Dockerfile includes this workspace for its dev and webpack images. Develop web
 and webpack mount it explicitly, while live-preview mounts the whole repository.
 Rebuild older web/webpack images after adding this workspace so their installed
 dependencies contain its workspace link.
+
+Editor source annotations use optional `path`, `doc_id` and half-open
+`range: {start, end}` fields in background and error-paragraph headers. Offsets
+are UTF-16 code units of the named document, not UTF-8 bytes. Background headers
+include `versions.source_revision` for layout ordering. These additions retain
+the existing frame encoding and type ids. A removed or unidentified unit may have
+no range. See `services/live-preview/README.md` for notification resync and
+diagnostics semantics.

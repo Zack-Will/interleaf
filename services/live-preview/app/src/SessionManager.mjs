@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Attribution } from './Attribution.mjs'
+import { utf16Offset } from './Offsets.mjs'
 import {
   encodeFrame,
   decodeFrame,
@@ -82,6 +83,8 @@ export class SessionManager {
         attribution: new Attribution(),
         pdfs: new Map(),
         paragraphs: new Map(),
+        notices: new Map(),
+        diagnostics: new Map(),
         pageLists: new Map(),
         layoutVersion: 0,
         engineGeneration: 0,
@@ -236,6 +239,49 @@ export class SessionManager {
     for (const frame of session.paragraphs.values()) {
       this.send(socket, frame)
     }
+    for (const frame of session.notices.values()) {
+      this.send(socket, frame)
+    }
+    for (const frame of session.diagnostics.values()) {
+      this.send(socket, frame)
+    }
+  }
+
+  async sourceRange(session, parId) {
+    if (parId == null) return {}
+    const engine = session.engine
+    for (const doc of session.docs.values()) {
+      let source
+      await engine.command({ cmd: 'spans', path: doc.path }, reply => {
+        const span = reply.spans.find(span => span.id === parId)
+        if (span) {
+          source = {
+            path: doc.path,
+            doc_id: doc.id,
+            source_revision: span.last_revision,
+            range: {
+              start: utf16Offset(doc.content, span.range.start),
+              end: utf16Offset(doc.content, span.range.end),
+            },
+          }
+        }
+      })
+      if (source) return source
+    }
+    return {}
+  }
+
+  diagnosticItems(session, items = []) {
+    return items.map(item => {
+      const file = item.file
+      const relative =
+        file && path.isAbsolute(file)
+          ? path.relative(session.directory, file)
+          : file?.replace(/^\.\//, '')
+      const insideProject =
+        relative && !relative.startsWith('../') && !path.isAbsolute(relative)
+      return { ...item, file: insideProject ? relative : null }
+    })
   }
 
   noteEdit(session) {
@@ -269,13 +315,24 @@ export class SessionManager {
       const frame = this.broadcast(
         session,
         'paragraph',
-        { ...header, ...attribution, fonts },
+        {
+          ...header,
+          ...attribution,
+          fonts,
+          diagnostics: this.diagnosticItems(session, header.diagnostics),
+          ...(event.status === 'error'
+            ? await this.sourceRange(session, event.par_id)
+            : {}),
+        },
         body
       )
       // Resync must reproduce the last good drawing or removal until the pass
       // snapshot catches up. An error is a notification, not a replacement.
       if (event.status !== 'error') {
         session.paragraphs.set(event.par_id, frame)
+        session.notices.delete(event.par_id)
+      } else {
+        session.notices.set(event.par_id, frame)
       }
     } else if (kind === 'LayoutUpdate') {
       const fonts = {}
@@ -338,14 +395,61 @@ export class SessionManager {
           session.paragraphs.delete(id)
         }
       }
+      // rtex emits diagnostics only when nonempty. Clear a previous pass's
+      // diagnostics when a clean pass arrives, while keeping fresh warnings.
+      if (
+        event.compile?.state === 'Ok' &&
+        !session.backgroundDiagnosticsPending &&
+        session.diagnostics.has('background')
+      ) {
+        session.diagnostics.delete('background')
+        this.broadcast(session, 'diagnostics', {
+          source: 'background',
+          items: [],
+        })
+      }
+      session.backgroundDiagnosticsPending = false
       this.broadcast(session, 'layout', session.layout)
+      const contained = new Set(
+        (event.placements || []).map(unit => unit.par_id)
+      )
+      for (const [id, frame] of session.notices) {
+        const notice = decodeFrame(frame).header
+        if (
+          contained.has(id) &&
+          (notice.versions?.source_revision || 0) <=
+            event.versions.source_revision
+        ) {
+          session.notices.delete(id)
+        }
+      }
     } else if (kind === 'EngineState') {
       session.state = event.state
       this.broadcast(session, 'engine', header)
     } else if (kind === 'BackgroundScheduled') {
-      this.broadcast(session, 'background', header)
+      if (session.attribution.forEvent(event).stale) return
+      const source = await this.sourceRange(session, event.par_id)
+      const revision = session.attribution.units.get(
+        event.par_id
+      )?.source_revision
+      const frame = this.broadcast(session, 'background', {
+        ...header,
+        ...source,
+        versions: {
+          source_revision:
+            header.versions?.source_revision ??
+            revision ??
+            source.source_revision ??
+            0,
+        },
+      })
+      if (event.par_id != null) session.notices.set(event.par_id, frame)
     } else if (kind === 'Diagnostics') {
-      this.broadcast(session, 'diagnostics', header)
+      const items = this.diagnosticItems(session, header.items)
+      const frame = this.broadcast(session, 'diagnostics', { ...header, items })
+      session.diagnostics.set(header.source, frame)
+      if (header.source === 'background')
+        session.backgroundDiagnosticsPending = true
     }
   }
 
@@ -357,6 +461,9 @@ export class SessionManager {
     await session.eventQueue
     session.attribution = new Attribution()
     session.paragraphs.clear()
+    session.notices.clear()
+    session.diagnostics.clear()
+    session.backgroundDiagnosticsPending = false
     session.pageLists.clear()
     session.state = 'Restarting'
     this.broadcast(session, 'engine', { state: 'Restarting', reason })

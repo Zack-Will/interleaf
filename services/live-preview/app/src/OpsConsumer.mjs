@@ -127,7 +127,11 @@ export class OpsConsumer {
           end: edit.end,
           text: edit.text,
         },
-        reply => session.attribution.record(reply.result, op.meta?.user_id)
+        reply => {
+          session.attribution.record(reply.result, op.meta?.user_id)
+          // Keep the mirror in step before buffered engine events are released.
+          doc.content = edit.content
+        }
       )
     }
     await this.materializer.write(session.directory, doc.path, content)
@@ -177,7 +181,10 @@ export class OpsConsumer {
     this.manager.noteEdit(session)
     await session.engine.command(
       { cmd: 'set_document', path: doc.path, text: content },
-      reply => session.attribution.record(reply.result, userId)
+      reply => {
+        session.attribution.record(reply.result, userId)
+        doc.content = content
+      }
     )
     await this.materializer.write(session.directory, doc.path, content)
     doc.content = content

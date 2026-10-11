@@ -74,7 +74,7 @@ async function waitFor(predicate, description, timeout = 30000) {
     await delay(10)
   }
   throw new Error(
-    `Timeout: ${description}. Recent errors: ${errors.map(error => error.message).join('; ')}`
+    `Timeout: ${description}. Recent errors: ${errors.map(error => error.message).join('; ')}. Recent frames: ${JSON.stringify(frames.slice(-6).map(({ type, header }) => ({ type, par_id: header.par_id, status: header.status, reasons: header.reasons, path: header.path, range: header.range })))}`
   )
 }
 
@@ -231,8 +231,10 @@ async function run() {
     baseDir: directory,
     webUrl,
     documentUpdaterUrl,
-    rtexBinary: path.join(rtexRoot, 'target/release/rtex'),
-    texDir: path.join(rtexRoot, 'tex'),
+    rtexBinary:
+      process.env.LIVE_PREVIEW_RTEX_BINARY ||
+      path.join(rtexRoot, 'target/release/rtex'),
+    texDir: process.env.RTEX_TEXDIR || path.join(rtexRoot, 'tex'),
     maxSessions: 1,
     fontRoots: [path.join(rtexRoot, 'build/texlive')],
     memoryBytes: 2 * 1024 ** 3,
@@ -477,6 +479,52 @@ async function run() {
     'PASS two-editor convergence, ordered fan-out, P95 latency and layout max-wait'
   )
 
+  const beforeBackground = frames.length
+  const sourcePosition = currentDocument().content.indexOf('The live')
+  assert.ok(sourcePosition >= 0)
+  await publishOp(
+    editorA,
+    update({ p: sourcePosition, i: '\\paragraph{Run-in} %中😀\n' }, 'alice')
+  )
+  const background = await waitFor(
+    () =>
+      frames
+        .slice(beforeBackground)
+        .find(frame => frame.type === 'background' && frame.header.range),
+    'background source range',
+    60000
+  )
+  assert.equal(background.header.path, 'main.tex')
+  assert.equal(background.header.doc_id, docId)
+  assert.ok(background.header.range.start <= sourcePosition)
+  assert.ok(background.header.range.end <= currentDocument().content.length)
+  assert.ok(
+    currentDocument()
+      .content.slice(background.header.range.start, background.header.range.end)
+      .includes('中😀')
+  )
+  assert.ok(background.header.reasons.length > 0)
+  const spans = await session.engine.command({ cmd: 'spans', path: 'main.tex' })
+  const span = spans.spans.find(span => span.id === background.header.par_id)
+  assert.ok(
+    span.range.end > background.header.range.end,
+    'CJK and emoji byte ranges differ from UTF-16 offsets'
+  )
+  await waitFor(
+    () =>
+      frames
+        .slice(beforeBackground)
+        .some(
+          frame =>
+            frame.type === 'layout' &&
+            frame.header.versions.source_revision >=
+              background.header.versions.source_revision
+        ),
+    'layout incorporates background edit',
+    60000
+  )
+  log('PASS real background reasons and CJK/emoji UTF-16 source range')
+
   state.docs.push({
     id: otherDocId,
     path: 'extra.tex',
@@ -560,7 +608,7 @@ async function run() {
     'Only expected authorization errors'
   )
   log(
-    'Acceptance: 7 passed (real rtex + isolated Redis + fake HTTP; collaboration included)'
+    'Acceptance: 8 passed (real rtex + isolated Redis + fake HTTP; collaboration and source ranges included)'
   )
 }
 

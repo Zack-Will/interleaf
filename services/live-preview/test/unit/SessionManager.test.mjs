@@ -243,7 +243,12 @@ describe('SessionManager', () => {
     await manager.handleEvent(session, paragraph)
     await manager.handleEvent(session, { ...paragraph, status: 'error' })
     manager.resync(session, viewer)
-    expect(decodeFrame(viewer.send.lastCall.args[0]).header.status).toBe('ok')
+    expect(decodeFrame(viewer.send.getCall(-2).args[0]).header.status).toBe(
+      'ok'
+    )
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.status).toBe(
+      'error'
+    )
     await manager.handleEvent(session, {
       ...paragraph,
       status: 'removed',
@@ -267,6 +272,148 @@ describe('SessionManager', () => {
       versions: { source_revision: 2 },
     })
     expect(session.paragraphs.has(1)).toBe(false)
+  })
+
+  it('attaches UTF-16 source ranges across files and replays pending markers and diagnostics', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    session.docs.set('main', { id: 'main', path: 'main.tex', content: 'a' })
+    session.docs.set('chapter', {
+      id: 'chapter',
+      path: 'chapters/intro.tex',
+      content: '中😀\nparagraph',
+    })
+    engines[0].command.callsFake(async (command, onReply) => {
+      onReply?.({
+        spans:
+          command.path === 'main.tex'
+            ? []
+            : [{ id: 7, range: { start: 7, end: 17 } }],
+      })
+    })
+    await manager.handleEvent(session, {
+      event: 'BackgroundScheduled',
+      par_id: 7,
+      reasons: ['unverified macro'],
+      versions: { source_revision: 2 },
+    })
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header).toMatchObject({
+      path: 'chapters/intro.tex',
+      doc_id: 'chapter',
+      range: { start: 3, end: 13 },
+    })
+    await manager.handleEvent(session, {
+      event: 'Diagnostics',
+      source: 'background',
+      items: [
+        {
+          file: '/tmp/p/chapters/intro.tex',
+          line: 2,
+          message: 'Unknown command',
+        },
+      ],
+    })
+    manager.resync(session, viewer)
+    expect(decodeFrame(viewer.send.getCall(-2).args[0]).type).toBe('background')
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.items[0].file).toBe(
+      'chapters/intro.tex'
+    )
+    await manager.handleEvent(session, {
+      event: 'ParagraphUpdate',
+      par_id: 7,
+      status: 'error',
+      diagnostics: [{ message: 'Undefined control sequence' }],
+      versions: { source_revision: 3 },
+    })
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.range).toEqual({
+      start: 3,
+      end: 13,
+    })
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      placements: [{ par_id: 7, fragments: [] }],
+      versions: { source_revision: 2 },
+    })
+    expect(session.notices.has(7)).toBe(true)
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      placements: [{ par_id: 7, fragments: [] }],
+      versions: { source_revision: 3 },
+    })
+    expect(session.notices.has(7)).toBe(false)
+    await manager.handleEvent(session, {
+      event: 'BackgroundScheduled',
+      par_id: 7,
+    })
+    await manager.handleEvent(session, {
+      event: 'ParagraphUpdate',
+      par_id: 7,
+      status: 'ok',
+      versions: { source_revision: 4 },
+    })
+    expect(session.notices.has(7)).toBe(false)
+  })
+
+  it('keeps fresh warnings on successful layouts and clears them after the next clean pass', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    const layout = {
+      event: 'LayoutUpdate',
+      compile: { state: 'Ok' },
+      placements: [],
+      versions: { source_revision: 1 },
+    }
+    await manager.handleEvent(session, {
+      event: 'Diagnostics',
+      source: 'background',
+      items: [
+        {
+          severity: 'warning',
+          message: 'Reference undefined',
+          file: './main.tex',
+          line: 3,
+        },
+      ],
+    })
+    await manager.handleEvent(session, layout)
+    expect(session.diagnostics.has('background')).toBe(true)
+    await manager.handleEvent(session, layout)
+    expect(session.diagnostics.has('background')).toBe(false)
+    expect(decodeFrame(viewer.send.getCall(-2).args[0])).toMatchObject({
+      type: 'diagnostics',
+      header: { source: 'background', items: [] },
+    })
+  })
+
+  it('uses the edit revision on unversioned background events and ignores older notices', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    session.attribution.record(
+      { edit_id: 2, source_revision: 5, outcome: { touched: [7] } },
+      'alice'
+    )
+    await manager.handleEvent(session, {
+      event: 'BackgroundScheduled',
+      par_id: 7,
+      edit_id: 1,
+      reasons: ['old'],
+    })
+    expect(session.notices.size).toBe(0)
+    await manager.handleEvent(session, {
+      event: 'BackgroundScheduled',
+      par_id: 7,
+      edit_id: 2,
+      reasons: ['new'],
+    })
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.versions).toEqual({
+      source_revision: 5,
+    })
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      placements: [{ par_id: 7, fragments: [] }],
+      versions: { source_revision: 4 },
+    })
+    expect(session.notices.has(7)).toBe(true)
   })
 
   it('forces a layout after three seconds despite continuous edits', async () => {

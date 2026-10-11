@@ -1,5 +1,26 @@
 import { PreviewError } from './Errors.mjs'
 
+export function utf16Offset(text, position) {
+  const bytes = Buffer.from(text, 'utf8')
+  if (
+    !Number.isSafeInteger(position) ||
+    position < 0 ||
+    position > bytes.length
+  ) {
+    throw new PreviewError(
+      'invalid_offset',
+      'Byte offset is outside the document'
+    )
+  }
+  if (position < bytes.length && (bytes[position] & 0xc0) === 0x80) {
+    throw new PreviewError(
+      'invalid_offset',
+      'Byte offset splits a UTF-8 character'
+    )
+  }
+  return bytes.subarray(0, position).toString('utf8').length
+}
+
 export function utf8Offset(text, position) {
   if (
     !Number.isSafeInteger(position) ||

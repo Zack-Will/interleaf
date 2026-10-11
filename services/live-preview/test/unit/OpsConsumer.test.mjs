@@ -80,6 +80,27 @@ describe('OpsConsumer', () => {
       session.attribution.forEvent({ par_id: 1, edit_id: 2 }).user_id
     ).toBe('alice')
   })
+  it('updates the text mirror at each reply before events or asynchronous disk writes', async () => {
+    const mirrored = []
+    session.engine.command.callsFake(async (command, onReply) => {
+      onReply({
+        result: { edit_id: 1, source_revision: 1, outcome: { touched: [1] } },
+      })
+      mirrored.push(doc.content)
+    })
+    materializer.write.callsFake(async () => {
+      expect(doc.content).toBe('中😀文bc')
+    })
+    await consume({
+      v: 0,
+      op: [
+        { p: 3, d: 'a' },
+        { p: 3, i: '文' },
+      ],
+    })
+    expect(mirrored).toEqual(['中😀bc', '中😀文bc'])
+  })
+
   it('replays gaps from document-updater in version order', async () => {
     fetchDocument.resolves({
       lines: ['中😀xyabc'],
