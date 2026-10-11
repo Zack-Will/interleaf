@@ -77,7 +77,7 @@ Patches this design needs:
 | `serve`: binary display lists                | JSON display lists are 3x the binary size. Length-prefixed binary frames on stdout, opt-in.                                    | Yes                   |
 
 Building: the fork's own CI builds and tests rtex and publishes a release
-(`interleaf-<upstream version>-<n>`, e.g. `interleaf-0.0.3-1`) with the Linux x86_64
+(`interleaf-<upstream version>-<n>`, e.g. `interleaf-0.0.3-2`) with the Linux x86_64
 archive and its SHA-256. `server-ce/Dockerfile` downloads the pinned release and checks
 the hash. Building in the fork keeps a Rust toolchain and a cargo cache out of the image
 build, whose GitHub Actions cache the TeX layers already nearly fill, and the fork's CI

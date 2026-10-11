@@ -48,8 +48,8 @@ RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
 
 # The fork publishes the engine and its matching support files together.
 # Keep them outside TEXMFLOCAL, which toolkit operators can mount over.
-ARG RTEX_RELEASE=interleaf-0.0.3-1
-ARG RTEX_SHA256=84b484d6fb9abb243a695ff4c80ce4bbf0da7a0b8dfc4976f5478bc69eb61395
+ARG RTEX_RELEASE=interleaf-0.0.3-2
+ARG RTEX_SHA256=3e56e697c93dbc1cd3df39ad49b16d31dc3efa31438c3edcfefaa1dcf084e6c3
 ENV RTEX_TEXDIR=/usr/local/share/rtex/tex
 RUN curl --fail --location --retry 3 \
       "https://github.com/Zack-Will/realtime-tex/releases/download/${RTEX_RELEASE}/rtex-x86_64-unknown-linux-gnu.tar.gz" \

@@ -102,7 +102,7 @@ services:
 ## Live-preview P2 协议验收
 
 从仓库根目录运行 `corepack yarn install` 和 `develop/bin/setup-live-preview`。
-后者下载并校验 rtex release `interleaf-0.0.3-1`，提取到被 git 忽略的
+后者下载并校验 rtex release `interleaf-0.0.3-2`，提取到被 git 忽略的
 `develop/.live-preview-rtex/`，并从本机 CE 6.2.4 镜像读取现成 manifest。
 预览容器使用该镜像的 TeX Live 2025、只读挂载源码，以 `www-data` 运行，最多一个会话。
 

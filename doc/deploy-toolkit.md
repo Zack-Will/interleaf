@@ -195,9 +195,9 @@ services:
 Drop `.cls` and `.sty` files under `data/texmf-local/tex/latex/<name>/`, then run
 `docker exec sharelatex mktexlsr`. That tree is untouched by image updates.
 
-The image downloads rtex release `interleaf-0.0.3-1` from the fork immediately
+The image downloads rtex release `interleaf-0.0.3-2` from the fork immediately
 after the TeX Live layers, checks SHA-256
-`84b484d6fb9abb243a695ff4c80ce4bbf0da7a0b8dfc4976f5478bc69eb61395`, and installs
+`3e56e697c93dbc1cd3df39ad49b16d31dc3efa31438c3edcfefaa1dcf084e6c3`, and installs
 the executable at `/usr/local/bin/rtex`. Its matching support files live at
 `/usr/local/share/rtex/tex` (`RTEX_TEXDIR`), outside operator-mounted `texmf-local`.
 The workflow inputs `rtex_release` / `rtex_sha256` map to build arguments
