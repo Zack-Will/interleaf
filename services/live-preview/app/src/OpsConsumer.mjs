@@ -75,13 +75,23 @@ export class OpsConsumer {
       return
     }
     return this.manager.enqueue(session, async () => {
-      if (channel === 'applied-ops' && message.op && !message.op.dup) {
-        const doc = session.docs.get(message.doc_id)
-        if (doc) {
-          await this.applyOrRecover(session, doc, message.op)
+      try {
+        if (channel === 'applied-ops' && message.op && !message.op.dup) {
+          const doc = session.docs.get(message.doc_id)
+          if (doc) {
+            await this.applyOrRecover(session, doc, message.op)
+          }
+        } else if (channel === 'editor-events') {
+          await this.structure(session, message)
         }
-      } else if (channel === 'editor-events') {
-        await this.structure(session, message)
+      } catch (error) {
+        if (
+          typeof error.code !== 'string' ||
+          !error.code.startsWith('engine_')
+        ) {
+          await this.manager.failSource(session, error)
+        }
+        throw error
       }
     })
   }
@@ -117,6 +127,7 @@ export class OpsConsumer {
       content = edit.content
       edits.push(edit)
     }
+    this.materializer.checkSize(content)
     for (const edit of edits) {
       this.manager.noteEdit(session)
       await session.engine.command(
@@ -178,6 +189,7 @@ export class OpsConsumer {
 
   async replace(session, doc, remote, userId) {
     const content = documentContent(remote)
+    this.materializer.checkSize(content)
     this.manager.noteEdit(session)
     await session.engine.command(
       { cmd: 'set_document', path: doc.path, text: content },
@@ -194,18 +206,23 @@ export class OpsConsumer {
   async checkDrift() {
     for (const session of this.manager.sessions.values()) {
       await this.manager.enqueue(session, async () => {
-        for (const doc of session.docs.values()) {
-          const remote = await this.fetchDocument(
-            session.projectId,
-            doc.id,
-            doc.version
-          )
-          if (
-            remote.version !== doc.version ||
-            documentContent(remote) !== doc.content
-          ) {
-            await this.recover(session, doc)
+        try {
+          for (const doc of session.docs.values()) {
+            const remote = await this.fetchDocument(
+              session.projectId,
+              doc.id,
+              doc.version
+            )
+            if (
+              remote.version !== doc.version ||
+              documentContent(remote) !== doc.content
+            ) {
+              await this.recover(session, doc)
+            }
           }
+        } catch (error) {
+          await this.manager.failSource(session, error)
+          throw error
         }
       })
     }

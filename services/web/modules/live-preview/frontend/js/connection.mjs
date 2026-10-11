@@ -16,12 +16,13 @@ export function connectPreview({
   let retry
   let ping
   let handshake
+  let unavailable = false
   const abort = new AbortController()
 
   function schedule() {
     timers.clearInterval(ping)
     timers.clearTimeout(handshake)
-    if (stopped) return
+    if (stopped || unavailable) return
     onState('Reconnecting')
     retry = timers.setTimeout(open, reconnectDelay(attempt++))
   }
@@ -53,6 +54,12 @@ export function connectPreview({
             onState('Connected')
           }
           onFrame(frame)
+          if (frame.type === 'busy') {
+            unavailable = true
+            timers.clearInterval(ping)
+            timers.clearTimeout(handshake)
+            onState('Unavailable')
+          }
         } catch {
           // A malformed/unsupported frame requires a fresh session snapshot.
           socket.close(1002, 'Invalid preview frame')

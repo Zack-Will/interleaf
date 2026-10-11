@@ -38,8 +38,10 @@ describe('OpsConsumer', () => {
       noteEdit: sinon.spy(),
       restart: sinon.stub().resolves(),
       stop: sinon.stub().resolves(),
+      failSource: sinon.stub().resolves(),
     }
     materializer = {
+      checkSize: sinon.stub(),
       write: sinon.stub().resolves(),
       snapshot: sinon.stub(),
       writeSnapshot: sinon.stub().resolves(),
@@ -218,4 +220,29 @@ describe('OpsConsumer', () => {
     })
     expect(manager.stop.callCount).toBe(2)
   })
+  it.each(['document', 'snapshot', 'drift'])(
+    'reports %s service failures without restarting rtex',
+    async source => {
+      const error = Object.assign(new Error('unavailable'), {
+        code: 'upstream_failed',
+      })
+      fetchDocument.rejects(error)
+      materializer.snapshot.rejects(error)
+      let result
+      if (source === 'document')
+        result = consume({ v: 5, op: [{ p: 0, i: 'x' }] })
+      else if (source === 'snapshot')
+        result = consumer.consume('editor-events', {
+          room_id: 'p',
+          message: 'rootDocUpdated',
+          payload: [],
+        })
+      else result = consumer.checkDrift()
+      await expect(result).rejects.toBe(error)
+      expect(manager.failSource.calledOnceWithExactly(session, error)).toBe(
+        true
+      )
+      expect(manager.restart.called).toBe(false)
+    }
+  )
 })

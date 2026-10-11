@@ -91,4 +91,27 @@ describe('live-preview connection', function () {
     await tick(20000)
     expect(sockets[1].readyState).to.equal(3)
   })
+  it('reconnects after a service restart and resyncs the rebuilt session', async function () {
+    await tick(0)
+    sockets[0].onopen()
+    sockets[0].onmessage({ data: encodeFrame('hello', { layout_version: 4 }) })
+    sockets[0].close()
+    await tick(500)
+    sockets[1].onopen()
+    sockets[1].onmessage({ data: encodeFrame('hello', { layout_version: 0 }) })
+    expect(getTicket.callCount).to.equal(2)
+    expect(JSON.parse(sockets[1].send.firstCall.args[0]).cmd).to.equal('resync')
+    expect(onState.lastCall.args[0]).to.equal('Connected')
+  })
+  it('leaves busy and unavailable sources for explicit retry without a reconnect loop', async function () {
+    await tick(0)
+    sockets[0].onopen()
+    sockets[0].onmessage({
+      data: encodeFrame('busy', { code: 'upstream_failed' }),
+    })
+    sockets[0].close()
+    await tick(120000)
+    expect(getTicket.callCount).to.equal(1)
+    expect(onState.lastCall.args[0]).to.equal('Unavailable')
+  })
 })
