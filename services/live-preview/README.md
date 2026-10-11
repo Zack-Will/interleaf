@@ -314,6 +314,11 @@ protocol acceptance uses its own throwaway Redis. Both stop all test processes
 and remove their session trees. Exact final numbers and transcripts are in
 [the consolidated verification](../../doc/design/live-preview-verification.md).
 
+`node test/acceptance/proxy-origin.mjs` separately tests the actual production and
+development nginx WebSocket locations in throwaway image containers. It checks
+same-origin upgrades with a public port and cross-origin rejection. The proxy must
+forward `$http_host`, preserving that port, for the service's Origin/Host check.
+
 ## P4 editor integration
 
 The module uses the existing `sourceEditorExtensions` and

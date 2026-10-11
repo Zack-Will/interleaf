@@ -104,6 +104,16 @@ Hardening acceptance: 11 passed (real rtex, full TeX Live; sequential)
 CLEANUP stopped service and removed all session/build directories
 ```
 
+`node test/acceptance/proxy-origin.mjs` validates each actual WebSocket location
+using a sequential throwaway nginx container and an isolated fake preview backend.
+It forwards a nonstandard public port and checks a foreign origin is still refused:
+
+```text
+PASS nginx ../../../../server-ce/nginx/overleaf.conf: port-preserving same-origin WS and cross-origin 403
+PASS nginx ../../../../develop/live-preview-nginx.conf: port-preserving same-origin WS and cross-origin 403
+Proxy acceptance: 2 passed (real nginx; no production/develop services)
+```
+
 | Workload                    | RSS peak KiB | RSS end KiB | Virtual peak per process KiB | Session disk KiB | Build disk KiB |
 | --------------------------- | -----------: | ----------: | ---------------------------: | ---------------: | -------------: |
 | Cleave, 13 pages            |    1,779,084 |     672,308 |                      645,800 |           73,272 |         56,512 |
@@ -156,6 +166,11 @@ sub2api-redis Up 3 days (healthy)
 ```
 
 The requested filter also matches `sub2api-redis`; this task did not interact with it.
+
+The proxy regression fixes `$host` dropping the public port: live-preview
+WebSocket locations now forward `$http_host`. Actual nginx acceptance covers
+both the port-preserving upgrade and cross-origin 403. This is P5's only changed
+upstream directive and is justified in its focused commit message.
 
 The historical records below preserve their original dates/outputs. P4's browser
 handoff checklist was written before the orchestrator's subsequent acceptance;

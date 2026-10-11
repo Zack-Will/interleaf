@@ -90,7 +90,7 @@ on CLSI. See [the user guide](live-preview.md).
 `services/live-preview/` is a new Node workspace and runit service: materialization,
 read-only applied-op consumption, session/resource controls, paranoid LuaLaTeX
 wrapper, authenticated HTTP/WebSocket transport, font outlines and isolated real
-engine acceptance (6,745 lines including tests/docs).
+engine acceptance (6,896 lines including tests/docs).
 `libraries/live-preview-protocol/` is a new shared workspace
 (579 lines including tests/docs) for browser-safe frame/display-list codecs and
 Node-only signed tickets. Neither library nor service modifies project storage or
@@ -108,7 +108,7 @@ Kept deliberately small. The only behavioural changes to core code are these.
 | `services/web/config/settings.defaults.js`                                        | +99/-6 | Settings for the new modules, their module import order and their frontend slots                       |
 | `server-ce/config/settings.js`                                                    | +61/-1 | The same settings for the production image                                                             |
 | `services/web/app/src/Features/Project/ProjectOptionsHandler.mjs`                 | +24    | Set a project's track-changes state, which the review panel needs                                      |
-| `server-ce/nginx/overleaf.conf`                                                   | +42    | Proxy `/git/` and dedicated live-preview HTTP/WebSocket routes                                         |
+| `server-ce/nginx/overleaf.conf`                                                   | +43/-1 | Proxy `/git/` and preview routes; preserve the public WebSocket Host port                              |
 | `server-ce/Dockerfile`                                                            | +57    | Optional TeX Live scheme and checksum-pinned rtex installation                                         |
 | History panel: `origin.tsx`, `history-version.tsx`, `history-version-message.tsx` | +51    | Render the agent's name and the message it sent under the author line                                  |
 | `services/web/package.json`                                                       | +4/-2  | Runtime `diff` and shared protocol dependency                                                          |
@@ -118,43 +118,44 @@ Kept deliberately small. The only behavioural changes to core code are these.
 The table below measures only live-preview work against the commit immediately
 before P1 (`ce6c93d82b^`), including P1-P5. This avoids counting unrelated earlier
 fork changes in the same files. New module/service/library files are listed above.
-No upstream file is changed by P5 itself.
+P5 changes one upstream nginx directive to preserve the public Host port for
+WebSocket Origin checks; the fork's development gateway receives the same fix.
 
-| File                                                                                | Added/deleted lines | Purpose                                              |
-| ----------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------- |
-| `.github/workflows/build-image.yml`                                                 | +10/-0              | Pin rtex release/hash build inputs                   |
-| `package.json`                                                                      | +2/-0               | Register service and protocol workspaces             |
-| `yarn.lock`                                                                         | +90/-2              | Resolve workspace/runtime dependencies               |
-| `server-ce/Dockerfile`                                                              | +17/-0              | Download and verify the rtex archive                 |
-| `server-ce/config/env.sh`                                                           | +9/-0               | Private web/document-updater and pubsub Redis wiring |
-| `server-ce/config/settings.js`                                                      | +12/-3              | Gated module settings                                |
-| `server-ce/init_scripts/100_make_live_preview_data_dir.sh`                          | +9/-0               | Service-owned session storage and required secret    |
-| `server-ce/runit/live-preview-overleaf/run`                                         | +14/-0              | Supervised www-data service                          |
-| `server-ce/logrotate/overleaf`                                                      | +1/-0               | Preview log rotation                                 |
-| `server-ce/nginx/overleaf.conf`                                                     | +19/-0              | Loopback PDF/glyph/WebSocket proxy                   |
-| `server-ce/services.js`                                                             | +3/-0               | Production dependency installation                   |
-| `services/web/Dockerfile`                                                           | +3/-0               | Copy protocol workspace for development builds       |
-| `services/web/package.json`                                                         | +1/-0               | Shared protocol dependency                           |
-| `services/web/config/settings.defaults.js`                                          | +36/-4              | Module order, settings and frontend slots            |
-| `services/web/app/src/Features/Project/ProjectController.mjs`                       | +1/-0               | Editor feature flag                                  |
-| `services/web/app/views/project/editor/_meta.pug`                                   | +1/-0               | Render editor feature flag                           |
-| `services/web/frontend/js/utils/meta.ts`                                            | +1/-0               | Typed feature flag                                   |
-| `services/web/frontend/js/features/ide-react/editor/share-js-doc.ts`                | +12/-2              | Configurable collaborative flush delay               |
-| `services/web/frontend/js/shared/flush-delay.mjs`                                   | +17/-0              | Optional-module delay store                          |
-| `services/web/frontend/js/features/pdf-preview/components/pdf-compile-button.tsx`   | +12/-1              | Module dropdown slot                                 |
-| `services/web/frontend/js/features/pdf-preview/components/pdf-js-viewer.tsx`        | +13/-10             | Expose viewer instance and lifecycle                 |
-| `services/web/frontend/js/features/pdf-preview/components/pdf-preview-provider.tsx` | +16/-2              | Viewer context bridge                                |
-| `services/web/frontend/js/features/pdf-preview/util/pdf-js-wrapper.ts`              | +14/-8              | Plain private PDF loading                            |
-| `services/web/frontend/js/shared/context/local-compile-context.tsx`                 | +5/-1               | Preview URL and autocompile hook                     |
-| `services/web/frontend/js/shared/context/detach-compile-context.tsx`                | +34/-7              | Detached metadata and independent preview hooks      |
-| `services/web/frontend/extracted-translations.json`                                 | +7/-0               | Module translations                                  |
-| `services/web/locales/en.json`                                                      | +7/-0               | Module translations                                  |
-| `develop/.gitignore`                                                                | +2/-1               | Ignore downloaded rtex                               |
-| `develop/bin/setup-live-preview`                                                    | +21/-0              | Verify and unpack pinned archive                     |
-| `develop/docker-compose.yml`                                                        | +47/-0              | Source-mounted service and protocol mounts           |
-| `develop/docker-compose.live-preview.yml`                                           | +20/-0              | Isolated protocol gateway overlay                    |
-| `develop/live-preview-nginx.conf`                                                   | +25/-0              | Optional development proxy                           |
-| `develop/webpack.config.dev-env.js`                                                 | +5/-0               | Preview HTTP/WebSocket proxy                         |
+| File                                                                                | Added/deleted lines | Purpose                                                  |
+| ----------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------- |
+| `.github/workflows/build-image.yml`                                                 | +10/-0              | Pin rtex release/hash build inputs                       |
+| `package.json`                                                                      | +2/-0               | Register service and protocol workspaces                 |
+| `yarn.lock`                                                                         | +90/-2              | Resolve workspace/runtime dependencies                   |
+| `server-ce/Dockerfile`                                                              | +17/-0              | Download and verify the rtex archive                     |
+| `server-ce/config/env.sh`                                                           | +9/-0               | Private web/document-updater and pubsub Redis wiring     |
+| `server-ce/config/settings.js`                                                      | +12/-3              | Gated module settings                                    |
+| `server-ce/init_scripts/100_make_live_preview_data_dir.sh`                          | +9/-0               | Service-owned session storage and required secret        |
+| `server-ce/runit/live-preview-overleaf/run`                                         | +14/-0              | Supervised www-data service                              |
+| `server-ce/logrotate/overleaf`                                                      | +1/-0               | Preview log rotation                                     |
+| `server-ce/nginx/overleaf.conf`                                                     | +20/-1              | Loopback PDF/glyph/WebSocket proxy, preserving Host port |
+| `server-ce/services.js`                                                             | +3/-0               | Production dependency installation                       |
+| `services/web/Dockerfile`                                                           | +3/-0               | Copy protocol workspace for development builds           |
+| `services/web/package.json`                                                         | +1/-0               | Shared protocol dependency                               |
+| `services/web/config/settings.defaults.js`                                          | +36/-4              | Module order, settings and frontend slots                |
+| `services/web/app/src/Features/Project/ProjectController.mjs`                       | +1/-0               | Editor feature flag                                      |
+| `services/web/app/views/project/editor/_meta.pug`                                   | +1/-0               | Render editor feature flag                               |
+| `services/web/frontend/js/utils/meta.ts`                                            | +1/-0               | Typed feature flag                                       |
+| `services/web/frontend/js/features/ide-react/editor/share-js-doc.ts`                | +12/-2              | Configurable collaborative flush delay                   |
+| `services/web/frontend/js/shared/flush-delay.mjs`                                   | +17/-0              | Optional-module delay store                              |
+| `services/web/frontend/js/features/pdf-preview/components/pdf-compile-button.tsx`   | +12/-1              | Module dropdown slot                                     |
+| `services/web/frontend/js/features/pdf-preview/components/pdf-js-viewer.tsx`        | +13/-10             | Expose viewer instance and lifecycle                     |
+| `services/web/frontend/js/features/pdf-preview/components/pdf-preview-provider.tsx` | +16/-2              | Viewer context bridge                                    |
+| `services/web/frontend/js/features/pdf-preview/util/pdf-js-wrapper.ts`              | +14/-8              | Plain private PDF loading                                |
+| `services/web/frontend/js/shared/context/local-compile-context.tsx`                 | +5/-1               | Preview URL and autocompile hook                         |
+| `services/web/frontend/js/shared/context/detach-compile-context.tsx`                | +34/-7              | Detached metadata and independent preview hooks          |
+| `services/web/frontend/extracted-translations.json`                                 | +7/-0               | Module translations                                      |
+| `services/web/locales/en.json`                                                      | +7/-0               | Module translations                                      |
+| `develop/.gitignore`                                                                | +2/-1               | Ignore downloaded rtex                                   |
+| `develop/bin/setup-live-preview`                                                    | +21/-0              | Verify and unpack pinned archive                         |
+| `develop/docker-compose.yml`                                                        | +47/-0              | Source-mounted service and protocol mounts               |
+| `develop/docker-compose.live-preview.yml`                                           | +20/-0              | Isolated protocol gateway overlay                        |
+| `develop/live-preview-nginx.conf`                                                   | +25/-0              | Optional development proxy                               |
+| `develop/webpack.config.dev-env.js`                                                 | +5/-0               | Preview HTTP/WebSocket proxy                             |
 
 Two upstream bugs are fixed along the way: the invite-token encryptor options
 were assigned onto `module.exports` before the settings file replaces it, so

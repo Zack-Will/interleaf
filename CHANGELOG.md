@@ -29,6 +29,8 @@ background page passes. rtex is pinned to release `interleaf-0.0.3-2`.
   escape after rtex's native environment overrides.
 - Preview sockets enforce origin, connection, incoming-message and heartbeat
   limits; PDFs and glyphs require fresh authorized requests and prevent stale caches.
+- Preview nginx preserves public Host ports for same-origin WebSocket connections
+  through proxies using nonstandard ports.
 - Source-service outages report Failed without restart loops, and startup removes
   disposable session directories left by an earlier service process.
 
