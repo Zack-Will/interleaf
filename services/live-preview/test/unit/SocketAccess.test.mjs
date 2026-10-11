@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import sinon from 'sinon'
 import { createSocketAccess } from '../../app/src/SocketAccess.mjs'
-import { verifyAccessToken } from '../../app/src/Tickets.mjs'
-import { decodeFrame } from '../../app/src/Frames.mjs'
+import { verifyAccessToken } from '@overleaf/live-preview-protocol/Tickets.mjs'
+import { decodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'
 
 describe('socket access renewal', () => {

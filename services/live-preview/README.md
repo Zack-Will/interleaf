@@ -44,7 +44,9 @@ Tickets are `base64url(JSON).base64url(HMAC-SHA256)` without padding. JSON claim
 are `{ "project": "24-hex-id", "user": "user-id", "kind": "open", "expiry": 1234567890000 }`.
 Expiry is Unix milliseconds, at most 60 seconds in the future. The HMAC input is
 the **encoded payload string**, signed with `LIVE_PREVIEW_TICKET_SECRET`.
-`app/src/Tickets.mjs` exports the issuer helper for P2 and tests. Web mints
+`@overleaf/live-preview-protocol/Tickets.mjs` exports the shared issuer and verifier
+helpers. The library's separate `Frames.mjs` and `DisplayList.mjs` entries work in Node
+and browsers without importing Node crypto. Web mints
 `kind: 'open'`; WS upgrades accept only that kind or legacy tickets without `kind`.
 Existing sockets continue after opening-ticket expiry.
 Authenticated viewers use their user id; anonymous link viewers who pass the

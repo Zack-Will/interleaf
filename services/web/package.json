@@ -89,6 +89,7 @@
     "@node-saml/passport-saml": "^5.1.0",
     "@overleaf/access-token-encryptor": "workspace:*",
     "@overleaf/fetch-utils": "workspace:*",
+    "@overleaf/live-preview-protocol": "workspace:*",
     "@overleaf/logger": "workspace:*",
     "@overleaf/metrics": "workspace:*",
     "@overleaf/migrations": "workspace:*",

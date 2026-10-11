@@ -7,8 +7,11 @@ import {
   createTicket,
   createAccessToken,
   verifyAccessToken,
-} from '../../app/src/Tickets.mjs'
-import { encodeFrame, decodeFrame } from '../../app/src/Frames.mjs'
+} from '@overleaf/live-preview-protocol/Tickets.mjs'
+import {
+  encodeFrame,
+  decodeFrame,
+} from '@overleaf/live-preview-protocol/Frames.mjs'
 import { createHttpClients } from '../../app/src/HttpClients.mjs'
 import { createService } from '../../app/src/Service.mjs'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'

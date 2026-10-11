@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { connectPreview } from '../../../frontend/js/connection.mjs'
-import { encodeFrame } from '../../../../../../live-preview/app/src/Frames.mjs'
+import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 describe('live-preview connection', function () {
   let clock

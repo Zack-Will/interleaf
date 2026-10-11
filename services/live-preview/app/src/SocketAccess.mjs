@@ -1,5 +1,5 @@
-import { createAccessToken } from './Tickets.mjs'
-import { encodeFrame } from './Frames.mjs'
+import { createAccessToken } from '@overleaf/live-preview-protocol/Tickets.mjs'
+import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 export function createSocketAccess({ socket, claims, settings, send }) {
   const ttlMs = settings.accessTtlMs

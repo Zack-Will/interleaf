@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import { PreviewError } from './Errors.mjs'
+import { ProtocolError as PreviewError } from './Errors.mjs'
 
 export function validateProject(project) {
   if (!/^[a-f0-9]{24}$/i.test(project || '')) {

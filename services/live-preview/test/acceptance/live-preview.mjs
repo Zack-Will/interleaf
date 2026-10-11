@@ -14,8 +14,11 @@ import redis from '@overleaf/redis-wrapper'
 import WebSocket from 'ws'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'
 import { createService } from '../../app/src/Service.mjs'
-import { createTicket, createAccessToken } from '../../app/src/Tickets.mjs'
-import { decodeFrame } from '../../app/src/Frames.mjs'
+import {
+  createTicket,
+  createAccessToken,
+} from '@overleaf/live-preview-protocol/Tickets.mjs'
+import { decodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 const runFile = promisify(execFile)
 const project = 'a'.repeat(24)

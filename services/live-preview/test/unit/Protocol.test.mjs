@@ -6,8 +6,12 @@ import {
   verifyTicket,
   createAccessToken,
   verifyAccessToken,
-} from '../../app/src/Tickets.mjs'
-import { encodeFrame, decodeFrame, frameTypes } from '../../app/src/Frames.mjs'
+} from '@overleaf/live-preview-protocol/Tickets.mjs'
+import {
+  encodeFrame,
+  decodeFrame,
+  frameTypes,
+} from '@overleaf/live-preview-protocol/Frames.mjs'
 import { Attribution } from '../../app/src/Attribution.mjs'
 
 const project = 'a'.repeat(24)
@@ -119,7 +123,8 @@ describe('frames', () => {
   it.each(Object.keys(frameTypes))(
     'round trips %s with binary payload',
     type => {
-      const body = Buffer.from([0, 255, 12])
+      const body =
+        type === 'paragraph' ? new Uint8Array([0, 255, 12]) : new Uint8Array()
       const frame = encodeFrame(type, { text: '中文😀' }, body)
       expect(frame[0]).toBe(frameTypes[type])
       expect(decodeFrame(frame)).toEqual({

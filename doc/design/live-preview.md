@@ -136,6 +136,10 @@ One session per project, shared by every viewer of that project.
 
 ### 3.3 Client protocol (WebSocket, `/live-preview/ws`)
 
+Wire codecs and signed tickets live in `libraries/live-preview-protocol`, shared
+by web and the preview service. Browser consumers import the frame/display-list
+entries separately from the Node-only ticket entry.
+
 Server to client, binary frames with a one-byte type and a JSON header, then the
 display list in rtex's binary format where there is one:
 

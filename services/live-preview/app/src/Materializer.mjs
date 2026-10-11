@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { PreviewError } from './Errors.mjs'
-import { validateProject } from './Tickets.mjs'
+import { validateProject } from '@overleaf/live-preview-protocol/Tickets.mjs'
 
 export function projectPath(directory, relative) {
   if (

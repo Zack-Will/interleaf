@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { encodeFrame } from '../../../../../../live-preview/app/src/Frames.mjs'
-import { layoutRowRects } from '../../../../../../live-preview/app/src/DisplayList.mjs'
+import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
+import { layoutRowRects } from '@overleaf/live-preview-protocol/DisplayList.mjs'
 import {
   decodeFrame,
   decodeDisplayList,

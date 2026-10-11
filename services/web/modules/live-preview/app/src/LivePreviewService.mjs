@@ -1,4 +1,4 @@
-import { createTicket } from '../../../../../live-preview/app/src/Tickets.mjs'
+import { createTicket } from '@overleaf/live-preview-protocol/Tickets.mjs'
 import { LivePreviewError } from './Errors.mjs'
 
 export function requireEnabled(settings) {

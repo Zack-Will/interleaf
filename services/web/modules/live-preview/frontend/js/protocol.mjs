@@ -1,31 +1,5 @@
-export { decodeDisplayList } from '../../../../../live-preview/app/src/DisplayList.mjs'
-
-const types = [
-  'hello',
-  'paragraph',
-  'layout',
-  'background',
-  'diagnostics',
-  'engine',
-  'busy',
-  'access',
-]
-const decoder = new TextDecoder('utf-8', { fatal: true })
-
-export function decodeFrame(input) {
-  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input)
-  if (bytes.length < 5) throw new Error('Truncated preview frame')
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const type = types[bytes[0] - 1]
-  const end = 5 + view.getUint32(1, true)
-  if (!type || end > bytes.length) throw new Error('Invalid preview frame')
-  const header = JSON.parse(decoder.decode(bytes.subarray(5, end)))
-  if (!header || typeof header !== 'object' || Array.isArray(header))
-    throw new Error('Invalid preview header')
-  if (type !== 'paragraph' && end !== bytes.length)
-    throw new Error('Unexpected preview body')
-  return { type, header, body: bytes.subarray(end) }
-}
+export { decodeDisplayList } from '@overleaf/live-preview-protocol/DisplayList.mjs'
+export { decodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 export function accessUrl(path, access) {
   const url = new URL(path, window.location.origin)

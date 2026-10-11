@@ -4,7 +4,7 @@ import { createLivePreviewService } from '../../../app/src/LivePreviewService.mj
 import {
   verifyTicket,
   verifyAccessToken,
-} from '../../../../../../live-preview/app/src/Tickets.mjs'
+} from '@overleaf/live-preview-protocol/Tickets.mjs'
 
 const PROJECT = '0123456789abcdef01234567'
 const USER = 'abcdef0123456789abcdef01'

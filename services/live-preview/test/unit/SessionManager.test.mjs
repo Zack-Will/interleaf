@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import sinon from 'sinon'
 import { SessionManager } from '../../app/src/SessionManager.mjs'
-import { decodeFrame } from '../../app/src/Frames.mjs'
+import { decodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 import { settingsFromEnv } from '../../config/settings.defaults.mjs'
 import { binaryList, binaryRow } from '../helpers/display-list.mjs'
 

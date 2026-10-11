@@ -2,9 +2,15 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Attribution } from './Attribution.mjs'
-import { encodeFrame } from './Frames.mjs'
+import {
+  encodeFrame,
+  decodeFrame,
+} from '@overleaf/live-preview-protocol/Frames.mjs'
 import { PreviewError } from './Errors.mjs'
-import { decodeDisplayList, layoutRowRects } from './DisplayList.mjs'
+import {
+  decodeDisplayList,
+  layoutRowRects,
+} from '@overleaf/live-preview-protocol/DisplayList.mjs'
 
 export class SessionManager {
   constructor({
@@ -325,8 +331,7 @@ export class SessionManager {
       }
       // Preserve paragraph results newer than the pass snapshot.
       for (const [id, frame] of session.paragraphs) {
-        const length = frame.readUInt32LE(1)
-        const paragraph = JSON.parse(frame.subarray(5, 5 + length))
+        const { header: paragraph } = decodeFrame(frame)
         if (
           paragraph.versions.source_revision <= event.versions.source_revision
         ) {

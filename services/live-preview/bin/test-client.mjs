@@ -1,5 +1,5 @@
 import WebSocket from 'ws'
-import { decodeFrame } from '../app/src/Frames.mjs'
+import { decodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 const [url] = process.argv.slice(2)
 if (!url) {

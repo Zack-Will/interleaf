@@ -5963,10 +5963,20 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@overleaf/live-preview-protocol@workspace:*, @overleaf/live-preview-protocol@workspace:libraries/live-preview-protocol":
+  version: 0.0.0-use.local
+  resolution: "@overleaf/live-preview-protocol@workspace:libraries/live-preview-protocol"
+  dependencies:
+    "@overleaf/o-error": "workspace:*"
+    vitest: "npm:4.1.5"
+  languageName: unknown
+  linkType: soft
+
 "@overleaf/live-preview@workspace:services/live-preview":
   version: 0.0.0-use.local
   resolution: "@overleaf/live-preview@workspace:services/live-preview"
   dependencies:
+    "@overleaf/live-preview-protocol": "workspace:*"
     "@overleaf/logger": "workspace:*"
     "@overleaf/metrics": "workspace:*"
     "@overleaf/o-error": "workspace:*"
@@ -6369,6 +6379,7 @@ __metadata:
     "@overleaf/dictionaries": "https://github.com/overleaf/dictionaries/archive/refs/tags/v0.0.3.tar.gz"
     "@overleaf/eslint-plugin": "workspace:*"
     "@overleaf/fetch-utils": "workspace:*"
+    "@overleaf/live-preview-protocol": "workspace:*"
     "@overleaf/logger": "workspace:*"
     "@overleaf/metrics": "workspace:*"
     "@overleaf/migrations": "workspace:*"

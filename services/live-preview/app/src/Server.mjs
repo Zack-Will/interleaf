@@ -2,9 +2,13 @@ import http from 'node:http'
 import express from 'express'
 import { expressify } from '@overleaf/promise-utils'
 import { WebSocketServer } from 'ws'
-import { verifyTicket, verifyAccessToken, validateProject } from './Tickets.mjs'
+import {
+  verifyTicket,
+  verifyAccessToken,
+  validateProject,
+} from '@overleaf/live-preview-protocol/Tickets.mjs'
 import { createSocketAccess } from './SocketAccess.mjs'
-import { encodeFrame } from './Frames.mjs'
+import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 import { PreviewError } from './Errors.mjs'
 
 export function createServer({ settings, manager, fonts, onError = () => {} }) {

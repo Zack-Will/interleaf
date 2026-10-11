@@ -20,7 +20,7 @@ import LivePreviewProvider, {
   useLivePreviewContext,
 } from '../../../frontend/js/live-preview-provider'
 import { getFlushDelay } from '../../../frontend/js/flush-delay.mjs'
-import { encodeFrame } from '../../../../../../live-preview/app/src/Frames.mjs'
+import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 const projectId = 'aaaaaaaaaaaaaaaaaaaaaaaa'
 const ticketUrl = `/project/${projectId}/live-preview/ticket`

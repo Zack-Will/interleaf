@@ -672,6 +672,7 @@ IMAGE_CACHE ?= $(IMAGE_REPO):cache-$(shell cat \
 	$(MONOREPO)/libraries/access-token-encryptor/package.json \
   $(MONOREPO)/libraries/eslint-plugin/package.json \
   $(MONOREPO)/libraries/fetch-utils/package.json \
+  $(MONOREPO)/libraries/live-preview-protocol/package.json \
   $(MONOREPO)/libraries/logger/package.json \
   $(MONOREPO)/libraries/metrics/package.json \
   $(MONOREPO)/libraries/mongo-utils/package.json \
