@@ -1,11 +1,10 @@
-# Live preview service (P1)
+# Live preview service (P1/P2)
 
 Run `node services/live-preview/app.js` from the repository after `corepack yarn
-install` at the root. The service listens on `127.0.0.1:3060`. The root workspace
-list is explicit; P1 leaves it unchanged as requested. The service declares its
-own dependencies and uses the repository's hoisted modules. `fontkit` is declared
-at the root so the root install also installs this service's new font parser.
-No web module, nginx, runit, image or container configuration is included here.
+install` at the root. The service listens on `127.0.0.1:3060`. It is registered in
+the root workspace list and CE service list so the image's production workspace
+install includes its runtime dependencies. P2 wires the gated web module, nginx,
+runit and pinned rtex image layer.
 
 The service requires `LIVE_PREVIEW_TICKET_SECRET`, a working `rtex` and LuaLaTeX.
 Set `RTEX_TEXDIR` to rtex's support directory, and put TeX Live binaries on `PATH`
@@ -33,7 +32,7 @@ Never point acceptance tests at production Redis.
 
 `GET /internal/project/:projectId/live-preview/snapshot` uses private API Basic
 auth. Its JSON contract is [docs/snapshot.schema.json](docs/snapshot.schema.json).
-The route is a dependency for P2; P1 tests implement a fake server. Paths are
+The web module implements this route; isolated P1 tests use a fake server. Paths are
 relative POSIX paths, unique across documents and binary files. `build/` is
 reserved for rtex; `.live-preview-pdfs/` is reserved for retained PDFs. Snapshots contain authoritative document text and versions,
 including unsaved edits in document-updater. Blob URLs must change when their
@@ -48,6 +47,9 @@ the **encoded payload string**, signed with `LIVE_PREVIEW_TICKET_SECRET`.
 `app/src/Tickets.mjs` exports the issuer helper for P2 and tests. Web mints
 `kind: 'open'`; WS upgrades accept only that kind or legacy tickets without `kind`.
 Existing sockets continue after opening-ticket expiry.
+Authenticated viewers use their user id; anonymous link viewers who pass the
+same read-authorization middleware use a hashed session identity. Raw session
+ids never appear in tickets or access tokens.
 
 After an authorized handshake, `hello` includes `access` and `access_expiry` (Unix
 milliseconds). The access token uses the same HMAC format and secret, with project,
@@ -114,8 +116,7 @@ on both routes accepts only project-bound access tokens, checked on every reques
 
 ## Verification
 
-Run from the service directory using root-installed executables (the explicit
-root workspace list does not include this new package yet):
+Run from the service directory using root-installed executables:
 
 ```
 ../../node_modules/.bin/vitest run --config vitest.config.mjs --no-file-parallelism
@@ -137,3 +138,45 @@ Type 1 support is ported from Henry Yang's MIT-licensed
 `realtime-tex-vsc-plugin/src/type1.ts`; [LICENSE.type1](LICENSE.type1) preserves
 the license. The port adds advance metrics and bounds recursive composite glyphs.
 OpenType/TrueType parsing uses [fontkit](https://github.com/foliojs/fontkit).
+
+## Develop stack verification (P2)
+
+See `doc/design/dev-environment.md` for the host override (Redis 6380, Mongo 8.2).
+Run `develop/bin/setup-live-preview` after the root yarn install. It verifies the
+pinned rtex archive and prepares a read-only mount. The dev preview container
+reuses `ghcr.io/zack-will/interleaf:6.2.4` for LuaLaTeX and runs the mounted source
+as `www-data`, with one session maximum. The normal webpack proxy forwards
+`/live-preview/` and WebSocket upgrades. An optional `docker-compose.live-preview.yml`
+overlay and `live-preview-proxy` gateway serve protocol acceptance on loopback
+8088 using the local image's existing asset manifest, without compiling webpack.
+Use this overlay for the fs-backed develop stack: it gives history-v1 and
+filestore a dedicated `live-preview-history-buckets` volume with CE's nested
+blob keys. The original develop history bucket uses flat keys and is preserved.
+The acceptance projects' history stays in the dedicated volume.
+
+Start the required services individually with `up -d --no-deps`; do not run a
+parallel build. The required services are mongo, redis, docstore, document-updater,
+filestore, history-v1, project-history, chat, web, live-preview and live-preview-proxy.
+CLSI and real-time are unnecessary for the MCP-driven protocol check. Always
+stop the develop containers you started afterwards.
+
+The live check uses real session/CSRF login, creates a project, selects LuaLaTeX,
+creates a PAT, writes through MCP, validates the private snapshot, starts
+`bin/test-client.mjs`, edits through MCP and verifies paragraph/layout frames,
+`livePreview.active`, access-token PDF/glyph fetches and rejection of opening
+tickets on HTTP. The PAT is revoked on exit. Create a dev admin with the normal
+`modules/server-ce-scripts/scripts/create-user.mjs --admin --email=...` script
+if you do not have working credentials. Its activation link can be used by the
+test config on the first run. Never use production credentials or Redis.
+
+Put `{ "email": "...", "password": "...", "activationUrl": "..." }` in a
+private untracked JSON file (`activationUrl` is optional after activation), then
+run from the repository root:
+
+```
+LIVE_PREVIEW_TEST_CONFIG=/tmp/dev-preview-credentials.json \
+  node services/live-preview/test/acceptance/web-wiring.mjs
+```
+
+The script fixes its HTTP target to loopback 8088 and Redis to loopback 6380.
+It leaves the test project in the develop database and never prints credentials.

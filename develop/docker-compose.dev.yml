@@ -108,6 +108,8 @@ services:
     ports:
       - "127.0.0.1:9229:9229"
     volumes:
+      # Web shares P1's ticket issuer; existing dev images need its source too.
+      - ../services/live-preview:/overleaf/services/live-preview:ro
       - ../services/web/app:/overleaf/services/web/app
       - ../services/web/app.mjs:/overleaf/services/web/app.mjs
       - ../services/web/config:/overleaf/services/web/config

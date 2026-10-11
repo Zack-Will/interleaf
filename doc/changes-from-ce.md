@@ -3,14 +3,16 @@
 Baseline: `overleaf/overleaf@28ad3b0`, the state of the main branch shortly after
 the 6.1.2 hotfix. Everything below is additive unless a row says otherwise.
 
-Measured against that baseline: 126 files changed, about 19,300 lines added, of
-which 15,400 are the five new modules. Thirty-two of the new files are tests.
+Before the live-preview additions, measured against that baseline: 126 files
+changed, about 19,300 lines added, of which 15,400 are the five original modules.
+Thirty-two of those new files are tests.
 
-## Five new web modules
+## Six new web modules
 
 Each lives under `services/web/modules/` and is loaded through upstream's own
 `moduleImportSequence`, the extension point Overleaf already uses for its
-closed-source modules. None of them patches a core file to do their work.
+closed-source modules. Feature logic lives in the modules; the small upstream
+settings, metadata and deployment changes are listed below.
 
 | Module | Lines | What it is |
 |---|---|---|
@@ -19,6 +21,7 @@ closed-source modules. None of them patches a core file to do their work.
 | `github-backup` | 2,594 | One-way mirror of a project's git history to a GitHub repository |
 | `review` | 2,583 | The review panel enabled on CE, comment threads, tracked-change suggestions, the agent service account |
 | `git-bridge` | 1,879 | The web half of the official Java git-bridge |
+| `live-preview` | 569 | LuaLaTeX opening tickets, internal snapshots and editor capability flag; paired with the `services/live-preview` rtex service |
 
 ### project-sync
 
@@ -71,6 +74,16 @@ with upstream's `access-token-encryptor` and passed to git through an askpass
 helper, never in argv or a URL; anything git prints is scrubbed before it is
 logged or stored. A divergent remote is reported, never overwritten.
 
+### live-preview
+
+An opt-in web module issues read-authorized, 60-second opening tickets using the
+service's shared HMAC issuer. A private Basic-auth snapshot route reads live text
+and versions from document-updater without flushing, and uses the same immutable
+history/filestore blob URL helper as CLSI. The separate Node service subscribes to
+applied operations, runs one rtex session per open project and supplies paragraph
+frames, layout PDFs and glyph outlines with separate access credentials. P2 adds
+the image, runit and nginx wiring and an editor meta flag; the preview UI comes in P3.
+
 ## Changes to upstream files
 
 Kept deliberately small. The only behavioural changes to core code are these.
@@ -87,6 +100,13 @@ Kept deliberately small. The only behavioural changes to core code are these.
 | `server-ce/Dockerfile` | +30 | Optional TeX Live scheme, installed in groups as the first layers |
 | History panel: `origin.tsx`, `history-version.tsx`, `history-version-message.tsx` | +51 | Render the agent's name and the message it sent under the author line |
 | `services/web/package.json` | +1/-1 | `diff` moved to runtime dependencies; the production image installs only those |
+| `package.json`, `yarn.lock`, `server-ce/services.js` | P2 | Register the live-preview workspace and install its production runtime dependencies |
+| `server-ce/Dockerfile`, `.github/workflows/build-image.yml` | P2 | Download and checksum pinned rtex after the TeX Live layers; expose release/hash build inputs |
+| `server-ce/config/env.sh`, `settings.js`, init/runit scripts, logrotate | P2 | Gated www-data preview service, persistent session directory, private API and pubsub Redis configuration |
+| `server-ce/nginx/overleaf.conf` | P2 | Proxy preview HTTP and WebSocket endpoints to loopback port 3060 |
+| `services/web/config/settings.defaults.js` | P2 | Preview settings and last-in-sequence module registration |
+| `ProjectController.mjs`, `editor/_meta.pug`, `frontend/js/utils/meta.ts` | +3 | Expose `ol-livePreviewEnabled`; no frontend UI changes |
+| `develop/docker-compose*.yml`, `webpack.config.dev-env.js`, preview setup/proxy files | P2 | Source-mounted preview on the local CE TeX image, dedicated development Redis, optional lightweight protocol gateway |
 
 Two upstream bugs are fixed along the way: the invite-token encryptor options
 were assigned onto `module.exports` before the settings file replaces it, so

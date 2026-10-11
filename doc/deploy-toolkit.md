@@ -3,10 +3,11 @@
 This runbook replaces a running Overleaf Community Edition instance managed by
 the [Overleaf Toolkit](https://github.com/overleaf/toolkit) with the Interleaf image, keeping the existing projects, users and history.
 
-The fork is Community Edition plus five web modules: `project-sync` (personal
+The fork is Community Edition plus six web modules: `project-sync` (personal
 access tokens and the write path), `mcp` (the agent endpoint), `git-bridge` (the
 web half of the official Java git-bridge), `review` (comments and tracked
-changes in CE) and `github-backup` (one-way backup of a project to GitHub).
+changes in CE), `github-backup` (one-way backup of a project to GitHub), and
+`live-preview` (opt-in LuaLaTeX preview service; the editor UI follows in P3).
 See `doc/agent-sync-usage.md` and `doc/github-backup.md` for what they do.
 
 ## What is different from a stock toolkit install
@@ -96,12 +97,39 @@ GIT_BRIDGE_WEB_PUBLIC_URL=http://sharelatex
 GITHUB_BACKUP_ENABLED=true
 GITHUB_BACKUP_REPOS_DIR=/var/lib/overleaf/data/github-backup
 GITHUB_BACKUP_CIPHER_PASSWORD=<48+ random characters>
+LIVE_PREVIEW_ENABLED=true
+LIVE_PREVIEW_TICKET_SECRET=<random shared HMAC secret>
+LIVE_PREVIEW_MAX_SESSIONS=2
 ```
 
 Generate the cipher password on the host so it never travels anywhere:
 `printf 'GITHUB_BACKUP_CIPHER_PASSWORD=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> config/variables.env`.
 If it is lost, every stored GitHub token becomes undecryptable and each project
 has to be linked again; nothing else is affected.
+
+Generate the preview secret separately:
+`printf 'LIVE_PREVIEW_TICKET_SECRET=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> config/variables.env`.
+Web and the in-container service share this value. Keep it stable across restarts;
+changing it invalidates current opening/access tokens. Enabling preview without
+it fails container initialization. With `LIVE_PREVIEW_ENABLED` unset or anything
+other than `true`, the runit entry waits without a restart loop. Enabling requires
+a container recreate. Only projects with compiler `lualatex` can open a session.
+
+The default `LIVE_PREVIEW_SERVICE_URL=http://127.0.0.1:3060` is the internal service
+address. `LIVE_PREVIEW_DATA_DIR` defaults to `/var/lib/overleaf/data/live-preview`
+and is created for `www-data`; it holds disposable session sources and PDFs.
+`LIVE_PREVIEW_MEMORY_MB` defaults to 2048 (per-process virtual memory limit),
+`LIVE_PREVIEW_IDLE_MS` to 300000, `LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` to 3000,
+`LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` to 30000 and `LIVE_PREVIEW_ACCESS_TTL_MS`
+to 900000. A session uses roughly 1.2 GB RSS; set `LIVE_PREVIEW_MAX_SESSIONS=1`
+on small hosts when needed.
+
+CE's environment maps `LIVE_PREVIEW_WEB_URL` to the loopback private API on
+port 3000, `LIVE_PREVIEW_WEB_USER/PASSWORD` to the generated `WEB_API_USER/PASSWORD`,
+and `LIVE_PREVIEW_DOCUMENT_UPDATER_URL` to loopback port 3003. Preview's Redis must
+be the same pubsub Redis as document-updater: `LIVE_PREVIEW_REDIS_HOST/PORT/PASSWORD`
+default to the `PUBSUB_REDIS_*` overrides, then CE's `OVERLEAF_REDIS_HOST/PORT/PASS`.
+The remaining service options are listed in `services/live-preview/README.md`.
 
 `GIT_BRIDGE_WEB_PUBLIC_URL` is how the git-bridge container reaches web for the
 signed blob URLs inside a snapshot, so it is the internal name, not the site
@@ -126,9 +154,18 @@ the web service is listening. Then check, in order:
 5. The editor's integrations rail shows **Git & agents** and **Back up to
    GitHub**.
 6. Connect an agent: `claude mcp add --transport http overleaf https://<site>/mcp --header "Authorization: Bearer olp_…"`.
+7. If preview is enabled, run `docker exec -u www-data sharelatex rtex doctor`
+   (LuaLaTeX and support files must be found), then check
+   `https://<site>/live-preview/health`. For a LuaLaTeX project, obtain an opening
+   ticket from the session/CSRF-protected `POST /project/<id>/live-preview/ticket`,
+   connect `services/live-preview/bin/test-client.mjs`, and check paragraph/layout
+   frames after an editor or MCP edit. Fetch its layout PDF and glyphs with the
+   `hello.access` credential, not the opening ticket. P2 has no preview toggle UI.
 
-A reverse proxy in front of the stack must pass `/git/` and `/mcp` through
+A reverse proxy in front of the stack must pass `/git/`, `/mcp` and `/live-preview/` through
 untouched, and needs a `client_max_body_size` large enough for a git push.
+Pass WebSocket upgrades at `/live-preview/ws` with a read timeout of at least
+10 minutes, matching the image's socket.io settings.
 
 ## TeX Live
 
@@ -157,6 +194,14 @@ services:
 
 Drop `.cls` and `.sty` files under `data/texmf-local/tex/latex/<name>/`, then run
 `docker exec sharelatex mktexlsr`. That tree is untouched by image updates.
+
+The image downloads rtex release `interleaf-0.0.3-1` from the fork immediately
+after the TeX Live layers, checks SHA-256
+`84b484d6fb9abb243a695ff4c80ce4bbf0da7a0b8dfc4976f5478bc69eb61395`, and installs
+the executable at `/usr/local/bin/rtex`. Its matching support files live at
+`/usr/local/share/rtex/tex` (`RTEX_TEXDIR`), outside operator-mounted `texmf-local`.
+The workflow inputs `rtex_release` / `rtex_sha256` map to build arguments
+`RTEX_RELEASE` / `RTEX_SHA256`; change both together when updating the fork.
 
 ## Things this rollout ran into
 

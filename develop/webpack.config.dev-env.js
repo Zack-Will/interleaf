@@ -10,6 +10,11 @@ module.exports = merge(base, {
     },
     proxy: [
       {
+        context: '/live-preview/**',
+        target: 'http://live-preview:3060',
+        ws: true,
+      },
+      {
         context: '/socket.io/**',
         target: 'http://real-time:3026',
         ws: true,
