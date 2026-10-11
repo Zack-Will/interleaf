@@ -13,6 +13,7 @@ const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root)
 const sources = [
   'modules/live-preview/frontend/js/live-preview-provider.tsx',
   'modules/live-preview/frontend/js/live-preview-overlay.tsx',
+  'modules/live-preview/frontend/js/compile-dropdown-item.tsx',
   'modules/live-preview/test/frontend/js/provider.test.tsx',
   'frontend/js/features/pdf-preview/components/pdf-preview-provider.tsx',
   'frontend/js/features/pdf-preview/components/pdf-js-viewer.tsx',

@@ -1,21 +1,3 @@
-let liveDelay = null
-const listeners = new Set()
-
-export function getFlushDelay(fallback) {
-  return liveDelay ?? fallback
-}
-
-export function setLiveFlushDelay(delay) {
-  liveDelay = delay
-  for (const listener of listeners) listener()
-}
-
-export function subscribeFlushDelay(listener) {
-  listeners.add(listener)
-  listener()
-  return () => listeners.delete(listener)
-}
-
 export function createLease(setActive, timers = globalThis) {
   let timer
   function clear() {

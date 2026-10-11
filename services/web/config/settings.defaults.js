@@ -1072,6 +1072,12 @@ module.exports = {
     // Restart webpack after making changes.
     //
     createFileModes: [],
+    compileDropdownItems: [
+      Path.resolve(
+        __dirname,
+        '../modules/live-preview/frontend/js/compile-dropdown-item.tsx'
+      ),
+    ],
     devToolbar: [],
     gitBridge: [],
     publishModal: [],

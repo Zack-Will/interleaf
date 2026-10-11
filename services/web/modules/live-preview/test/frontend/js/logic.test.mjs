@@ -18,11 +18,11 @@ import {
 import { OverlayModel } from '../../../frontend/js/overlay-model.mjs'
 import { GlyphCache, glyphRequests } from '../../../frontend/js/glyph-cache.mjs'
 import {
-  createLease,
   getFlushDelay,
-  setLiveFlushDelay,
+  setFlushDelay,
   subscribeFlushDelay,
-} from '../../../frontend/js/flush-delay.mjs'
+} from '../../../../../frontend/js/shared/flush-delay.mjs'
+import { createLease } from '../../../frontend/js/flush-delay.mjs'
 import { Painter, pdfColor } from '../../../frontend/js/painter.mjs'
 import {
   binaryList,
@@ -343,7 +343,7 @@ describe('live-preview project lease', function () {
     const unsubscribe = subscribeFlushDelay(() =>
       delays.push([getFlushDelay(2000), getFlushDelay(500)])
     )
-    const lease = createLease(active => setLiveFlushDelay(active ? 150 : null))
+    const lease = createLease(active => setFlushDelay(active ? 150 : null))
     try {
       lease.refresh({ leaseMs: 75000 })
       clock.tick(30000)

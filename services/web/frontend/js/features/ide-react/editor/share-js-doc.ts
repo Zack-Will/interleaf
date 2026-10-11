@@ -29,10 +29,7 @@ import {
   RawEditOperation,
 } from 'overleaf-editor-core/lib/types'
 import { HistoryOTShareDoc } from '../../../../../types/share-doc'
-import {
-  getFlushDelay,
-  subscribeFlushDelay,
-} from '@modules/live-preview/frontend/js/flush-delay.mjs'
+import { getFlushDelay, subscribeFlushDelay } from '@/shared/flush-delay.mjs'
 
 // All times below are in milliseconds
 const SINGLE_USER_FLUSH_DELAY = 2000

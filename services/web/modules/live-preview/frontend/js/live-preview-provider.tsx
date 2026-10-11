@@ -17,7 +17,8 @@ import { useDetachCompileContext } from '@/shared/context/detach-compile-context
 import { useLocalCompileContext } from '@/shared/context/local-compile-context'
 import { postJSON } from '@/infrastructure/fetch-json'
 import getMeta from '@/utils/meta'
-import { createLease, setLiveFlushDelay } from './flush-delay.mjs'
+import { setFlushDelay } from '@/shared/flush-delay.mjs'
+import { createLease } from './flush-delay.mjs'
 import { connectPreview } from './connection.mjs'
 import { accessUrl } from './protocol.mjs'
 
@@ -83,7 +84,7 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
   const access = useRef('')
   const getAccess = useCallback(() => access.current, [])
   const [lease] = useState(() =>
-    createLease((active: boolean) => setLiveFlushDelay(active ? 150 : null))
+    createLease((active: boolean) => setFlushDelay(active ? 150 : null))
   )
   const clearLease = useCallback(() => lease.clear(), [lease])
   const refreshLease = useCallback(

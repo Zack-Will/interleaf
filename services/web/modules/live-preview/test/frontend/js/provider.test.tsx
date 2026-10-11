@@ -19,7 +19,8 @@ import { DetachCompileContext } from '@/shared/context/detach-compile-context'
 import LivePreviewProvider, {
   useLivePreviewContext,
 } from '../../../frontend/js/live-preview-provider'
-import { getFlushDelay } from '../../../frontend/js/flush-delay.mjs'
+import { getFlushDelay } from '@/shared/flush-delay.mjs'
+import LivePreviewCompileDropdownItem from '../../../frontend/js/compile-dropdown-item'
 import { encodeFrame } from '@overleaf/live-preview-protocol/Frames.mjs'
 
 const projectId = 'aaaaaaaaaaaaaaaaaaaaaaaa'
@@ -29,11 +30,9 @@ function Probe() {
   const live = useLivePreviewContext()!
   return (
     <>
-      {live.available && (
-        <button onClick={() => live.setEnabled(!live.enabled)}>
-          Live preview
-        </button>
-      )}
+      <ul>
+        <LivePreviewCompileDropdownItem />
+      </ul>
       <span data-testid="state">
         {String(live.enabled)}:{live.engine}:{live.layout?.layout_version}
       </span>
@@ -133,7 +132,7 @@ describe('LivePreviewProvider', function () {
 
   it('gates by flag and compiler and listens to leases with the preview off', function () {
     const view = mount('pdflatex')
-    expect(screen.queryByRole('button', { name: 'Live preview' })).to.equal(
+    expect(screen.queryByRole('menuitem', { name: 'Live preview' })).to.equal(
       null
     )
     act(() => {
@@ -147,7 +146,7 @@ describe('LivePreviewProvider', function () {
     view.unmount()
     window.metaAttributesCache.set('ol-livePreviewEnabled', false)
     mount()
-    expect(screen.queryByRole('button', { name: 'Live preview' })).to.equal(
+    expect(screen.queryByRole('menuitem', { name: 'Live preview' })).to.equal(
       null
     )
     expect(fetchMock.callHistory.called(ticketUrl)).to.equal(false)
@@ -155,7 +154,7 @@ describe('LivePreviewProvider', function () {
 
   it('persists the toggle, opens with CSRF, renews access and overrides only the preview URL', async function () {
     const view = mount()
-    fireEvent.click(screen.getByRole('button', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     expect(localStorage.getItem(`live-preview:${projectId}`)).to.equal('true')
     const request = fetchMock.callHistory.calls(ticketUrl)[0]
@@ -194,7 +193,7 @@ describe('LivePreviewProvider', function () {
 
   it('restores normal autocompile and PDF on busy or failed engines', async function () {
     mount()
-    fireEvent.click(screen.getByRole('button', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     act(() => {
       sockets[0].onmessage?.({
