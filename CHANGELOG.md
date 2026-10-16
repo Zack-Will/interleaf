@@ -5,7 +5,8 @@ Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 
 ## 0.2.1 (2026-10-16)
 
-Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`.
+Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`,
+also published as `docker.io/zackwill/interleaf:6.2.6` and `docker.io/zackwill/git-bridge:6.2.6`.
 
 ### Fixed
 
@@ -28,6 +29,9 @@ Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`.
   rtex and its children default to nice 10 and at most two allowed CPUs when
   taskset is available. Each setting is configurable.
 - Viewerless live sessions now stop after 120000 ms (two minutes).
+- The image workflow also pushes to Docker Hub when the `DOCKERHUB_USERNAME` and
+  `DOCKERHUB_TOKEN` secrets are set; `mirror-dockerhub.yml` copies an existing
+  GHCR tag there without rebuilding.
 
 ## 0.2.0 (2026-10-12)
 
