@@ -233,9 +233,13 @@ export const EditorManagerProvider: FC<React.PropsWithChildren> = ({
         if (ignoringExternalUpdatesRef.current) {
           return
         }
+        // Agent and git-bridge writes are diffs against the live document,
+        // so nothing the user typed was overwritten. They carry their origin
+        // as meta.origin, older ones as meta.source.
+        const agentKind = update.meta.origin?.kind ?? update.meta.source
         if (
           update.meta.type === 'external' &&
-          (update.meta.source === 'git-bridge' || update.meta.source === 'mcp')
+          (agentKind === 'git-bridge' || agentKind === 'mcp')
         ) {
           return
         }

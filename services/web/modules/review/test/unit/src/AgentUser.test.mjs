@@ -42,6 +42,7 @@ describe('review agent user', () => {
     ctx.projectGetter = {
       promises: { getProject: sinon.stub().resolves({ owner_ref: ownerId }) },
     }
+    ctx.editorRealTimeController = { emitToRoom: sinon.stub() }
     ctx.agentUser = createAgentUser({
       settings: ctx.settings,
       UserGetter: ctx.userGetter,
@@ -49,6 +50,7 @@ describe('review agent user', () => {
       CollaboratorsGetter: ctx.collaboratorsGetter,
       CollaboratorsHandler: ctx.collaboratorsHandler,
       ProjectGetter: ctx.projectGetter,
+      EditorRealTimeController: ctx.editorRealTimeController,
     })
   })
 
@@ -109,6 +111,12 @@ describe('review agent user', () => {
       agentUserId,
       'readAndWrite'
     )
+    sinon.assert.calledWith(
+      ctx.editorRealTimeController.emitToRoom,
+      projectId,
+      'project:membership:changed',
+      { members: true }
+    )
   })
 
   it('does not add the agent twice', async ctx => {
@@ -119,6 +127,7 @@ describe('review agent user', () => {
     )
     expect(result).toEqual({ ok: true, agentUserId, added: false })
     sinon.assert.notCalled(ctx.collaboratorsHandler.promises.addUserIdToProject)
+    sinon.assert.notCalled(ctx.editorRealTimeController.emitToRoom)
   })
 
   it('refuses to add the agent when the acting user is not the owner', async ctx => {
