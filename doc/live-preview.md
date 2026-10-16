@@ -10,14 +10,15 @@ changes made by collaborators, agents and Git.
 Your server administrator must enable live preview and install the Interleaf
 image with rtex and TeX Live. The project compiler must be **LuaLaTeX**. Change
 the compiler in the project settings, confirm that a normal Recompile succeeds,
-then choose **Live preview** in the Recompile dropdown. Existing pdfLaTeX and
+then choose **On** in the **Live preview** section of the Recompile dropdown.
+The section shows checked **On/Off** choices. Existing pdfLaTeX and
 XeLaTeX projects need a deliberate LuaLaTeX migration; changing the compiler can
 change fonts and line breaks. For example, acmart's LuaLaTeX math setup conflicts
 with some templates that also load `newtxmath`.
 
 The choice is remembered per project and shared with detached PDF windows. Each
 window has its own connection. Closing one window leaves the others working.
-Choose Live preview again to turn it off and restore normal autocompile. Changing
+Choose **Off** in that section to restore normal autocompile. Changing
 the compiler away from LuaLaTeX turns live preview off.
 
 ## What updates live
@@ -34,6 +35,14 @@ wait for complete pages. Some included plots can take several seconds. Keep
 editing while the toolbar reports Updating or Stale; Converged means the pass
 has settled. Pass limit reached means another full compilation may be needed.
 
+While you type, newer live text stays visible across background layouts. The
+browser prefetches the latest PDF and normally switches after about one second
+of quiet, retaining current page pixels until replacement pages render. Changes
+that need complete pages, such as stale pagination or unsupported content, switch
+as soon as a layout containing them is ready. Background max-wait adapts to pass
+duration, so larger projects can take longer to settle pagination and references
+during continuous editing; live paragraphs continue to update.
+
 A live TeX error keeps the last good drawing visible. The PDF currently on screen
 can therefore represent an earlier version while you correct the source.
 **Recompile**, keyboard compilation shortcuts and PDF download use the normal
@@ -49,6 +58,12 @@ Switching files shows that file's markers.
 Open Logs to see the separately labelled live diagnostics beside normal compile
 logs. Go to code location opens the relevant file and line. A clean pass clears
 old errors. Normal compile tab counters count the normal compiler's entries.
+
+If a font cannot display characters, a completed pass reports a warning such as
+“Font … has no glyphs for: 中文测试”, once per font in that pass. The affected
+source lines receive gutter dots. For Chinese, the preamble may need `ctex`, or
+`fontspec` with a font covering those characters. Selecting LuaLaTeX alone does
+not supply CJK glyph coverage. A clean pass clears these warnings and markers.
 
 ## Collaboration and recovery
 
@@ -69,7 +84,7 @@ available, and autocompile resumes while live preview is unavailable.
 
 The server normally allows two active projects, shared across their viewers.
 An unused session can be evicted to make room; sessions with no viewers stop after
-five minutes. The default connection limits are 16 windows per project and eight
+two minutes. The default connection limits are 16 windows per project and eight
 per user. Snapshots allow 2,000 documents/files, 32 MiB per file and 256 MiB total;
 the internal JSON read limit is 64 MiB. Projects beyond these limits can use normal
 compilation. TeX shell escape and arbitrary absolute file reads are disabled in
@@ -78,3 +93,9 @@ live sessions, so projects depending on external commands need another workflow.
 Operators should use [the deployment runbook](deploy-toolkit.md) for memory
 budgets and proxy settings. Detailed release evidence is in
 [live-preview verification](design/live-preview-verification.md).
+
+Default resource settings are `LIVE_PREVIEW_IDLE_MS=120000`,
+`LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS=3000`, `LIVE_PREVIEW_LAYOUT_MAX_WAIT_FACTOR=2`,
+`LIVE_PREVIEW_NICE=10` and `LIVE_PREVIEW_CPUS=2` (0 disables CPU affinity).
+The effective max-wait is the larger of 3000 ms and twice the last pass duration;
+CPU affinity is applied only when taskset is available.

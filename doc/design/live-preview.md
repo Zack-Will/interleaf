@@ -103,7 +103,7 @@ One session per project, shared by every viewer of that project.
   files from their filestore blob URLs. Then `rtex serve --project <dir> --main
 <rootDoc>` with `RTEX_TEXDIR`, no `--shell-escape`, and the build directory inside
   the session directory.
-- **Stop:** 5 minutes after the last socket closes. Also when the project's compiler
+- **Stop:** 2 minutes after the last socket closes. Also when the project's compiler
   leaves `lualatex`, the root doc changes (restart instead), or the project is deleted.
 - **Budget:** at most `LIVE_PREVIEW_MAX_SESSIONS` sessions (default 2 on home-center).
   A new session beyond the budget evicts the least recently used one with no open
@@ -143,16 +143,16 @@ entries separately from the Node-only ticket entry.
 Server to client, binary frames with a one-byte type and a JSON header, then the
 display list in rtex's binary format where there is one:
 
-| Frame         | Header                                                                                         | Body              |
-| ------------- | ---------------------------------------------------------------------------------------------- | ----------------- |
-| `hello`       | session state, `layout_version`, engine state, pages total, `access`, `access_expiry`          |                   |
-| `paragraph`   | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing`     | unit display list |
-| `layout`      | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile`             |                   |
-| `background`  | `par_id`, `reasons`, `path`, `doc_id`, UTF-16 `range: {start,end}`, `versions.source_revision` |                   |
-| `diagnostics` | rtex's diagnostics items                                                                       |                   |
-| `engine`      | `Starting` / `Ready` / `Restarting` / `Failed`, reason                                         |                   |
-| `busy`        | why live preview is unavailable                                                                |                   |
-| `access`      | `access`, `access_expiry` (Unix milliseconds), fresh HTTP credentials for this viewer          |                   |
+| Frame         | Header                                                                                                         | Body              |
+| ------------- | -------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `hello`       | session state, `layout_version`, engine state, pages total, `access`, `access_expiry`                          |                   |
+| `paragraph`   | `par_id`, `status`, `fragments`, `versions`, `pagination_stale`, `context_stale`, `timing`                     | unit display list |
+| `layout`      | `layout_version`, `pages_total`, `pdf_url`, `placements`, `convergence`, `compile`, `snapshot_source_revision` |                   |
+| `background`  | `par_id`, `reasons`, `path`, `doc_id`, UTF-16 `range: {start,end}`, `versions.source_revision`                 |                   |
+| `diagnostics` | rtex's diagnostics items                                                                                       |                   |
+| `engine`      | `Starting` / `Ready` / `Restarting` / `Failed`, reason                                                         |                   |
+| `busy`        | why live preview is unavailable                                                                                |                   |
+| `access`      | `access`, `access_expiry` (Unix milliseconds), fresh HTTP credentials for this viewer                          |                   |
 
 Client to server: only `ping` and `resync`. The connection URL carries a ticket from
 the web module (§4.1); the service checks its HMAC and expiry and that it names this
@@ -186,9 +186,16 @@ slower than local ones, and each has a fix.
 - **Background passes starved by continuous typing.** rtex starts a pass after 300 ms
   of quiet. With two people typing, the quiet period may never come, and pagination,
   references and anything routed to the background stay stale. The session sends
-  `request_layout` when edits have kept a layout from starting for 3 s
-  (`LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS`), the same debounce/max-wait shape as Overleaf's
-  autocompile.
+  `request_layout` after an effective max-wait of
+  `max(LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS, LIVE_PREVIEW_LAYOUT_MAX_WAIT_FACTOR × lastPassMs)`.
+  The defaults are 3000 ms and factor 2. A five-second Cleave pass therefore gives
+  a ten-second max-wait; small documents retain the three-second floor. A
+  completed layout cancels the previous deadline and starts a fresh adaptive
+  deadline if its snapshot is already stale. This reduces forced follow-up work
+  on small hosts at the cost of slower pagination/reference updates during
+  continuous collaboration. Live paragraph fan-out remains immediate. Max-wait
+  bounds the service's forced request, not pass duration or rtex's own scheduling;
+  quiet-time passes can arrive sooner.
 - **Ordering across users.** Ops from all users are applied in document version order,
   so two people editing the same paragraph converge on the same text the editors show.
   rtex drops results for text that has changed since, so a burst never delivers stale
@@ -200,8 +207,16 @@ cursor colour, so remote changes are visible as they happen.
 
 Acceptance (P1 for the server path, P3 end to end): two clients on the develop stack,
 one typing, the other measuring keystroke-to-paint for the remote edit. Target P95
-under 300 ms with both editing the same document, and a layout at least every 4 s
-during continuous typing.
+under 300 ms with both editing the same document. Small-document acceptance
+checks layouts within four seconds during continuous typing; long passes use
+the adaptive deadline plus compilation time.
+
+rtex and all LuaLaTeX descendants inherit `nice -n LIVE_PREVIEW_NICE` (default
+10), an optional `taskset` affinity of at most `LIVE_PREVIEW_CPUS` allowed CPUs
+(default 2, 0 disables affinity), and the existing per-process `prlimit --as`.
+Missing taskset leaves affinity unchanged. CPU ids come from the service's
+allowed set, so container/cgroup affinity is respected. The trusted LuaLaTeX
+wrapper still enforces the TeX security policy.
 
 ### 3.5 HTTP
 
@@ -255,13 +270,23 @@ ShareJS and dropdown hooks.
   page display lists by matching baseline/x and capture-unit ownership. Units with
   missing geometry or degraded content wait for the next pass PDF.
   Living inside `.page` means dark mode's inversion applies to the overlay too.
-- Base pages: when a `layout` frame arrives, the PDF URL switches to the pass PDF and
-  the overlay clears. pdf.js keeps the scroll position across documents already.
+- Base pages: retain results whose source revision exceeds the layout's
+  `snapshot_source_revision`, and move them to its placements. Pinned rtex reports
+  delivery-time source revisions; a stale layout's actual snapshot is
+  `convergence.pending_since - 1`. Prefetch the latest PDF into a blob URL and
+  defer applying it until one second after the last paragraph/local edit. Stale
+  pagination, approximate/unplaced fragments, removed units and degraded content
+  bypass the delay once a layout incorporates the change. Capture visible page
+  and overlay pixels through the P3 viewer exposure before the swap; retain them
+  through pagesinit until each new page emits pagerendered. All implementation
+  lives in the module, preserving native pdf.js scale/scroll restoration.
 - Autocompile is turned off while live preview is on; the background pass replaces it.
   Recompile and download still use CLSI, so the downloaded PDF is the normal build.
 - Status: engine state and convergence as a small badge in the preview toolbar;
   `background` reasons in a tooltip on the paragraph's gutter marker; rtex diagnostics
   merged into the logs pane.
+  Missing font glyphs are aggregated from the pass log once per font/pass with
+  current source locations, ctex/fontspec guidance and P4 gutter markers.
 
 P4 uses the existing `sourceEditorExtensions` and `pdfLogEntriesComponents`
 slots, without editor/logs component edits. Background and error-paragraph
@@ -305,7 +330,7 @@ are 2,000 entities, 32 MiB/file, 256 MiB/project, and 64 MiB/read of internal JS
 downloads are bounded while streaming and do not follow redirects. Web checks
 entity/path/text budgets before returning snapshots. The inherited `prlimit --as`
 default remains 2048 MiB per process, verified with full TeX Live and real papers.
-The project session budget, viewerless LRU eviction, five-minute idle reaping,
+The project session budget, viewerless LRU eviction, two-minute idle reaping,
 stop cleanup and stale-directory cleanup on start bound retained resources.
 
 Opening tickets are short-lived and project-bound; HTTP requires separate access
@@ -349,7 +374,7 @@ from the final release suites; evidence is consolidated in
 | The 150 ms flush delay raises op traffic                                           | Overleaf already uses 500 ms with collaborators; document-updater and project-history compress ops. Measure in P3; raise to 300 ms if needed.                         |
 | Collaborators' edits appear later than the user's own                              | Project-wide flush delay while a session is active, layout max-wait, two-client latency test (§3.4).                                                                  |
 | Lost pub/sub messages leave the engine with stale text                             | Version check per op, `fromVersion` replay, periodic drift check (§3.2).                                                                                              |
-| Pass PDF and overlay disagree for a moment after a layout                          | The overlay clears on every layout and results are ordered by rtex's revision counters.                                                                               |
+| Pass PDF and overlay disagree for a moment after a layout                          | Retain newer revisions against the pass snapshot, re-anchor to placements and retain page pixels through rendering.                                                   |
 | ACM's camera-ready pipeline compiles the source itself                             | Accepted by the user: papers move to LuaLaTeX and follow its layout.                                                                                                  |
 
 ## 8. Decision log

@@ -226,7 +226,7 @@ renewal, and reconnection/resync. P5 did not start browsers, webpack or develop 
 Focused frontend checks, from `services/web` (one process at a time):
 
 ```
-../../node_modules/.bin/mocha --require test/frontend/bootstrap.js 'modules/live-preview/test/frontend/js/*.test.{mjs,tsx}'
+../../node_modules/.bin/mocha --require test/frontend/bootstrap.js 'modules/live-preview/test/frontend/js/*.test.{mjs,tsx,ts}'
 node --max-old-space-size=1400 modules/live-preview/test/check-types.mjs
 ESLINT_FAST=1 ../../node_modules/.bin/eslint --max-warnings 0 modules/live-preview
 ../../node_modules/.bin/prettier --check modules/live-preview
