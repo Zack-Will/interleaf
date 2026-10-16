@@ -14,7 +14,9 @@ Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`.
   the `OVERLEAF_REDIS_PASS=` workaround can be removed from `config/variables.env`.
 - Live paragraphs newer than a background pass's snapshot survive the layout
   and move to its new placements. Base PDFs are prefetched and normally switch
-  after one second of quiet; visible page pixels stay until replacement renders.
+  after one second of quiet, including extra live rows that fit on existing pages.
+  Visible page pixels and live overlays stay in a separate freeze layer across
+  document and zoom resets until each replacement page renders.
 - Missing font glyphs produce deduplicated live warnings with preamble guidance
   and editor gutter markers on affected lines.
 - The compile dropdown has a Live preview section with checked On/Off choices;

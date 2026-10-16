@@ -69,6 +69,9 @@ type LivePreviewContextValue = PreviewState & {
   active: boolean
   setEnabled: (enabled: boolean) => void
   getAccess: () => string
+  reportPageSizes: (
+    sizes: Map<number, { width: number; height: number }>
+  ) => void
   retry: () => void
   notice?: string
   dismissNotice: () => void
@@ -154,6 +157,13 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
     }
   }, [enabled, state.engine, retryCount, setSharedCompilerNotice])
   const access = useRef('')
+  const pageSizes = useRef(new Map<number, { width: number; height: number }>())
+  const reportPageSizes = useCallback(
+    (sizes: Map<number, { width: number; height: number }>) => {
+      pageSizes.current = sizes
+    },
+    []
+  )
   const getAccess = useCallback(() => access.current, [])
   const [lease] = useState(() =>
     createLease((active: boolean) => setFlushDelay(active ? 150 : null))
@@ -172,6 +182,7 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     setState(emptyState())
     access.current = ''
+    pageSizes.current = new Map()
     setPreviewUrl?.(undefined)
     if (!enabled) return
     const controller = new AbortController()
@@ -219,9 +230,15 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
           access.current = header.access
         if (type === 'paragraph') {
           scheduler.activity()
-          if (needsBasePdf({ header, body }))
+          const frame = { header, body }
+          const drawing = appliedLayout
+            ? anchorParagraph(frame, appliedLayout)
+            : frame
+          if (needsBasePdf(drawing, appliedLayout, pageSizes.current))
             scheduler.requireBase(header.versions?.source_revision)
         }
+        if (type === 'background')
+          scheduler.requireBase(header.versions?.source_revision)
         if (type === 'layout' && header.pdf_url && access.current)
           scheduler.layout(header, snapshotRevision(header))
         setState(previous => {
@@ -298,6 +315,7 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
       active: suspended,
       setEnabled,
       getAccess,
+      reportPageSizes,
       retry,
       notice: dismissedNotice === notice ? undefined : notice,
       dismissNotice,
@@ -309,6 +327,7 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
       suspended,
       setEnabled,
       getAccess,
+      reportPageSizes,
       retry,
       notice,
       dismissedNotice,

@@ -4,6 +4,12 @@ import {
   createLayoutScheduler,
   needsBasePdf,
 } from '../../../frontend/js/layout-scheduler.mjs'
+import {
+  binaryList,
+  binaryRow,
+  integers,
+  record,
+} from '../helpers/display-list.mjs'
 
 describe('base PDF scheduling', function () {
   let clock
@@ -82,22 +88,110 @@ describe('base PDF scheduling', function () {
     expect(release.callCount).to.equal(2)
   })
 
-  it('forces base refresh for stale pagination, missing/approximate placements, removals and degraded content', function () {
-    const frame = {
-      header: { status: 'ok', fragments: [{ approximate: false }] },
-      body: new Uint8Array(),
+  it('defers an extra approximate line and stale pagination when the overlay can draw every row', function () {
+    const layout = {
+      pages_total: 1,
+      placements: [{ par_id: 7, row_rects: [{ page: 1 }] }],
     }
-    expect(needsBasePdf(frame)).to.equal(false)
+    const frame = {
+      header: {
+        par_id: 7,
+        status: 'ok',
+        pagination_stale: true,
+        fragments: [
+          {
+            approximate: true,
+            page: 1,
+            first_line: 1,
+            last_line: 2,
+            xs: [100, 100],
+            baselines: [200, 270],
+          },
+        ],
+      },
+      body: binaryList([
+        record(1, integers([600, 800, 0, 1, 600, 800, 0, 0, 0, 0])),
+        ...binaryRow(),
+        ...binaryRow({ row: 2 }),
+      ]),
+    }
+    expect(needsBasePdf(frame, layout)).to.equal(false)
+    const omittedDimensions = {
+      ...frame,
+      body: binaryList([
+        record(1, integers([600, 800, 0, 1, 0, 0, 0, 0, 0, 0])),
+        ...binaryRow(),
+        ...binaryRow({ row: 2 }),
+      ]),
+    }
+    const basePages = new Map([[1, { width: 600, height: 800 }]])
+    expect(needsBasePdf(omittedDimensions, layout, basePages)).to.equal(false)
+    expect(needsBasePdf(omittedDimensions, layout)).to.equal(true)
+    expect(
+      needsBasePdf(
+        omittedDimensions,
+        layout,
+        new Map([[1, { width: 600, height: 250 }]])
+      )
+    ).to.equal(true)
+    // Losing the last line is representable too: the model erases base rows.
+    const shorter = {
+      ...frame,
+      header: {
+        ...frame.header,
+        fragments: [{ ...frame.header.fragments[0], last_line: 1 }],
+      },
+      body: binaryList([
+        record(1, integers([600, 800, 0, 1, 600, 800, 0, 0, 0, 0])),
+        ...binaryRow(),
+      ]),
+    }
+    expect(needsBasePdf(shorter, layout)).to.equal(false)
+    expect(
+      needsBasePdf({ header: { par_id: 7, status: 'removed' } }, layout)
+    ).to.equal(false)
+  })
+
+  it('requires a base for missing geometry, incomplete placements, overflow, unavailable pages and degraded content', function () {
+    const layout = {
+      pages_total: 1,
+      placements: [{ par_id: 7, row_rects: [{ page: 1 }] }],
+    }
+    const fragment = {
+      page: 1,
+      first_line: 1,
+      last_line: 1,
+      xs: [100],
+      baselines: [200],
+    }
+    const frame = {
+      header: { par_id: 7, status: 'ok', fragments: [fragment] },
+      body: binaryList([
+        record(1, integers([600, 800, 0, 1, 600, 800, 0, 0, 0, 0])),
+        ...binaryRow(),
+      ]),
+    }
+    expect(needsBasePdf(frame, layout)).to.equal(false)
+    expect(needsBasePdf(frame)).to.equal(true)
+    expect(needsBasePdf(frame, { ...layout, placements: [] })).to.equal(true)
     for (const header of [
-      { pagination_stale: true },
-      { status: 'removed' },
       { status: 'ok_degraded' },
       { status: 'ok', fragments: [] },
-      { fragments: [{ approximate: true }] },
+      { fragments: [{ ...fragment, page: 2 }] },
+      { fragments: [{ ...fragment, baselines: [] }] },
+      { fragments: [{ ...fragment, baselines: [800] }] },
+      { fragments: [{ ...fragment, xs: [NaN] }] },
+      { fragments: [{ ...fragment, xs: [400] }] },
+      { fragments: [fragment, fragment] },
     ])
-      expect(needsBasePdf({ header })).to.equal(true)
-    expect(needsBasePdf({ header: {}, body: new Uint8Array([1]) })).to.equal(
-      true
-    )
+      expect(
+        needsBasePdf(
+          { ...frame, header: { ...frame.header, ...header } },
+          layout
+        )
+      ).to.equal(true)
+    expect(
+      needsBasePdf({ ...frame, body: new Uint8Array([1]) }, layout)
+    ).to.equal(true)
   })
 })

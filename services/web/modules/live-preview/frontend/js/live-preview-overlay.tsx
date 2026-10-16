@@ -19,6 +19,7 @@ export default function LivePreviewOverlay() {
   const renderer = useRef<OverlayRenderer>()
   const enabled = live?.active
   const getAccess = live?.getAccess
+  const reportPageSizes = live?.reportPageSizes
   const layout = live?.layout
   const paragraphs = live?.paragraphs
   const status = layoutStatusLabel(live?.convergence, live?.compile)
@@ -31,6 +32,7 @@ export default function LivePreviewOverlay() {
       fetchJSON: getJSON,
       currentUser: getMeta('ol-user_id'),
       userColor: livePreviewUserColor,
+      onPageSizes: reportPageSizes,
       onError: (error: unknown) =>
         debugConsole.warn('Live preview overlay', error),
     })
@@ -39,7 +41,7 @@ export default function LivePreviewOverlay() {
       instance.dispose()
       renderer.current = undefined
     }
-  }, [enabled, pdfJsWrapper, getAccess])
+  }, [enabled, pdfJsWrapper, getAccess, reportPageSizes])
 
   useEffect(() => {
     if (layout) renderer.current?.layout(layout)

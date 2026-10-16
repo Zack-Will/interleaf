@@ -1,4 +1,5 @@
 import { decodeDisplayList } from './protocol.mjs'
+import { placedRows, rowRect } from './geometry.mjs'
 
 const listeners = new Set()
 
@@ -11,16 +12,48 @@ export function subscribeLocalEdits(listener) {
   return () => listeners.delete(listener)
 }
 
-export function needsBasePdf({ header, body }) {
-  if (
-    header.pagination_stale ||
-    ['removed', 'ok_degraded'].includes(header.status) ||
-    (header.status === 'ok' && !header.fragments?.length) ||
-    header.fragments?.some(fragment => fragment.approximate)
+export function needsBasePdf({ header, body }, layout, pageSizes = new Map()) {
+  if (header.status === 'error') return false
+  const placement = layout?.placements?.find(
+    unit => unit.par_id === header.par_id
   )
+  if (!placement?.row_rects?.length || !Number.isInteger(layout?.pages_total))
+    return true
+  if (header.status === 'removed') return false
+  if (header.status !== 'ok' || !header.fragments?.length || !body?.length)
     return true
   try {
-    return Boolean(body?.length && decodeDisplayList(body).degraded)
+    const list = decodeDisplayList(body)
+    if (list.degraded) return true
+    const rows = placedRows(list, header.fragments)
+    if (
+      rows.length !== list.lines.length ||
+      new Set(rows.map(row => row.line)).size !== list.lines.length
+    )
+      return true
+    // rtex estimates extra rows at the last known anchor. A height/row-count
+    // change can wait for quiet as long as every row fits on an existing page.
+    // pagination_stale describes downstream reflow, not a failed live drawing.
+    return rows.some(row => {
+      const rect = rowRect(row)
+      // Fast rtex lists may omit page dimensions (zero in RTDL). Prefer the
+      // actual base PDF's MediaBox, supplied through the P3 viewer exposure.
+      const size = pageSizes.get(row.page) || {
+        width: list.page_width,
+        height: list.page_height,
+      }
+      return (
+        !(size.width > 0 && size.height > 0) ||
+        !Number.isInteger(row.page) ||
+        row.page < 1 ||
+        row.page > layout.pages_total ||
+        ![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite) ||
+        rect.x < 0 ||
+        rect.y < 0 ||
+        rect.x + rect.w > size.width ||
+        rect.y + rect.h > size.height
+      )
+    })
   } catch {
     return true
   }

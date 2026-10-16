@@ -274,11 +274,20 @@ ShareJS and dropdown hooks.
   `snapshot_source_revision`, and move them to its placements. Pinned rtex reports
   delivery-time source revisions; a stale layout's actual snapshot is
   `convergence.pending_since - 1`. Prefetch the latest PDF into a blob URL and
-  defer applying it until one second after the last paragraph/local edit. Stale
-  pagination, approximate/unplaced fragments, removed units and degraded content
+  defer applying it until one second after the last paragraph/local edit.
+  `pagination_stale` and approximate extra rows can wait when every display-list
+  row has finite coordinates and fits on an existing page with captured base
+  geometry. Page bounds come from the actual PDF viewport through the P3 viewer
+  exposure; fast RTDL lists can leave their page dimensions at zero.
+  Removed units can also wait because the overlay erases their base
+  rows. Missing geometry, page overflow, background-only and degraded content
   bypass the delay once a layout incorporates the change. Capture visible page
-  and overlay pixels through the P3 viewer exposure before the swap; retain them
-  through pagesinit until each new page emits pagerendered. All implementation
+  and overlay pixels synchronously on `pagesdestroy`, before pdf.js cancels and
+  clears the old pages. Keep the freeze canvases as scroll-container siblings
+  of `.pdfViewer`, updating their positions on pagesinit and scalechanging.
+  They survive both document and page/zoom resets; remove each only on a full,
+  successful pagerendered from that page view of the new document, with a ten
+  second cleanup fallback. All implementation
   lives in the module, preserving native pdf.js scale/scroll restoration.
 - Autocompile is turned off while live preview is on; the background pass replaces it.
   Recompile and download still use CLSI, so the downloaded PDF is the normal build.

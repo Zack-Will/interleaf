@@ -37,8 +37,10 @@ has settled. Pass limit reached means another full compilation may be needed.
 
 While you type, newer live text stays visible across background layouts. The
 browser prefetches the latest PDF and normally switches after about one second
-of quiet, retaining current page pixels until replacement pages render. Changes
-that need complete pages, such as stale pagination or unsupported content, switch
+of quiet, retaining current page pixels and live text until replacement pages
+render. Extra or removed paragraph rows also wait when the overlay can draw them
+on existing pages. Changes that need complete pages, such as rows that overflow
+the available pages, missing placements or unsupported content, switch
 as soon as a layout containing them is ready. Background max-wait adapts to pass
 duration, so larger projects can take longer to settle pagination and references
 during continuous editing; live paragraphs continue to update.
