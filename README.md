@@ -185,6 +185,8 @@ Interleaf exists because other people gave their work away.
   what agents and Git users need from an Overleaf server before this fork
   started. No code was taken from them.
 
+Credit to the [linux.do](https://linux.do) community.
+
 [`NOTICE.md`](NOTICE.md) lists every bundled component with its licence.
 
 ## Contributing
