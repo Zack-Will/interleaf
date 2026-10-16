@@ -23,6 +23,40 @@ notes, accepts some of it, and the timeline records both hands.
 
 ## What this adds
 
+### An agent in the review loop
+
+![A person comments on a sentence, Claude Code replies in the thread and suggests a rewrite as a tracked change, and the person accepts it](doc/images/comment-loop.gif)
+
+You comment in the review panel as usual. The agent picks the thread up over
+MCP with `list_comments`, answers with `reply_comment` and offers the fix with
+`suggest_edits`, which lands as a tracked change under the agent's own account
+(`Agent MCP` here). Nothing changes in the document until you accept it.
+
+### Every agent write in the history
+
+![The history panel lists an edit as "You (via Claude Code)" with the message "Add a capacity factor estimate to Site selection" and a label, next to the highlighted lines it added](doc/images/history.png)
+
+A write says which client made it and why. The history panel shows that under
+the author line, a write can carry a label so it is easy to return to, and
+`revert_to` takes the project back to any version.
+
+### Live preview while you type
+
+![Typing a sentence with an inline formula and a new subsection into a LuaLaTeX project; the PDF beside the editor updates as each word is typed, without pressing Recompile](doc/images/live-preview.gif)
+
+LuaLaTeX projects get a live PDF: the paragraph you are editing is re-typeset
+within a fraction of a second, and a background pass settles the pages.
+
+### Git and MCP from one dialog
+
+<img src="doc/images/git-and-agents.png" width="560" alt="The Connect Git and agents dialog with the git clone command, the MCP endpoint and the claude mcp add command for the project">
+
+Each project shows its `git clone` URL and the command that connects an MCP
+client such as Claude Code. Both authenticate with a personal access token from
+Account settings.
+
+### The full list
+
 - **A built-in MCP endpoint** at `POST /mcp`, spoken by any Model Context
   Protocol client. An agent reads and writes files, follows the history, opens
   and merges branches, reads review comments and replies to them, and offers
