@@ -60,6 +60,7 @@ RUN curl --fail --location --retry 3 \
  && install -m 755 /tmp/rtex/bin/rtex /usr/local/bin/rtex \
  && mkdir -p /usr/local/share/rtex \
  && cp -R /tmp/rtex/share/rtex/tex /usr/local/share/rtex/tex \
+ && install -D -m 644 /tmp/rtex/LICENSE /usr/local/share/doc/rtex/LICENSE \
  && chmod -R a+rX /usr/local/share/rtex \
  && rm -rf /tmp/rtex /tmp/rtex.tar.gz
 
@@ -131,6 +132,9 @@ COPY server-ce/init_preshutdown_scripts/ /etc/my_init.pre_shutdown.d/
 # Copy app settings files
 # -----------------------
 COPY server-ce/config/settings.js /etc/overleaf/settings.js
+
+# The licence of this distribution (AGPL-3.0) and the notice of what it bundles
+COPY LICENSE NOTICE.md /overleaf/
 
 # Copy history-v1 files
 # -----------------------
