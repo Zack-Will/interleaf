@@ -8,6 +8,7 @@ import logger from '@overleaf/logger'
 import PrivilegeLevels from '../../../../app/src/Features/Authorization/PrivilegeLevels.mjs'
 import CollaboratorsGetter from '../../../../app/src/Features/Collaborators/CollaboratorsGetter.mjs'
 import CollaboratorsHandler from '../../../../app/src/Features/Collaborators/CollaboratorsHandler.mjs'
+import EditorRealTimeController from '../../../../app/src/Features/Editor/EditorRealTimeController.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import UserCreator from '../../../../app/src/Features/User/UserCreator.mjs'
 import UserGetter from '../../../../app/src/Features/User/UserGetter.mjs'
@@ -49,6 +50,8 @@ export function createAgentUser(services = {}) {
   const collaboratorsHandler =
     services.CollaboratorsHandler || CollaboratorsHandler
   const projectGetter = services.ProjectGetter || ProjectGetter
+  const editorRealTimeController =
+    services.EditorRealTimeController || EditorRealTimeController
 
   // Resolving the account costs a Mongo round trip per call otherwise, and it
   // never changes while the process is up.
@@ -127,6 +130,13 @@ export function createAgentUser(services = {}) {
     logger.info(
       { projectId, agentUserId: agent.id },
       'added the review agent service user to a project'
+    )
+    // Open editors load the member list once; without this they show the
+    // agent's first comments and suggestions as from a deleted user.
+    editorRealTimeController.emitToRoom(
+      projectId,
+      'project:membership:changed',
+      { members: true }
     )
     return { ok: true, agentUserId: agent.id, added: true }
   }

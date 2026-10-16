@@ -3,7 +3,18 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
-## 0.2.1 (2026-10-16)
+## Unreleased
+
+### Fixed
+
+- Agent and git-bridge writes no longer open the "Document updated externally"
+  dialog in an editor that has the document open. The editor checked
+  `meta.source`, while these writes carry their origin as `meta.origin`.
+- The first comment or suggestion from the review agent in a project shows the
+  agent's name in open editors instead of "Deleted user": adding the agent as a
+  collaborator now tells open editors to reload the member list.
+
+
 
 Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`,
 also published as `docker.io/zackwill/interleaf:6.2.6` and `docker.io/zackwill/git-bridge:6.2.6`.
