@@ -1,0 +1,45 @@
+# Copies an already published image tag from GHCR to Docker Hub without
+# rebuilding it, e.g. for releases built before the Docker Hub secrets existed.
+# Needs the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets.
+name: Mirror images to Docker Hub
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Published tag to copy, e.g. 6.2.5'
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: imjasonh/setup-crane@v0.4
+
+      - name: Log in to both registries
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$DOCKERHUB_TOKEN" | crane auth login index.docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+
+      # crane copies the multi-platform index and every referenced blob as is,
+      # so the Docker Hub digest matches GHCR's.
+      - name: Copy interleaf and git-bridge
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "version must be X.Y.Z"; exit 1; }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          hub="${DOCKERHUB_USERNAME,,}"
+          for image in interleaf git-bridge; do
+            crane copy "ghcr.io/$owner/$image:$VERSION" "index.docker.io/$hub/$image:$VERSION"
+            crane digest "ghcr.io/$owner/$image:$VERSION"
+            crane digest "index.docker.io/$hub/$image:$VERSION"
+          done

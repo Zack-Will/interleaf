@@ -1,5 +1,6 @@
 # Builds the two images a deployment needs and pushes them to the GitHub
-# Container Registry, so that a small host can deploy with a plain `docker pull`
+# Container Registry, and to Docker Hub when the DOCKERHUB_USERNAME and
+# DOCKERHUB_TOKEN secrets are set, so that a small host can deploy with a plain `docker pull`
 # instead of compiling TeX Live and Java locally:
 #
 #   interleaf   Overleaf Community Edition plus this fork's modules
@@ -44,6 +45,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_ENABLED: ${{ secrets.DOCKERHUB_TOKEN != '' && secrets.DOCKERHUB_USERNAME != '' }}
     steps:
       - name: Check the tag shape the toolkit requires
         run: |
@@ -63,6 +67,27 @@ jobs:
       - name: Resolve the registry namespace
         run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
+      # Docker Hub gets the same tags as GHCR when its secrets are configured.
+      - name: Resolve image tags
+        id: tags
+        run: |
+          {
+            echo 'interleaf<<EOF'
+            echo "ghcr.io/$OWNER/interleaf:${{ inputs.version }}"
+            echo "ghcr.io/$OWNER/interleaf:${{ github.sha }}"
+            if [ "$DOCKERHUB_ENABLED" = true ]; then
+              echo "docker.io/${DOCKERHUB_USERNAME,,}/interleaf:${{ inputs.version }}"
+              echo "docker.io/${DOCKERHUB_USERNAME,,}/interleaf:${{ github.sha }}"
+            fi
+            echo EOF
+            echo 'gitbridge<<EOF'
+            echo "ghcr.io/$OWNER/git-bridge:${{ inputs.version }}"
+            if [ "$DOCKERHUB_ENABLED" = true ]; then
+              echo "docker.io/${DOCKERHUB_USERNAME,,}/git-bridge:${{ inputs.version }}"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
@@ -72,6 +97,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v3
+        if: env.DOCKERHUB_ENABLED == 'true'
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # `server-ce/Dockerfile` is built from the monorepo root, and the Makefile
       # copies this ignore file there before building.
@@ -94,9 +126,7 @@ jobs:
             com.overleaf.ce.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ env.OWNER }}/interleaf:${{ inputs.version }}
-            ghcr.io/${{ env.OWNER }}/interleaf:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.interleaf }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -113,7 +143,6 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
-          tags: |
-            ghcr.io/${{ env.OWNER }}/git-bridge:${{ inputs.version }}
+          tags: ${{ steps.tags.outputs.gitbridge }}
           cache-from: type=gha,scope=git-bridge
           cache-to: type=gha,mode=max,scope=git-bridge
