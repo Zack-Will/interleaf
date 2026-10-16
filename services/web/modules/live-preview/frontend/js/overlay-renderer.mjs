@@ -3,6 +3,7 @@ import { OverlayModel } from './overlay-model.mjs'
 import { GlyphCache, glyphRequests } from './glyph-cache.mjs'
 import { pageTransform, paddedRect } from './geometry.mjs'
 import { Painter } from './painter.mjs'
+import { PagePixels } from './page-pixels.mjs'
 
 export class OverlayRenderer {
   /**
@@ -18,6 +19,7 @@ export class OverlayRenderer {
   }) {
     Object.assign(this, { wrapper, currentUser, userColor, onError })
     this.model = new OverlayModel()
+    this.pixels = new PagePixels(wrapper)
     this.cache = new GlyphCache({ getAccess, fetchJSON })
     this.canvases = new Map()
     this.requests = new Map()
@@ -25,16 +27,24 @@ export class OverlayRenderer {
     this.onPages = () => {
       this.document = wrapper.viewer.pdfDocument
       this.ready = true
+      this.pixels.attach()
       this.repaint()
     }
-    this.onRender = () => {
-      if (this.document === wrapper.viewer.pdfDocument) this.repaint()
+    this.onRender = event => {
+      if (this.document !== wrapper.viewer.pdfDocument) return
+      if (event) {
+        const page = wrapper.viewer.getPageView(event.pageNumber - 1)
+        if (event.source !== page || event.cssTransform || event.error) return
+        this.pixels.rendered(event.pageNumber)
+      }
+      this.repaint()
     }
     wrapper.eventBus.on('pagesinit', this.onPages)
     wrapper.eventBus.on('pagerendered', this.onRender)
   }
 
   layout(header) {
+    this.pixels.capture()
     this.generation++
     this.ready = false
     this.requests.clear()
@@ -86,6 +96,7 @@ export class OverlayRenderer {
     // when a unit becomes degraded, and after pdf.js resets or zooms a page.
     const pages = new Set([...this.canvases.keys(), ...this.model.pages()])
     for (const page of pages) {
+      if (this.pixels.pages.has(page)) continue
       const pageView = this.wrapper.viewer.getPageView(page - 1)
       if (!pageView?.viewport || !pageView.div) continue
       const { div, viewport } = pageView
@@ -169,5 +180,6 @@ export class OverlayRenderer {
     this.wrapper.eventBus.off('pagesinit', this.onPages)
     this.wrapper.eventBus.off('pagerendered', this.onRender)
     this.clearCanvases()
+    this.pixels.clear()
   }
 }

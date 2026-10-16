@@ -53,6 +53,48 @@ export function placedRows(list, fragments) {
   return rows
 }
 
+function fragmentPositions(fragments) {
+  const positions = new Map()
+  for (const fragment of fragments || []) {
+    for (let line = fragment.first_line; line <= fragment.last_line; line++) {
+      const offset = line - fragment.first_line
+      positions.set(line, {
+        page: fragment.page,
+        x: fragment.xs[offset] ?? fragment.x,
+        baseline: fragment.baselines[offset],
+      })
+    }
+  }
+  return positions
+}
+
+export function reanchorFragments(live, placements) {
+  const old = fragmentPositions(live)
+  const next = fragmentPositions(placements)
+  const anchors = [...next.keys()].filter(line => old.has(line))
+  if (!anchors.length) return live?.length ? live : placements
+  const extra = []
+  for (const [line, position] of old) {
+    if (next.has(line)) continue
+    const anchor = anchors.reduce((nearest, candidate) =>
+      Math.abs(candidate - line) < Math.abs(nearest - line)
+        ? candidate
+        : nearest
+    )
+    const before = old.get(anchor)
+    const after = next.get(anchor)
+    extra.push({
+      page: position.page + after.page - before.page,
+      first_line: line,
+      last_line: line,
+      xs: [position.x + after.x - before.x],
+      baselines: [position.baseline + after.baseline - before.baseline],
+      approximate: true,
+    })
+  }
+  return extra.length ? [...placements, ...extra] : placements
+}
+
 export function rowRect({ page, line, dx, dy }) {
   return {
     page,

@@ -14,8 +14,12 @@ import {
   pageTransform,
   glyphTransform,
   placedRows,
+  reanchorFragments,
 } from '../../../frontend/js/geometry.mjs'
-import { OverlayModel } from '../../../frontend/js/overlay-model.mjs'
+import {
+  OverlayModel,
+  retainParagraphs,
+} from '../../../frontend/js/overlay-model.mjs'
 import { GlyphCache, glyphRequests } from '../../../frontend/js/glyph-cache.mjs'
 import {
   getFlushDelay,
@@ -172,6 +176,71 @@ describe('live-preview protocol and display lists', function () {
 })
 
 describe('live-preview geometry and erase planning', function () {
+  it('keeps extra live rows that do not exist in the older pass snapshot', function () {
+    const live = [
+      {
+        page: 1,
+        first_line: 1,
+        last_line: 2,
+        xs: [100, 110],
+        baselines: [200, 300],
+      },
+    ]
+    const snapshot = [
+      { page: 2, first_line: 1, last_line: 1, xs: [400], baselines: [500] },
+    ]
+    const result = reanchorFragments(live, snapshot)
+    expect(result[0]).to.equal(snapshot[0])
+    expect(result[1]).to.deep.equal({
+      page: 2,
+      first_line: 2,
+      last_line: 2,
+      xs: [410],
+      baselines: [600],
+      approximate: true,
+    })
+  })
+  it('retains only live revisions newer than the snapshot and moves them to the new rows', function () {
+    const model = new OverlayModel()
+    const base = { page: 2, x: 210, y: 392, w: 100, h: 10 }
+    model.layout({ placements: [{ par_id: 1, row_rects: [base] }] })
+    const header = {
+      par_id: 1,
+      status: 'ok',
+      fragments,
+      versions: { source_revision: 6 },
+    }
+    model.paragraph(header, list, 123)
+    const moved = [{ ...fragments[0], page: 3, xs: [310], baselines: [500] }]
+    const layout = {
+      versions: { source_revision: 9 },
+      snapshot_source_revision: 5,
+      placements: [
+        {
+          par_id: 1,
+          fragments: moved,
+          row_rects: [{ ...base, page: 3, x: 310, y: 492 }],
+        },
+      ],
+    }
+    const retained = retainParagraphs(
+      new Map([
+        [1, { header }],
+        [2, { header: { versions: { source_revision: 5 } } }],
+      ]),
+      layout
+    )
+    expect([...retained.keys()]).to.deep.equal([1])
+    expect(retained.get(1).header.fragments).to.equal(moved)
+    model.layout(layout)
+    expect(model.units.get(1).rows[0]).to.include({ page: 3, dx: 300, dy: 450 })
+    expect(model.units.get(1).erase.every(rect => rect.page === 3)).to.equal(
+      true
+    )
+    expect(model.units.get(1).changedAt).to.equal(123)
+    model.layout({ ...layout, snapshot_source_revision: 6 })
+    expect(model.units.size).to.equal(0)
+  })
   it('maps top-left sp to viewport coordinates, including rotation, crop and DPR', function () {
     const scale = pageTransform(
       { viewBox: [10, 20, 610, 820], transform: [2, 0, 0, -2, -20, 1640] },

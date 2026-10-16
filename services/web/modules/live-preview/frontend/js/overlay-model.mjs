@@ -1,4 +1,27 @@
-import { placedRows, rowRect } from './geometry.mjs'
+import { placedRows, reanchorFragments, rowRect } from './geometry.mjs'
+import { newerThanLayout } from '@overleaf/live-preview-protocol/Layout.mjs'
+
+export function anchorParagraph(frame, layout) {
+  const placement = layout.placements?.find(
+    unit => unit.par_id === frame.header.par_id
+  )
+  if (!placement?.fragments) return frame
+  return {
+    ...frame,
+    header: {
+      ...frame.header,
+      fragments: reanchorFragments(frame.header.fragments, placement.fragments),
+    },
+  }
+}
+
+export function retainParagraphs(paragraphs, layout) {
+  return new Map(
+    [...paragraphs]
+      .filter(([, frame]) => newerThanLayout(frame.header, layout))
+      .map(([id, frame]) => [id, anchorParagraph(frame, layout)])
+  )
+}
 
 export class OverlayModel {
   constructor() {
@@ -7,10 +30,23 @@ export class OverlayModel {
   }
 
   layout(header) {
-    this.units.clear()
     this.baseRects = new Map(
       (header.placements || []).map(unit => [unit.par_id, unit.row_rects || []])
     )
+    const previous = this.units
+    this.units = new Map()
+    for (const [id, unit] of previous) {
+      if (!newerThanLayout(unit.header, header)) continue
+      const placement = header.placements?.find(unit => unit.par_id === id)
+      if (!placement) {
+        this.units.set(id, unit)
+        continue
+      }
+      const next = anchorParagraph({ header: unit.header }, header).header
+      if (this.paragraph(next, unit.list, unit.changedAt)) {
+        Object.assign(this.units.get(id), { fonts: unit.fonts })
+      }
+    }
   }
 
   paragraph(header, list, now = Date.now()) {
@@ -40,6 +76,7 @@ export class OverlayModel {
     )
       return false
     this.units.set(id, {
+      header,
       list,
       rows,
       erase,

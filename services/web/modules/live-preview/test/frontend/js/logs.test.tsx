@@ -132,7 +132,7 @@ describe('live diagnostics in the native logs slot', function () {
           />
         </EditorProviders>
       )
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
       await waitFor(() => expect(previewSocket).not.to.equal(undefined))
       const send = (type: string, header: Record<string, any>) =>
         act(() =>
@@ -178,7 +178,7 @@ describe('live diagnostics in the native logs slot', function () {
       })
       expect(screen.getByText('Live preview: Undefined control sequence')).to
         .exist
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Off' }))
       expect(screen.queryByLabelText('Live preview diagnostics')).to.equal(null)
       expect(screen.getByText('Normal CLSI warning')).to.exist
     })

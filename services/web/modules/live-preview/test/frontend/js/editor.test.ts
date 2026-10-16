@@ -10,6 +10,53 @@ import { livePreviewUserColor } from '../../../frontend/js/user-color'
 import { getBackgroundColorForUserId } from '@/shared/utils/colors'
 
 describe('live preview editor integration', function () {
+  it('marks current-document missing glyph locations and replaces them with each pass', function () {
+    const state = updateEditorState(
+      { markers: new Map(), diagnostics: new Map() },
+      {
+        type: 'diagnostics',
+        header: {
+          source: 'missing-glyphs',
+          items: [
+            {
+              message: 'Font has no glyphs for: 中',
+              locations: [{ doc_id: 'main', range: { start: 0, end: 2 } }],
+            },
+          ],
+        },
+      }
+    )
+    markerStore.set(state.markers)
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: '中文\nplain',
+        extensions: extension({
+          currentDoc: { currentDoc: { doc_id: 'main' } },
+        }),
+      }),
+    })
+    try {
+      expect(
+        parent.querySelectorAll(
+          '[title="Live preview: Font has no glyphs for: 中"]'
+        )
+      ).to.have.length(1)
+      const clean = updateEditorState(state, {
+        type: 'diagnostics',
+        header: { source: 'missing-glyphs', items: [] },
+      })
+      markerStore.set(clean.markers)
+      expect(
+        parent.querySelectorAll('.cm-live-preview-gutter [title]')
+      ).to.have.length(0)
+    } finally {
+      view.destroy()
+      parent.remove()
+    }
+  })
   afterEach(function () {
     markerStore.set(new Map())
   })

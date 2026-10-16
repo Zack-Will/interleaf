@@ -21,7 +21,7 @@ export default function LivePreviewOverlay() {
   const getAccess = live?.getAccess
   const layout = live?.layout
   const paragraphs = live?.paragraphs
-  const status = layoutStatusLabel(live?.convergence, layout?.compile)
+  const status = layoutStatusLabel(live?.convergence, live?.compile)
 
   useEffect(() => {
     if (!enabled || !pdfJsWrapper || !getAccess) return

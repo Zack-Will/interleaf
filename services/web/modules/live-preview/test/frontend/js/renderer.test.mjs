@@ -16,6 +16,7 @@ describe('live-preview overlay lifecycle', function () {
       setTransform: sinon.spy(),
       fillRect: sinon.spy(),
       strokeRect: sinon.spy(),
+      drawImage: sinon.spy(),
     }
     canvasStub = sinon
       .stub(window.HTMLCanvasElement.prototype, 'getContext')
@@ -104,5 +105,42 @@ describe('live-preview overlay lifecycle', function () {
     renderer.layout({ placements: [] })
     await pending
     expect(renderer.model.units.size).to.equal(0)
+  })
+
+  it('keeps visible page pixels and overlays until that page renders in the new document', function () {
+    const container = document.createElement('div')
+    const base = document.createElement('canvas')
+    base.width = 600
+    base.height = 800
+    const canvasWrapper = document.createElement('div')
+    canvasWrapper.className = 'canvasWrapper'
+    canvasWrapper.append(base)
+    page.append(canvasWrapper)
+    container.append(page)
+    document.body.append(container)
+    const pageView = wrapper.viewer.getPageView(0)
+    wrapper.viewer.getPageView = () => pageView
+    wrapper.viewer.pagesCount = 1
+    wrapper.container = container
+    handlers.get('pagesinit')()
+    renderer.layout({ placements: [] })
+    const held = container.querySelector('[data-live-preview-pixels]')
+    expect(held).not.to.equal(null)
+    expect(context.drawImage).to.have.been.calledWith(base, 0, 0, 600, 800)
+    page.replaceChildren()
+    wrapper.viewer.pdfDocument = {}
+    handlers.get('pagesinit')()
+    expect(page.contains(held)).to.equal(true)
+    handlers.get('pagerendered')({ source: {}, pageNumber: 1 })
+    expect(page.contains(held)).to.equal(true)
+    handlers.get('pagerendered')({
+      source: pageView,
+      pageNumber: 1,
+      cssTransform: true,
+    })
+    expect(page.contains(held)).to.equal(true)
+    handlers.get('pagerendered')({ source: pageView, pageNumber: 1 })
+    expect(page.contains(held)).to.equal(false)
+    container.remove()
   })
 })

@@ -1,3 +1,5 @@
+import { snapshotRevision } from '@overleaf/live-preview-protocol/Layout.mjs'
+
 // Shared within one window only. CodeMirror extensions subscribe without React.
 export function createMarkerStore() {
   let markers = new Map()
@@ -48,8 +50,7 @@ export function updateEditorState(previous, { type, header }) {
       const marker = markers.get(unit.par_id)
       if (
         marker &&
-        (marker.versions?.source_revision || 0) <=
-          (header.versions?.source_revision || 0)
+        (marker.versions?.source_revision || 0) <= snapshotRevision(header)
       ) {
         markers.delete(unit.par_id)
         diagnostics.delete(`paragraph:${unit.par_id}`)
@@ -57,6 +58,20 @@ export function updateEditorState(previous, { type, header }) {
     }
   } else if (type === 'diagnostics') {
     diagnostics.set(header.source, header.items || [])
+    for (const [id, marker] of markers) {
+      if (marker.diagnosticSource === header.source) markers.delete(id)
+    }
+    for (const [index, item] of (header.items || []).entries()) {
+      for (const [locationIndex, location] of (
+        item.locations || []
+      ).entries()) {
+        markers.set(`diagnostic:${header.source}:${index}:${locationIndex}`, {
+          ...location,
+          diagnosticSource: header.source,
+          reasons: [item.message],
+        })
+      }
+    }
   } else if (type === 'hello') {
     markers.clear()
     diagnostics.clear()

@@ -22,7 +22,15 @@ import { createLease } from './flush-delay.mjs'
 import { connectPreview } from './connection.mjs'
 import { accessUrl } from './protocol.mjs'
 import { markerStore, updateEditorState } from './editor-state.mjs'
-import type { Marker } from './source-editor-extension'
+import type { Marker, MarkerId } from './source-editor-extension'
+import { anchorParagraph, retainParagraphs } from './overlay-model.mjs'
+import { snapshotRevision } from '@overleaf/live-preview-protocol/Layout.mjs'
+import {
+  createLayoutScheduler,
+  needsBasePdf,
+  subscribeLocalEdits,
+} from './layout-scheduler.mjs'
+import { debugConsole } from '@/utils/debugging'
 
 export type PreviewFrame = {
   type: string
@@ -41,8 +49,9 @@ type PreviewState = {
     reasons?: string[]
   }
   layout?: PreviewFrame['header']
+  compile?: PreviewFrame['header']['compile']
   paragraphs: Map<number, PreviewFrame>
-  markers: Map<number, Marker>
+  markers: Map<MarkerId, Marker>
   diagnostics: Map<string, LiveDiagnostic[]>
 }
 
@@ -165,6 +174,32 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
     access.current = ''
     setPreviewUrl?.(undefined)
     if (!enabled) return
+    const controller = new AbortController()
+    let appliedLayout: PreviewFrame['header'] | undefined
+    const scheduler = createLayoutScheduler({
+      prepare: async (header: PreviewFrame['header']) => {
+        const response = await fetch(
+          accessUrl(header.pdf_url, access.current),
+          {
+            signal: controller.signal,
+          }
+        )
+        if (!response.ok) throw new Error(`Preview PDF: ${response.status}`)
+        return URL.createObjectURL(await response.blob())
+      },
+      release: (url: string) => URL.revokeObjectURL(url),
+      apply: (header: PreviewFrame['header'], url: string) => {
+        appliedLayout = header
+        setState(previous => ({
+          ...previous,
+          layout: header,
+          paragraphs: retainParagraphs(previous.paragraphs, header),
+        }))
+        setPreviewUrl?.(url)
+      },
+      onError: (error: unknown) => debugConsole.warn('Live preview PDF', error),
+    })
+    const unsubscribe = subscribeLocalEdits(() => scheduler.activity())
     const close = connectPreview({
       project: projectId,
       getTicket: (signal: AbortSignal) =>
@@ -172,11 +207,23 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
       onState: (connection: string) =>
         setState(previous => ({ ...previous, connection })),
       onFrame: ({ type, header, body }: PreviewFrame) => {
+        if (
+          type === 'hello' ||
+          type === 'busy' ||
+          (type === 'engine' && header.state === 'Failed')
+        ) {
+          scheduler.reset()
+          appliedLayout = undefined
+        }
         if (type === 'hello' || type === 'access')
           access.current = header.access
-        if (type === 'layout' && header.pdf_url && access.current) {
-          setPreviewUrl?.(accessUrl(header.pdf_url, access.current))
+        if (type === 'paragraph') {
+          scheduler.activity()
+          if (needsBasePdf({ header, body }))
+            scheduler.requireBase(header.versions?.source_revision)
         }
+        if (type === 'layout' && header.pdf_url && access.current)
+          scheduler.layout(header, snapshotRevision(header))
         setState(previous => {
           const editor = updateEditorState(previous, { type, header })
           const next = { ...previous, ...editor }
@@ -188,17 +235,22 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
                 paragraphs: new Map(),
               }
             case 'layout':
-              if (!header.pdf_url) return next
               return {
                 ...next,
-                layout: header,
                 convergence: header.convergence,
-                paragraphs: new Map(),
+                compile: header.compile,
               }
             case 'paragraph': {
               if (header.status === 'error') return next
               const paragraphs = new Map(previous.paragraphs)
-              paragraphs.set(header.par_id, { type, header, body })
+              const frame = { type, header, body }
+              const drawing =
+                appliedLayout &&
+                header.versions?.layout_version !==
+                  appliedLayout.versions?.layout_version
+                  ? anchorParagraph(frame, appliedLayout)
+                  : frame
+              paragraphs.set(header.par_id, drawing)
               return { ...next, paragraphs }
             }
             case 'engine':
@@ -213,6 +265,9 @@ export default function LivePreviewProvider({ children }: PropsWithChildren) {
     })
     return () => {
       close()
+      unsubscribe()
+      controller.abort()
+      scheduler.dispose()
       setPreviewUrl?.(undefined)
     }
   }, [enabled, projectId, setPreviewUrl, retryCount])

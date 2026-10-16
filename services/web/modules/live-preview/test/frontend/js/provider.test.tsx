@@ -57,6 +57,8 @@ describe('LivePreviewProvider', function () {
   let sockets: TestSocket[]
   let nativeWebSocket: typeof WebSocket
   let detachHandlers: Set<(message: any) => void>
+  let createObjectURL: sinon.SinonStub
+  let revokeObjectURL: sinon.SinonStub
 
   class TestSocket {
     readyState = 1
@@ -130,6 +132,11 @@ describe('LivePreviewProvider', function () {
     window.metaAttributesCache.set('ol-csrfToken', 'csrf-token')
     fetchMock.removeRoutes().clearHistory()
     fetchMock.post(ticketUrl, { ticket: 'open-token' })
+    fetchMock.get(/\/live-preview\/pdf\//, { body: '%PDF-test' })
+    createObjectURL = sinon.stub().returns('blob:preview')
+    revokeObjectURL = sinon.stub()
+    URL.createObjectURL = createObjectURL
+    URL.revokeObjectURL = revokeObjectURL
   })
   afterEach(function () {
     cleanup()
@@ -137,13 +144,13 @@ describe('LivePreviewProvider', function () {
     localStorage.removeItem(`live-preview:${projectId}`)
     window.metaAttributesCache.set('ol-livePreviewEnabled', false)
     fetchMock.removeRoutes().clearHistory()
+    delete (URL as Partial<typeof URL>).createObjectURL
+    delete (URL as Partial<typeof URL>).revokeObjectURL
   })
 
   it('gates by flag and compiler and listens to leases with the preview off', function () {
     const view = mount('pdflatex')
-    expect(screen.queryByRole('menuitem', { name: 'Live preview' })).to.equal(
-      null
-    )
+    expect(screen.queryByRole('menuitem', { name: 'On' })).to.equal(null)
     act(() => {
       socket.emit('livePreview.active', { leaseMs: 75000 })
     })
@@ -155,15 +162,13 @@ describe('LivePreviewProvider', function () {
     view.unmount()
     window.metaAttributesCache.set('ol-livePreviewEnabled', false)
     mount()
-    expect(screen.queryByRole('menuitem', { name: 'Live preview' })).to.equal(
-      null
-    )
+    expect(screen.queryByRole('menuitem', { name: 'On' })).to.equal(null)
     expect(fetchMock.callHistory.called(ticketUrl)).to.equal(false)
   })
 
   it('persists the toggle, opens with CSRF, renews access and overrides only the preview URL', async function () {
     const view = mount()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     expect(localStorage.getItem(`live-preview:${projectId}`)).to.equal('true')
     const request = fetchMock.callHistory.calls(ticketUrl)[0]
@@ -188,9 +193,14 @@ describe('LivePreviewProvider', function () {
       })
     })
     expect(screen.getByTestId('access').textContent).to.equal('renewed')
-    expect(setPreviewUrl).to.have.been.calledWith(
-      `/live-preview/pdf/${projectId}/4?ticket=renewed`
+    await waitFor(() =>
+      expect(setPreviewUrl).to.have.been.calledWith('blob:preview')
     )
+    expect(
+      fetchMock.callHistory.called(
+        `/live-preview/pdf/${projectId}/4?ticket=renewed`
+      )
+    ).to.equal(true)
     expect(screen.getByTestId('state').textContent).to.equal('true:Ready:4')
     view.unmount()
     expect(sockets[0].close).to.have.been.called
@@ -202,7 +212,7 @@ describe('LivePreviewProvider', function () {
 
   it('restores normal autocompile and PDF on busy or failed engines', async function () {
     mount()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     act(() => {
       sockets[0].onmessage?.({
@@ -225,7 +235,7 @@ describe('LivePreviewProvider', function () {
 
   it('retries a failed engine with a fresh socket and restores autocompile during failure', async function () {
     mount()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     act(() =>
       sockets[0].onmessage?.({
@@ -256,9 +266,7 @@ describe('LivePreviewProvider', function () {
       })
     changeCompiler('pdflatex')
     expect(sockets[0].close).to.have.been.called
-    expect(screen.queryByRole('menuitem', { name: 'Live preview' })).to.equal(
-      null
-    )
+    expect(screen.queryByRole('menuitem', { name: 'On' })).to.equal(null)
     expect(screen.getByRole('alert').textContent).to.include('compiler changed')
     expect(localStorage.getItem(`live-preview:${projectId}`)).to.equal(null)
     changeCompiler('lualatex')
@@ -293,9 +301,14 @@ describe('LivePreviewProvider', function () {
           }),
         })
       })
-      expect(setPreviewUrl).to.have.been.calledWith(
-        '/live-preview/pdf/p/1?ticket=detached-access'
+      await waitFor(() =>
+        expect(setPreviewUrl).to.have.been.calledWith('blob:preview')
       )
+      expect(
+        fetchMock.callHistory.called(
+          '/live-preview/pdf/p/1?ticket=detached-access'
+        )
+      ).to.equal(true)
       expect(screen.getAllByRole('status')[1].textContent).to.include('Ready')
       if (closeFirst === 'editor') editor.unmount()
       else detached.unmount()
@@ -325,14 +338,14 @@ describe('LivePreviewProvider', function () {
         })
     })
     expect(screen.getByRole('alert').textContent).to.include('compiler changed')
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
     await waitFor(() => expect(sockets).to.have.length(2))
     expect(screen.queryByRole('alert')).to.equal(null)
   })
 
   it('keeps the last drawing on TeX errors and marks the source until a live update or containing layout', async function () {
     mount()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     const send = (type: string, header: Record<string, any>) =>
       act(() => sockets[0].onmessage?.({ data: encodeFrame(type, header) }))
@@ -370,7 +383,7 @@ describe('LivePreviewProvider', function () {
 
   it('renders convergence objects as short labels and reports compile error counts', async function () {
     mount()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'On' }))
     await waitFor(() => expect(sockets).to.have.length(1))
     act(() => {
       sockets[0].onmessage?.({
@@ -433,7 +446,7 @@ describe('LivePreviewProvider', function () {
     expect(screen.getByRole('status').textContent).to.equal(
       'Live preview: Ready · Converged'
     )
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Live preview' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Off' }))
     expect(screen.queryByRole('status')).to.equal(null)
   })
 
