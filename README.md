@@ -7,6 +7,7 @@
   <a href="#quick-start">Quick start</a> •
   <a href="#documentation">Documentation</a> •
   <a href="#relationship-to-overleaf">Relationship to Overleaf</a> •
+  <a href="#acknowledgements">Acknowledgements</a> •
   <a href="#license">License</a>
 </p>
 
@@ -26,7 +27,9 @@ notes, accepts some of it, and the timeline records both hands.
   Protocol client. An agent reads and writes files, follows the history, opens
   and merges branches, reads review comments and replies to them, and offers
   edits as tracked changes for a person to accept or reject. It is stateless
-  and authenticated with a personal access token.
+  and authenticated with a personal access token. Writes are guarded: replacing
+  an existing file needs an explicit `overwrite`, a stale version is refused
+  with the current one, and every error says what to do next.
 - **Comment-driven collaboration.** Upstream's review panel exists in the
   Community Edition source but is switched off. Interleaf turns it on, adds the
   web routes it needs, and gives an agent a service account of its own, so a
@@ -43,11 +46,32 @@ notes, accepts some of it, and the timeline records both hands.
 - **One-way GitHub backup.** Link a project to a repository and its history is
   mirrored there on a schedule or on demand, fast-forward only, with the tokens
   encrypted at rest.
+- **Live preview for LuaLaTeX projects.** Paragraphs are re-typeset as you type
+  and drawn over the PDF within a fraction of a second, for edits made by you,
+  a collaborator, an agent or a `git push` alike; a background pass settles
+  pages, floats and references. It is built on
+  [realtime-tex](https://github.com/HenryXiaoYang/realtime-tex) and works for
+  Chinese with `ctex`. pdfLaTeX and XeLaTeX projects compile as before.
+- **The full TeX Live in the image.** Upstream's image ships `scheme-basic`;
+  Interleaf ships `scheme-full`, so conference templates such as `acmart` and
+  `IEEEtran` compile without installing anything.
 
 ## Quick start
 
 Interleaf is a drop-in replacement for the `sharelatex/sharelatex` image, so the
 [Overleaf Toolkit](https://github.com/overleaf/toolkit) is the shortest path.
+The images are published to the GitHub Container Registry:
+
+| Image | Contents |
+|---|---|
+| `ghcr.io/zack-will/interleaf:<tag>` | Community Edition, this fork's modules, rtex and the full TeX Live |
+| `ghcr.io/zack-will/git-bridge:<tag>` | The MIT-licensed Java Git server, built from `services/git-bridge` |
+
+Image tags look like Overleaf versions (`6.2.5`) because the toolkit insists on
+that shape and derives the git-bridge tag from it. Interleaf's own releases are
+the git tags `interleaf-vX.Y.Z`; each [release](https://github.com/Zack-Will/interleaf/releases)
+names the image tag it ships, and [`CHANGELOG.md`](CHANGELOG.md) lists what
+changed.
 See [`doc/deploy-toolkit.md`](doc/deploy-toolkit.md) for the full runbook,
 including the one patch the toolkit needs before it will run git-bridge outside
 Server Pro.
@@ -68,9 +92,13 @@ claude mcp add --transport http interleaf https://your-host/mcp \
 |---|---|
 | [`doc/agent-sync-usage.md`](doc/agent-sync-usage.md) | Enabling the features, tokens, the MCP tools, the comment workflow, Git |
 | [`doc/github-backup.md`](doc/github-backup.md) | Linking a project to GitHub and what the statuses mean |
+| [`doc/live-preview.md`](doc/live-preview.md) | Turning live preview on, what updates live, and its limits |
 | [`doc/deploy-toolkit.md`](doc/deploy-toolkit.md) | Building the image and rolling it out with the Overleaf Toolkit |
+| [`doc/changes-from-ce.md`](doc/changes-from-ce.md) | Every change this fork makes to Community Edition, file by file |
+| [`CHANGELOG.md`](CHANGELOG.md) | What each release changed |
 | [`doc/design/agent-sync-architecture.md`](doc/design/agent-sync-architecture.md) | Why the design looks like this, and the decisions behind it |
 | [`doc/design/github-backup.md`](doc/design/github-backup.md) | The mirror job, its data model and its failure modes |
+| [`doc/design/live-preview.md`](doc/design/live-preview.md) | The live preview service, its protocol and its resource budget |
 | [`AGENTS.md`](AGENTS.md) | Conventions for anyone, human or agent, changing this repository |
 
 ## Relationship to Overleaf
@@ -99,7 +127,31 @@ The upstream README is kept at
 > environments where **all** users are trusted. Without sandboxed compiles a
 > user can read and write the container's filesystem, network and environment
 > during a LaTeX compile. Giving an agent write access does not change that
-> boundary, it just means a program is now standing inside it.
+> boundary, it just means a program is now standing inside it. Live preview
+> runs a LuaLaTeX process per open project inside the same container and the
+> same boundary.
+
+## Acknowledgements
+
+Interleaf exists because other people gave their work away.
+
+- **The Overleaf team and the ShareLaTeX authors** wrote the editor, the
+  real-time collaboration, the history system and nearly everything else this
+  repository contains, and keep publishing it as free software.
+- **Winston Li** wrote the [git-bridge](services/git-bridge) that Git access is
+  built on, and released it under the MIT licence.
+- **Henry Yang and the realtime-tex contributors** wrote
+  [realtime-tex](https://github.com/HenryXiaoYang/realtime-tex), the engine
+  behind live preview. Interleaf builds it from a fork whose fixes are offered
+  back upstream.
+- **The TeX Live team and every package author** on CTAN, whose work is the
+  bulk of the image.
+- **[OverleafMCP](https://github.com/mjyoo2/OverleafMCP)** by mjyoo2 and
+  **[olgitbridge](https://github.com/chazeon/olgitbridge)** by chazeon showed
+  what agents and Git users need from an Overleaf server before this fork
+  started. No code was taken from them.
+
+[`NOTICE.md`](NOTICE.md) lists every bundled component with its licence.
 
 ## Contributing
 
@@ -116,7 +168,10 @@ GNU Affero General Public License, version 3, the same as upstream. A copy is in
 Copyright (c) Overleaf, 2014-2025, for the upstream work.
 Copyright (c) the Interleaf contributors, 2026, for the changes in this fork.
 
-[`services/git-bridge`](services/git-bridge) remains under its own MIT licence.
+Bundled components keep their own licences, listed in [`NOTICE.md`](NOTICE.md):
+[`services/git-bridge`](services/git-bridge) and realtime-tex are MIT, TeX Live
+is a collection of free licences per package. The images carry each licence
+text next to the component.
 
 Because this is AGPL software, anyone you let use a server running it is
 entitled to its source. If you deploy a modified copy, publish your changes and
