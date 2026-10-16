@@ -391,3 +391,117 @@ node --max-old-space-size=1400 modules/live-preview/test/check-types.mjs
 ```text
 Touched-file TypeScript: 9 files, 0 diagnostics
 ```
+
+## 0.2.1 atomic PDF swaps (2026-10-16)
+
+The module frontend suite, service unit suite, all web module unit suites and
+touched-file TypeScript check passed. The final type check used
+`node --max-old-space-size=1300 modules/live-preview/test/check-types.mjs`.
+ESLint and Prettier checked touched files only. No service code changed, so no
+service acceptance test was needed. Webpack reported compiled successfully.
+
+```text
+Module frontend: 54 passing (3s)
+services/live-preview: Test Files 10 passed (10); Tests 100 passed (100)
+All web modules: Test Files 29 passed (29); Tests 377 passed (377)
+Touched-file TypeScript: 9 files, 0 diagnostics
+```
+
+The remaining white frame came from two module lifecycle races: capturing on
+React layout delivery allowed an old-document pagerendered to release the copy;
+reattaching it inside a new page on pagesinit exposed it to PDFPageView.reset
+during scale restoration. PDFViewer.setDocument first dispatches pagesdestroy,
+then cancels rendering and calls \_resetView, which clears the entire viewer.
+The module now captures on that synchronous pagesdestroy boundary and keeps
+copies outside .pdfViewer until a successful full render of the corresponding
+new-document page, with a ten-second cleanup fallback.
+
+Representable line-count changes wait for one second of quiet. pagination_stale
+and approximate fragments alone no longer force a swap. Complete finite rows
+must fit on existing PDF pages with captured base geometry; real PDF viewport
+bounds also handle fast RTDL lists whose page dimensions are zero. Missing
+geometry, overflow, degraded content and background-only edits remain urgent.
+
+The original raw-canvas check is retained. Its white samples below are from the
+new canvas underneath a freeze copy after the typing burst. Visible composite
+samples include base pixels, live overlay and any freeze copy, and count missing
+canvases as blank. The script also counts actual page-tree swaps independently
+of prefetched PDF requests, checks freeze presence at each swap, checks geometry
+through both DOM events and polling, and samples through the quiet-time swap.
+All three consecutive final runs exited 0, with zero visible blank frames and
+zero swaps during their 12-second bursts (10, 10 and 9 layouts respectively).
+
+Each browser run used only the requested command, from rtex-spike/e2e:
+
+```sh
+systemd-run --user --scope -q -p MemoryMax=1500M env PLAYWRIGHT_BROWSERS_PATH=$PWD/.browsers timeout 400 node smoothness.mjs
+```
+
+Final run 1:
+
+```text
+MemoryCurrent=2717704192
+4. dropdown first entries: ["Live preview","On","Offcheck","Auto compile"]
+1. typed 184 chars in 12 s; samples 261; baseline ink 459; min ink 0; blank frames (<30% ink) 1; layouts during burst 11; pdf fetches total 14
+   ink after 2.5 s quiet: 699
+   blank at ms: [13080]
+   layout frames at ms: [3389,4195,4810,5467,6234,6791,7514,8039,11303,11952,12471]
+   pdf fetch start/end ms: [[3390,3405],[4197,4212],[4811,4822],[5468,5479],[6235,6249],[6792,6800],[7515,7524],[8040,8064],[11304,11313],[11953,11961],[12472,12480]]
+   samples around blanks: [[12888,459],[12946,459],[13007,459],[13080,0],[13146,699],[13203,699],[13260,699],[13317,699]]
+1b. visible composite: samples 261; baseline ink 459; min ink 156; blank frames (<30% ink, including missing canvas) 0; swaps during burst 0; layouts during burst 10
+   composite blank at ms: []
+   actual swaps at ms / held pages: [{"ms":13065,"held":1}]
+   freeze pages after quiet: 0
+   freeze alignment: 2 samples; max drift 0.61 px; outside viewer true
+   frame types since burst: {"2":74,"3":11}
+   overlay painted px: 0
+   doc FAST para: FAST dcba dcba dcba dcba dcba dcba dcba dcba dcba dcba dcba
+3a. gutter marker: Live preview: Font [lmroman10-regular]:+tlig; has no glyphs for: 中文测试; the preamble may need a package such as ctex or fontspec with a font that covers them
+3b. live log entries: ["Live preview: Font [lmroman10-regular]:+tlig; has no glyphs for: 中文测试; the preamble may need a package such as ctex or fontspec with a font that covers them‪main.tex, 8‬my_locationdeleteClear cached files"]
+```
+
+Final run 2:
+
+```text
+MemoryCurrent=2615959552
+4. dropdown first entries: ["Live preview","On","Offcheck","Auto compile"]
+1. typed 185 chars in 12 s; samples 261; baseline ink 459; min ink 0; blank frames (<30% ink) 1; layouts during burst 11; pdf fetches total 13
+   ink after 2.5 s quiet: 697
+   blank at ms: [13189]
+   layout frames at ms: [3482,4303,4838,5502,6050,6771,7284,8014,11256,11973,12479]
+   pdf fetch start/end ms: [[3484,3493],[4304,4313],[4839,4849],[5503,5518],[6051,6061],[6773,6783],[7285,7292],[8015,8023],[11257,11264],[11974,11982],[12480,12489]]
+   samples around blanks: [[12974,459],[13044,459],[13103,459],[13189,0],[13258,697],[13316,697],[13373,697],[13432,697]]
+1b. visible composite: samples 261; baseline ink 459; min ink 155; blank frames (<30% ink, including missing canvas) 0; swaps during burst 0; layouts during burst 10
+   composite blank at ms: []
+   actual swaps at ms / held pages: [{"ms":13178,"held":1}]
+   freeze pages after quiet: 0
+   freeze alignment: 2 samples; max drift 0.61 px; outside viewer true
+   frame types since burst: {"2":76,"3":11}
+   overlay painted px: 0
+   doc FAST para: FASTa dcba dcba dcba dcba dcba dcba dcba dcba dcba dcba dcba
+3a. gutter marker: Live preview: Font [lmroman10-regular]:+tlig; has no glyphs for: 中文测试; the preamble may need a package such as ctex or fontspec with a font that covers them
+3b. live log entries: ["Live preview: Font [lmroman10-regular]:+tlig; has no glyphs for: 中文测试; the preamble may need a package such as ctex or fontspec with a font that covers them‪main.tex, 8‬my_locationdeleteClear cached files"]
+```
+
+Final run 3:
+
+```text
+MemoryCurrent=2639237120
+4. dropdown first entries: ["Live preview","On","Offcheck","Auto compile"]
+1. typed 185 chars in 12 s; samples 257; baseline ink 459; min ink 0; blank frames (<30% ink) 1; layouts during burst 11; pdf fetches total 14
+   ink after 2.5 s quiet: 697
+   blank at ms: [13211]
+   layout frames at ms: [3633,4410,4945,5587,6230,6801,7518,10752,11487,12030,12753]
+   pdf fetch start/end ms: [[3636,3652],[4411,4417],[4946,4956],[5588,5599],[6231,6243],[6802,6810],[7519,7534],[10753,10762],[11488,11497],[12032,12043],[12754,12764]]
+   samples around blanks: [[13004,459],[13082,459],[13140,459],[13211,0],[13311,697],[13383,697],[13448,697]]
+1b. visible composite: samples 257; baseline ink 459; min ink 155; blank frames (<30% ink, including missing canvas) 0; swaps during burst 0; layouts during burst 9
+   composite blank at ms: []
+   actual swaps at ms / held pages: [{"ms":13193,"held":1}]
+   freeze pages after quiet: 0
+   freeze alignment: 2 samples; max drift 0.61 px; outside viewer true
+   frame types since burst: {"2":76,"3":11}
+   overlay painted px: 0
+   doc FAST para: FASTa dcba dcba dcba dcba dcba dcba dcba dcba dcba dcba dcba
+3a. gutter marker: Live preview: Font [lmroman10-regular]:+tlig; has no glyphs for: 中文测试; the preamble may need a package such as ctex or fontspec with a font that covers them
+3b. live log entries: ["Live preview: Font [lmroman10-regular]:+tlig; has no glyphs for: 中文测试; the preamble may need a package such as ctex or fontspec with a font that covers them‪main.tex, 8‬my_locationdeleteClear cached files"]
+```

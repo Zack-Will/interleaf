@@ -525,6 +525,52 @@ async function run() {
   )
   log('PASS real background reasons and CJK/emoji UTF-16 source range')
 
+  const beforeGlyphs = frames.length
+  const glyphPosition = currentDocument().content.indexOf('Another paragraph')
+  await publishOp(
+    editorA,
+    update({ p: glyphPosition, i: '中文测试中 ' }, 'alice')
+  )
+  const warning = await waitFor(
+    () =>
+      frames
+        .slice(beforeGlyphs)
+        .find(
+          frame =>
+            frame.type === 'diagnostics' &&
+            frame.header.source === 'missing-glyphs' &&
+            frame.header.items.length
+        ),
+    'missing CJK glyph warning from real pass log',
+    60000
+  )
+  const glyphItems = warning.header.items
+  assert.equal(
+    new Set(glyphItems.map(item => item.message)).size,
+    glyphItems.length
+  )
+  assert.ok(
+    glyphItems.some(
+      item =>
+        item.message.includes('中文测试') &&
+        item.message.includes('ctex or fontspec')
+    )
+  )
+  assert.ok(
+    glyphItems.some(item =>
+      item.locations.some(
+        location =>
+          location.doc_id === docId &&
+          currentDocument()
+            .content.slice(location.range.start, location.range.end)
+            .includes('中文测试')
+      )
+    )
+  )
+  log(
+    'PASS real missing-font-glyph warnings, per-font deduplication and editor source locations'
+  )
+
   state.docs.push({
     id: otherDocId,
     path: 'extra.tex',
@@ -608,7 +654,7 @@ async function run() {
     'Only expected authorization errors'
   )
   log(
-    'Acceptance: 8 passed (real rtex + isolated Redis + fake HTTP; collaboration and source ranges included)'
+    'Acceptance: 9 passed (real rtex + isolated Redis + fake HTTP; collaboration, source ranges and missing glyphs included)'
   )
 }
 

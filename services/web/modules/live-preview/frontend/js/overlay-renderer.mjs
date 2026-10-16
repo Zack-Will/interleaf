@@ -1,12 +1,13 @@
 import { decodeDisplayList } from './protocol.mjs'
 import { OverlayModel } from './overlay-model.mjs'
 import { GlyphCache, glyphRequests } from './glyph-cache.mjs'
-import { pageTransform, paddedRect } from './geometry.mjs'
+import { pageTransform, paddedRect, SP_TO_BP } from './geometry.mjs'
 import { Painter } from './painter.mjs'
+import { PagePixels } from './page-pixels.mjs'
 
 export class OverlayRenderer {
   /**
-   * @param {{ wrapper: any, getAccess: () => string, fetchJSON: (url: string) => Promise<any>, currentUser: string | undefined, userColor: (id: string) => string, onError?: (error: unknown) => void }} options
+   * @param {{ wrapper: any, getAccess: () => string, fetchJSON: (url: string) => Promise<any>, currentUser: string | undefined, userColor: (id: string) => string, onError?: (error: unknown) => void, onPageSizes?: (sizes: Map<number, {width: number, height: number}>) => void }} options
    */
   constructor({
     wrapper,
@@ -15,23 +16,67 @@ export class OverlayRenderer {
     currentUser,
     userColor,
     onError = () => {},
+    onPageSizes = () => {},
   }) {
     Object.assign(this, { wrapper, currentUser, userColor, onError })
+    this.onPageSizes = onPageSizes
     this.model = new OverlayModel()
+    this.pixels = new PagePixels(wrapper, () => this.repaint())
     this.cache = new GlyphCache({ getAccess, fetchJSON })
     this.canvases = new Map()
     this.requests = new Map()
     this.generation = 0
+    this.onDestroy = () => {
+      // pagesdestroy is synchronous, immediately before pdf.js clears the old
+      // document. React's layout effect runs earlier and can race old renders.
+      this.pixels.capture()
+      this.document = undefined
+      this.ready = false
+      this.clearCanvases()
+    }
     this.onPages = () => {
       this.document = wrapper.viewer.pdfDocument
       this.ready = true
+      this.reportPageSizes()
+      this.pixels.reposition()
       this.repaint()
     }
-    this.onRender = () => {
-      if (this.document === wrapper.viewer.pdfDocument) this.repaint()
+    this.onRender = event => {
+      if (!this.document || this.document !== wrapper.viewer.pdfDocument) return
+      if (event) {
+        const page = wrapper.viewer.getPageView(event.pageNumber - 1)
+        if (
+          event.source !== page ||
+          event.cssTransform ||
+          event.isDetailView ||
+          event.error
+        )
+          return
+        this.pixels.rendered(event.pageNumber)
+      }
+      this.reportPageSizes()
+      this.repaint()
     }
+    this.onScale = () => this.pixels.reposition()
+    wrapper.eventBus.on('pagesdestroy', this.onDestroy)
     wrapper.eventBus.on('pagesinit', this.onPages)
     wrapper.eventBus.on('pagerendered', this.onRender)
+    wrapper.eventBus.on('scalechanging', this.onScale)
+  }
+
+  reportPageSizes() {
+    const { viewer } = this.wrapper
+    const sizes = new Map()
+    for (let index = 0; index < viewer.pagesCount; index++) {
+      const page = viewer.getPageView(index)
+      if (!page?.pdfPage || !page.viewport) continue
+      const [left, bottom, right, top] = page.viewport.viewBox
+      sizes.set(index + 1, {
+        width: (right - left) / SP_TO_BP,
+        height: (top - bottom) / SP_TO_BP,
+      })
+    }
+    this.onPageSizes(sizes)
   }
 
   layout(header) {
@@ -39,7 +84,6 @@ export class OverlayRenderer {
     this.ready = false
     this.requests.clear()
     this.model.layout(header)
-    this.clearCanvases()
   }
 
   async paragraph(frame) {
@@ -86,6 +130,7 @@ export class OverlayRenderer {
     // when a unit becomes degraded, and after pdf.js resets or zooms a page.
     const pages = new Set([...this.canvases.keys(), ...this.model.pages()])
     for (const page of pages) {
+      if (this.pixels.pages.has(page)) continue
       const pageView = this.wrapper.viewer.getPageView(page - 1)
       if (!pageView?.viewport || !pageView.div) continue
       const { div, viewport } = pageView
@@ -166,8 +211,11 @@ export class OverlayRenderer {
   dispose() {
     this.generation++
     clearTimeout(this.flashTimer)
+    this.wrapper.eventBus.off('pagesdestroy', this.onDestroy)
     this.wrapper.eventBus.off('pagesinit', this.onPages)
     this.wrapper.eventBus.off('pagerendered', this.onRender)
+    this.wrapper.eventBus.off('scalechanging', this.onScale)
     this.clearCanvases()
+    this.pixels.clear()
   }
 }

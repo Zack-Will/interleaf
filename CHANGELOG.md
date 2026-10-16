@@ -3,13 +3,31 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
-## Unreleased
+## 0.2.1 (2026-10-16)
+
+Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`.
 
 ### Fixed
 
 - `server-ce/config/env.sh` no longer aborts container start under `set -u` when
-  `OVERLEAF_REDIS_PASS` (or the web API credentials) are unset. Interleaf 6.2.5
-  needs `OVERLEAF_REDIS_PASS=` in `config/variables.env` as a workaround.
+  `OVERLEAF_REDIS_PASS` (or the web API credentials) are unset. After upgrading,
+  the `OVERLEAF_REDIS_PASS=` workaround can be removed from `config/variables.env`.
+- Live paragraphs newer than a background pass's snapshot survive the layout
+  and move to its new placements. Base PDFs are prefetched and normally switch
+  after one second of quiet, including extra live rows that fit on existing pages.
+  Visible page pixels and live overlays stay in a separate freeze layer across
+  document and zoom resets until each replacement page renders.
+- Missing font glyphs produce deduplicated live warnings with preamble guidance
+  and editor gutter markers on affected lines.
+- The compile dropdown has a Live preview section with checked On/Off choices;
+  English strings are registered in both locale catalogs.
+
+### Changed
+
+- Layout max-wait adapts to twice the last pass duration, with a 3000 ms floor.
+  rtex and its children default to nice 10 and at most two allowed CPUs when
+  taskset is available. Each setting is configurable.
+- Viewerless live sessions now stop after 120000 ms (two minutes).
 
 ## 0.2.0 (2026-10-12)
 

@@ -33,6 +33,7 @@ describe('SessionManager', () => {
       mkdir: sinon.stub().resolves(),
       copyFile: sinon.stub().resolves(),
       rm: sinon.stub().resolves(),
+      readFile: sinon.stub().resolves(''),
     }
     manager = new SessionManager({
       settings: settingsFromEnv({}),
@@ -175,18 +176,18 @@ describe('SessionManager', () => {
     expect(manager.sessions.has('a')).toBe(false)
     expect(manager.sessions.has('b')).toBe(true)
   })
-  it('reaps five minutes after last close and cancels on reconnect', async () => {
+  it('reaps two minutes after last close and cancels on reconnect', async () => {
     const first = socket()
     await manager.open('p', first)
     first.emit('close')
-    await vi.advanceTimersByTimeAsync(299999)
+    await vi.advanceTimersByTimeAsync(119999)
     expect(manager.sessions.has('p')).toBe(true)
     const second = socket()
     await manager.open('p', second)
     await vi.advanceTimersByTimeAsync(2)
     expect(manager.sessions.has('p')).toBe(true)
     second.emit('close')
-    await vi.advanceTimersByTimeAsync(300001)
+    await vi.advanceTimersByTimeAsync(120001)
     expect(manager.sessions.has('p')).toBe(false)
   })
   it('sends erase rectangles from changed pages, retains unchanged pages, and prunes deleted pages', async () => {
@@ -390,6 +391,40 @@ describe('SessionManager', () => {
     })
   })
 
+  it('reads the pass log, replays missing glyph warnings and clears them on a clean pass', async () => {
+    const viewer = socket()
+    const session = await manager.open('p', viewer)
+    session.docs.set('doc', { id: 'doc', path: 'main.tex', content: '中中' })
+    filesystem.readFile.resolves(
+      'Missing character: There is no 中 (U+4E2D) in font Latin Modern!\nMissing character: There is no 中 (U+4E2D) in font Latin Modern!'
+    )
+    const layout = {
+      event: 'LayoutUpdate',
+      pass_pdf: '/tmp/p/build/pass.pdf',
+      versions: { source_revision: 1 },
+    }
+    await manager.handleEvent(session, layout)
+    const diagnostic = decodeFrame(
+      session.diagnostics.get('missing-glyphs')
+    ).header
+    expect(diagnostic.items).toHaveLength(1)
+    expect(diagnostic.items[0].locations[0]).toMatchObject({
+      doc_id: 'doc',
+      range: { start: 0, end: 2 },
+    })
+    manager.resync(session, viewer)
+    expect(decodeFrame(viewer.send.lastCall.args[0]).header.source).toBe(
+      'missing-glyphs'
+    )
+    filesystem.readFile.resolves('clean')
+    await manager.handleEvent(session, layout)
+    expect(session.diagnostics.has('missing-glyphs')).toBe(false)
+    expect(decodeFrame(viewer.send.getCall(-2).args[0]).header).toMatchObject({
+      source: 'missing-glyphs',
+      items: [],
+    })
+  })
+
   it('uses the edit revision on unversioned background events and ignores older notices', async () => {
     const viewer = socket()
     const session = await manager.open('p', viewer)
@@ -430,6 +465,48 @@ describe('SessionManager', () => {
     expect(
       engines[0].command.calledOnceWithExactly({ cmd: 'request_layout' })
     ).toBe(true)
+  })
+  it('adapts max-wait to the last pass duration, resetting an older deadline', async () => {
+    const session = await manager.open('p', socket())
+    manager.noteEdit(session)
+    await vi.advanceTimersByTimeAsync(2000)
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      wall_ms: 5000,
+      versions: { source_revision: 10 },
+      convergence: { state: 'Stale', pending_since: 4 },
+    })
+    for (let index = 0; index < 99; index++) {
+      manager.noteEdit(session)
+      await vi.advanceTimersByTimeAsync(100)
+    }
+    expect(engines[0].command.called).toBe(false)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(
+      engines[0].command.calledOnceWithExactly({ cmd: 'request_layout' })
+    ).toBe(true)
+  })
+  it('retains edits after the snapshot even when the layout delivery revision includes them', async () => {
+    const session = await manager.open('p', socket())
+    await manager.handleEvent(session, {
+      event: 'ParagraphUpdate',
+      par_id: 7,
+      status: 'ok',
+      versions: { source_revision: 9 },
+    })
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      versions: { source_revision: 10 },
+      convergence: { state: 'Stale', pending_since: 6 },
+    })
+    expect(session.layout.snapshot_source_revision).toBe(5)
+    expect(session.paragraphs.has(7)).toBe(true)
+    await manager.handleEvent(session, {
+      event: 'LayoutUpdate',
+      versions: { source_revision: 10 },
+      convergence: { state: 'Converged' },
+    })
+    expect(session.paragraphs.has(7)).toBe(false)
   })
   it('restarts once, fails on a second crash in one minute, resets on next open', async () => {
     const viewer = socket()

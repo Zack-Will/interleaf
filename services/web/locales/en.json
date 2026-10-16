@@ -1494,6 +1494,7 @@
   "live_preview_dismiss": "Dismiss live preview notice",
   "live_preview_failed": "Live preview stopped because the engine failed. Normal compilation still works.",
   "live_preview_retry": "Retry",
+  "live_preview_section": "Live preview",
   "load_domains_failed": "There was an error loading the domains. Please reload the page to try again. If the problem continues please <0>contact us</0>.",
   "loading": "Loading",
   "loading_content": "Creating Project",

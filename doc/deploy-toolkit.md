@@ -9,7 +9,7 @@ web half of the official Java git-bridge), `review` (comments and tracked
 changes in CE), `github-backup` (one-way backup of a project to GitHub), and
 `live-preview` (opt-in collaborative LuaLaTeX preview).
 See `doc/agent-sync-usage.md`, `doc/github-backup.md` and `doc/live-preview.md`
-for what they do. Interleaf 0.2.0 uses image tag **6.2.5** for both images.
+for what they do. Interleaf 0.2.1 uses image tag **6.2.6** for both images.
 
 ## What is different from a stock toolkit install
 
@@ -26,7 +26,7 @@ git-bridge image mirrored beside it is the official `6.2.0`.
 ## 1. Build the image
 
 In the fork, run the **Build CE image** workflow (Actions tab, or
-`gh workflow run build-image.yml --ref <branch> -f version=6.2.5`). It builds
+`gh workflow run build-image.yml --ref <branch> -f version=6.2.6`). It builds
 `server-ce/Dockerfile` on the published `sharelatex/sharelatex-base:6.1.0` and
 pushes two packages:
 
@@ -87,7 +87,11 @@ GIT_BRIDGE_ALLOW_CE=true
 GIT_BRIDGE_DATA_PATH=data/git-bridge
 ```
 
-`config/version`: the tag you built; **6.2.5** for Interleaf 0.2.0.
+`config/version`: the tag you built; **6.2.6** for Interleaf 0.2.1.
+
+After upgrading from 6.2.5, remove the temporary `OVERLEAF_REDIS_PASS=` line from
+`config/variables.env` if Redis has no password. The env.sh fix handles unset
+Redis/web API credentials under `set -u`.
 
 `config/variables.env`, appended:
 
@@ -130,7 +134,7 @@ The default `LIVE_PREVIEW_SERVICE_URL=http://127.0.0.1:3060` is the internal ser
 address. `LIVE_PREVIEW_DATA_DIR` defaults to `/var/lib/overleaf/data/live-preview`
 and is created for `www-data`; it holds disposable session sources and PDFs.
 `LIVE_PREVIEW_MEMORY_MB` defaults to 2048 (per-process virtual memory limit),
-`LIVE_PREVIEW_IDLE_MS` to 300000, `LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` to 3000,
+`LIVE_PREVIEW_IDLE_MS` to 120000, `LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` to 3000,
 `LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` to 30000 and `LIVE_PREVIEW_ACCESS_TTL_MS`
 to 900000. The 2048 MiB limit is inherited by **each process**, rather than a
 combined RSS quota. It remains compatible with LuaLaTeX's virtual reservations:
@@ -142,6 +146,23 @@ existing Overleaf services and operating-system headroom. Use
 `LIVE_PREVIEW_MAX_SESSIONS=1` on smaller hosts; two sessions need at least 4 GiB
 of available preview capacity. Raising the address-space cap does not add RAM.
 See [the service README](../services/live-preview/README.md) for exact measurements.
+
+`LIVE_PREVIEW_LAYOUT_MAX_WAIT_FACTOR` defaults to 2. The forced-layout deadline
+is the larger of the configured max-wait and this factor times the last completed
+pass duration. A five-second pass gives a ten-second deadline, reducing forced
+work while allowing pagination and references to lag longer during continuous
+collaboration. Paragraph updates remain live. Quiet-time rtex passes may run sooner.
+`LIVE_PREVIEW_NICE` defaults to 10 and is inherited by rtex's LuaLaTeX children.
+When `taskset` is installed, `LIVE_PREVIEW_CPUS` defaults to at most two CPUs from
+the process's allowed set; set it to 0 to leave affinity unrestricted. The
+existing prlimit and trusted LuaLaTeX wrapper remain active.
+
+During typing, the browser keeps the current base PDF and newest live paragraphs,
+prefetches the latest layout PDF, and switches after roughly one second of quiet.
+Unrepresentable changes request an immediate switch to a layout containing them.
+Visible page pixels remain until pdf.js renders their replacements. Missing font
+glyphs appear in live logs and source gutters; install/configure a covering font
+or an appropriate package such as ctex for Chinese.
 
 The service-local LuaLaTeX wrapper enforces `openin_any=p`, `openout_any=p` and
 `-no-shell-escape`, including after rtex's own environment overrides. Absolute
@@ -183,7 +204,7 @@ go through the container's nginx on port 80, in `config/docker-compose.override.
 services:
   git-bridge:
     environment:
-      GIT_BRIDGE_API_BASE_URL: "http://sharelatex/api/v0/"
+      GIT_BRIDGE_API_BASE_URL: 'http://sharelatex/api/v0/'
 ```
 
 The override file is the toolkit's place for local settings and survives

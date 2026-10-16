@@ -2,12 +2,15 @@ import { RangeSet, StateEffect, StateField, Text } from '@codemirror/state'
 import { EditorView, GutterMarker, gutter, ViewPlugin } from '@codemirror/view'
 import { markerStore } from './editor-state.mjs'
 import i18n from 'i18next'
+import { noteLocalEdit } from './layout-scheduler.mjs'
 
 export type Marker = {
   doc_id: string
   range?: { start: number; end: number }
   reasons: string[]
 }
+
+export type MarkerId = number | string
 
 type MappedMarker = Marker & { original: Marker }
 
@@ -29,7 +32,7 @@ class PreviewMarker extends GutterMarker {
   }
 }
 
-const setMarkers = StateEffect.define<Map<number, Marker>>()
+const setMarkers = StateEffect.define<Map<MarkerId, Marker>>()
 const markerTheme = EditorView.baseTheme({
   '.cm-live-preview-gutter': {
     color: '#b47700',
@@ -44,11 +47,11 @@ export function extension(options: {
 }) {
   const docId = options.currentDoc.currentDoc.doc_id
   function reconcile(
-    markers: Map<number, Marker>,
+    markers: Map<MarkerId, Marker>,
     doc: Text,
-    previous = new Map<number, MappedMarker>()
+    previous = new Map<MarkerId, MappedMarker>()
   ) {
-    const next = new Map<number, MappedMarker>()
+    const next = new Map<MarkerId, MappedMarker>()
     for (const [id, marker] of markers) {
       if (marker.doc_id !== docId) continue
       const mapped = previous.get(id)
@@ -70,7 +73,7 @@ export function extension(options: {
     return next
   }
 
-  const field = StateField.define<Map<number, MappedMarker>>({
+  const field = StateField.define<Map<MarkerId, MappedMarker>>({
     create(state) {
       return reconcile(markerStore.get(), state.doc)
     },
@@ -97,7 +100,7 @@ export function extension(options: {
     },
   })
 
-  function ranges(doc: Text, markers: Map<number, Marker>) {
+  function ranges(doc: Text, markers: Map<MarkerId, Marker>) {
     const lines = new Map<number, string[]>()
     for (const marker of markers.values()) {
       if (marker.doc_id !== docId || !marker.range) continue
@@ -133,11 +136,16 @@ export function extension(options: {
     markerTheme,
     ViewPlugin.define(view => {
       const unsubscribe = markerStore.subscribe(
-        (markers: Map<number, Marker>) => {
+        (markers: Map<MarkerId, Marker>) => {
           view.dispatch({ effects: setMarkers.of(markers) })
         }
       )
-      return { destroy: unsubscribe }
+      return {
+        update(update) {
+          if (update.docChanged) noteLocalEdit()
+        },
+        destroy: unsubscribe,
+      }
     }),
   ]
 }
