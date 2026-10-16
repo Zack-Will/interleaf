@@ -20,12 +20,15 @@ export function settingsFromEnv(env = process.env) {
     maxFileBytes: 32 * 1024 ** 2,
     maxSnapshotBytes: 256 * 1024 ** 2,
     maxResponseBytes: 64 * 1024 ** 2,
-    idleMs: Number(env.LIVE_PREVIEW_IDLE_MS || 300000),
+    idleMs: Number(env.LIVE_PREVIEW_IDLE_MS || 120000),
     activeLeaseRefreshMs: Number(
       env.LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS || 30000
     ),
     activeLeaseMs: 75000,
     layoutMaxWaitMs: Number(env.LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS || 3000),
+    layoutMaxWaitFactor: Number(env.LIVE_PREVIEW_LAYOUT_MAX_WAIT_FACTOR ?? 2),
+    nice: Number(env.LIVE_PREVIEW_NICE ?? 10),
+    cpus: Number(env.LIVE_PREVIEW_CPUS ?? 2),
     driftMs: 30000,
     rtexBinary: env.LIVE_PREVIEW_RTEX_BINARY || '/usr/local/bin/rtex',
     texDir: env.RTEX_TEXDIR || '/usr/local/share/rtex/tex',

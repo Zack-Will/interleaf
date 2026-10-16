@@ -175,18 +175,18 @@ describe('SessionManager', () => {
     expect(manager.sessions.has('a')).toBe(false)
     expect(manager.sessions.has('b')).toBe(true)
   })
-  it('reaps five minutes after last close and cancels on reconnect', async () => {
+  it('reaps two minutes after last close and cancels on reconnect', async () => {
     const first = socket()
     await manager.open('p', first)
     first.emit('close')
-    await vi.advanceTimersByTimeAsync(299999)
+    await vi.advanceTimersByTimeAsync(119999)
     expect(manager.sessions.has('p')).toBe(true)
     const second = socket()
     await manager.open('p', second)
     await vi.advanceTimersByTimeAsync(2)
     expect(manager.sessions.has('p')).toBe(true)
     second.emit('close')
-    await vi.advanceTimersByTimeAsync(300001)
+    await vi.advanceTimersByTimeAsync(120001)
     expect(manager.sessions.has('p')).toBe(false)
   })
   it('sends erase rectangles from changed pages, retains unchanged pages, and prunes deleted pages', async () => {

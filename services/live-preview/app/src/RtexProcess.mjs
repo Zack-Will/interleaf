@@ -4,14 +4,23 @@ import { createInterface } from 'node:readline'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PreviewError } from './Errors.mjs'
+import { allowedCpuIds, findTaskset } from './ProcessLimits.mjs'
 
 /** serve has no request ids: at most one command may be on the wire. */
 export class RtexProcess extends EventEmitter {
-  constructor({ settings, spawnProcess = spawn, signalGroup = process.kill }) {
+  constructor({
+    settings,
+    spawnProcess = spawn,
+    signalGroup = process.kill,
+    taskset = findTaskset(),
+    cpuIds = allowedCpuIds(),
+  }) {
     super()
     this.settings = settings
     this.spawnProcess = spawnProcess
     this.signalGroup = signalGroup
+    this.taskset = taskset
+    this.cpuIds = cpuIds
     this.tail = Promise.resolve()
     this.stopping = false
   }
@@ -33,6 +42,14 @@ export class RtexProcess extends EventEmitter {
       args.unshift(`--as=${this.settings.memoryBytes}`, '--', executable)
       executable = 'prlimit'
     }
+    const cpus = this.settings.cpus ?? 2
+    if (this.taskset && cpus > 0) {
+      const ids = this.cpuIds.slice(0, Math.max(1, Math.floor(cpus)))
+      args.unshift('-c', ids.join(','), executable)
+      executable = this.taskset
+    }
+    args.unshift('-n', String(this.settings.nice ?? 10), executable)
+    executable = 'nice'
     this.child = this.spawnProcess(executable, args, {
       shell: false,
       detached: true,

@@ -27,6 +27,8 @@ describe('RtexProcess', () => {
       },
       spawnProcess,
       signalGroup,
+      taskset: '/usr/bin/taskset',
+      cpuIds: [4, 6, 8],
     })
     engine.start('/project', 'main.tex')
   })
@@ -37,8 +39,14 @@ describe('RtexProcess', () => {
   })
   it('spawns with argv, RLIMIT_AS and no shell escape', () => {
     const [binary, args, options] = spawnProcess.firstCall.args
-    expect(binary).toBe('prlimit')
+    expect(binary).toBe('nice')
     expect(args).toEqual([
+      '-n',
+      '10',
+      '/usr/bin/taskset',
+      '-c',
+      '4,6',
+      'prlimit',
       '--as=123',
       '--',
       '/rtex',
@@ -60,6 +68,27 @@ describe('RtexProcess', () => {
     expect(options.env.TEXMFOUTPUT).toBe('/usr/local/texlive')
     expect(options.env.TEXMF_OUTPUT_DIRECTORY).toBe('/project')
     expect(options.env.TEXMFCACHE).toBe('/project')
+  })
+  it('supports configured priority and no affinity restriction, even without taskset', () => {
+    engine.settings.nice = 15
+    engine.settings.cpus = 0
+    engine.start('/project', 'main.tex')
+    expect(spawnProcess.lastCall.args[1].slice(0, 4)).toEqual([
+      '-n',
+      '15',
+      'prlimit',
+      '--as=123',
+    ])
+    engine.taskset = undefined
+    engine.settings.cpus = 2
+    engine.settings.memoryBytes = 0
+    engine.start('/project', 'main.tex')
+    expect(spawnProcess.lastCall.args[1].slice(0, 4)).toEqual([
+      '-n',
+      '15',
+      '/rtex',
+      'serve',
+    ])
   })
   it('correlates serial commands and buffers pre-reply events until attribution callback', async () => {
     const ordered = []
