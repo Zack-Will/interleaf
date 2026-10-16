@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Shared live-preview wire codecs and signed tokens",
   "exports": {
+    "./Layout.mjs": "./Layout.mjs",
     "./Tickets.mjs": "./Tickets.mjs",
     "./Frames.mjs": "./Frames.mjs",
     "./DisplayList.mjs": "./DisplayList.mjs"

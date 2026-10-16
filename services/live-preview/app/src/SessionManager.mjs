@@ -9,6 +9,11 @@ import {
   decodeFrame,
 } from '@overleaf/live-preview-protocol/Frames.mjs'
 import { PreviewError } from './Errors.mjs'
+import { missingGlyphDiagnostics } from './MissingGlyphs.mjs'
+import {
+  newerThanLayout,
+  snapshotRevision,
+} from '@overleaf/live-preview-protocol/Layout.mjs'
 import {
   decodeDisplayList,
   layoutRowRects,
@@ -290,12 +295,18 @@ export class SessionManager {
     if (session.layoutTimer) {
       return
     }
-    session.layoutTimer = setTimeout(() => {
-      session.layoutTimer = null
-      this.enqueue(session, () =>
-        session.engine.command({ cmd: 'request_layout' })
-      ).catch(this.onError)
-    }, this.settings.layoutMaxWaitMs)
+    session.layoutTimer = setTimeout(
+      () => {
+        session.layoutTimer = null
+        this.enqueue(session, () =>
+          session.engine.command({ cmd: 'request_layout' })
+        ).catch(this.onError)
+      },
+      Math.max(
+        this.settings.layoutMaxWaitMs,
+        (this.settings.layoutMaxWaitFactor ?? 2) * (session.lastPassMs || 0)
+      )
+    )
     session.layoutTimer.unref?.()
   }
 
@@ -336,6 +347,11 @@ export class SessionManager {
         session.notices.set(event.par_id, frame)
       }
     } else if (kind === 'LayoutUpdate') {
+      if (Number.isFinite(event.wall_ms)) session.lastPassMs = event.wall_ms
+      clearTimeout(session.layoutTimer)
+      session.layoutTimer = null
+      if (snapshotRevision(event) < (event.versions?.source_revision || 0))
+        this.noteEdit(session)
       const fonts = {}
       for (const page of pages || []) {
         if (page.dl_b64) {
@@ -385,6 +401,7 @@ export class SessionManager {
       }
       session.layout = {
         ...header,
+        snapshot_source_revision: snapshotRevision(event),
         layout_version: session.layoutVersion,
         pdf_url: pdfUrl,
         fonts,
@@ -393,9 +410,7 @@ export class SessionManager {
       // Preserve paragraph results newer than the pass snapshot.
       for (const [id, frame] of session.paragraphs) {
         const { header: paragraph } = decodeFrame(frame)
-        if (
-          paragraph.versions.source_revision <= event.versions.source_revision
-        ) {
+        if (!newerThanLayout(paragraph, session.layout)) {
           session.paragraphs.delete(id)
         }
       }
@@ -413,6 +428,7 @@ export class SessionManager {
         })
       }
       session.backgroundDiagnosticsPending = false
+      if (pdfUrl) await this.missingGlyphs(session)
       this.broadcast(session, 'layout', session.layout)
       const contained = new Set(
         (event.placements || []).map(unit => unit.par_id)
@@ -422,7 +438,7 @@ export class SessionManager {
         if (
           contained.has(id) &&
           (notice.versions?.source_revision || 0) <=
-            event.versions.source_revision
+            snapshotRevision(session.layout)
         ) {
           session.notices.delete(id)
         }
@@ -454,6 +470,25 @@ export class SessionManager {
       session.diagnostics.set(header.source, frame)
       if (header.source === 'background')
         session.backgroundDiagnosticsPending = true
+    }
+  }
+
+  async missingGlyphs(session) {
+    const job = path.parse(session.snapshot.rootDoc).name
+    const file = path.join(session.directory, 'build/rtex/bg', `${job}.log`)
+    let log = ''
+    try {
+      await assertNoSymlinks(this.fs, session.directory, file)
+      log = await this.fs.readFile(file, 'utf8')
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    const items = missingGlyphDiagnostics(log, session.docs)
+    const source = 'missing-glyphs'
+    if (items.length || session.diagnostics.has(source)) {
+      const frame = this.broadcast(session, 'diagnostics', { source, items })
+      if (items.length) session.diagnostics.set(source, frame)
+      else session.diagnostics.delete(source)
     }
   }
 

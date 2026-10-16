@@ -3,7 +3,7 @@
 Run `node services/live-preview/app.js` from the repository after `corepack yarn
 install` at the root. The service listens on `127.0.0.1:3060`. It is registered in
 the root workspace list and CE service list so the image's production workspace
-install includes its runtime dependencies. Interleaf 0.2.0 (image 6.2.5) ships the
+install includes its runtime dependencies. Interleaf 0.2.1 (image 6.2.6) ships the
 web/editor module, nginx/runit wiring, shared protocol library and checksum-pinned
 rtex release `interleaf-0.0.3-2`. See [the user guide](../../doc/live-preview.md).
 
@@ -35,7 +35,9 @@ above: `LIVE_PREVIEW_RTEX_BINARY`, `LIVE_PREVIEW_DATA_DIR`,
 `LIVE_PREVIEW_TEXMF_ROOT`, `LIVE_PREVIEW_MAX_PROJECT_CONNECTIONS` (16),
 `LIVE_PREVIEW_MAX_USER_CONNECTIONS` (8), `LIVE_PREVIEW_HEARTBEAT_MS` (30000),
 `LIVE_PREVIEW_ALLOWED_ORIGINS` (comma-separated full site origins),
-`LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` (3000), `LIVE_PREVIEW_IDLE_MS` (300000),
+`LIVE_PREVIEW_LAYOUT_MAX_WAIT_MS` (3000), `LIVE_PREVIEW_IDLE_MS` (120000),
+`LIVE_PREVIEW_LAYOUT_MAX_WAIT_FACTOR` (2), `LIVE_PREVIEW_NICE` (10),
+`LIVE_PREVIEW_CPUS` (2; 0 disables taskset affinity),
 `LIVE_PREVIEW_ACTIVE_LEASE_REFRESH_MS` (30000),
 `LIVE_PREVIEW_ACCESS_TTL_MS` (900000),
 `LIVE_PREVIEW_HOST`, `LIVE_PREVIEW_PORT`, `LIVE_PREVIEW_WEB_URL`,
@@ -43,6 +45,13 @@ above: `LIVE_PREVIEW_RTEX_BINARY`, `LIVE_PREVIEW_DATA_DIR`,
 `LIVE_PREVIEW_DOCUMENT_UPDATER_URL` and `LIVE_PREVIEW_REDIS_HOST/PORT/PASSWORD`.
 Redis must point to the **pubsub** Redis, not document-updater's data Redis.
 Never point acceptance tests at production Redis.
+
+The effective forced-layout max-wait is the larger of `layoutMaxWaitMs` and
+`layoutMaxWaitFactor × lastPassMs`. A five-second pass yields ten seconds by
+default, trading collaboration's pagination/reference timeliness for less forced
+work. Small documents retain the three-second floor. Quiet-time rtex passes may
+run sooner. rtex and its children inherit nice 10, at most two CPUs from the
+service's allowed set when taskset exists, and the existing prlimit/wrapper.
 
 ## P2 snapshot and tickets
 
@@ -171,13 +180,22 @@ on both routes accepts only project-bound access tokens, checked on every reques
 The frontend is in `services/web/modules/live-preview/frontend/js`. Enable
 `LIVE_PREVIEW_ENABLED=true` and use the same `LIVE_PREVIEW_TICKET_SECRET` in web
 and the preview service. Select LuaLaTeX in the project settings, then select
-**Live preview** in the Recompile dropdown. The preference is stored per project
+**On** in the **Live preview** section of the Recompile dropdown. The section
+shows checked On/Off choices. The preference is stored per project
 and shared with detached windows. Every preview window fetches its own opening
 ticket with CSRF and connects independently; the native detach channel supplies
 only compiler eligibility to the detached window, which does not join the editor
 socket. Keep real-time running for normal editor edits and lease notifications.
 
-Layouts load the pass PDF in the existing pdf.js viewer and reset overlays.
+Layouts preserve live results newer than `snapshot_source_revision` and re-anchor
+them to the new placements. The service derives that snapshot from rtex's
+`Stale.pending_since - 1`; its delivery-time source revision can be newer.
+The browser prefetches pass PDFs into blob URLs and keeps only the newest pending
+layout while paragraph frames or local edits arrive within a second. After one
+second of quiet it applies that layout. Stale pagination, approximate/unplaced
+fragments, removal and degraded content bypass the quiet delay once the pending
+layout contains the change. Visible base/overlay pixels survive until the matching
+page in the new document emits `pagerendered`; native scale/scroll restore remains.
 The first live layout opens the PDF view even when a failed CLSI compile left
 the pane on logs. The logs button still opens normal compile diagnostics; that
 choice persists across live layouts in each window. Disabling live preview
@@ -198,8 +216,9 @@ P1-P4 browser acceptance was completed by the orchestrator before P5. For future
 rollouts, use a test project, two
 editor clients and a detached preview. Confirm private PDF/glyph requests use
 `ticket=<access>`, overlays survive zoom and page resets, scroll remains steady
-across layouts, remote keystroke-to-paint P95 is under 300 ms, and layouts arrive
-within 4 s of continuous typing. Also check a collaborator with live preview off:
+across layouts, remote keystroke-to-paint P95 is under 300 ms, and small-document
+layouts arrive within 4 s of continuous typing. Long passes use the adaptive
+max-wait. Also check a collaborator with live preview off:
 its ShareJS flush delay should be 150 ms until inactive, disconnect or lease expiry.
 Confirm CLSI Recompile/download, toggle-off restoration, busy fallback, access
 renewal, and reconnection/resync. P5 did not start browsers, webpack or develop services.
@@ -287,7 +306,7 @@ uncompressed bytes for one representative paragraph; repeated glyphs are cached.
 
 rtex rotates two background pass directories; the service retains three PDFs.
 Font caches add tens of MiB. Reserve about 100 MiB/project for measured workloads,
-plus uploaded project files. Idle reaping occurs five minutes after the last
+plus uploaded project files. Idle reaping occurs two minutes after the last
 viewer closes. Stop/eviction removes the entire session/build/cache tree, and
 startup removes project-id directories from a prior run. Only one service
 process may own the data directory.
@@ -332,6 +351,15 @@ alongside CLSI entries. They use native file/line navigation and disappear when
 live mode is off. The native tab counts continue to count CLSI entries; the live
 group is shown in each logs tab. A clean background pass clears old diagnostics;
 fresh warnings remain visible.
+
+Missing-character warnings are absent from pinned rtex's Diagnostics parser.
+After a pass PDF arrives, the service reads `build/rtex/bg/<job>.log`, aggregates
+`Missing character: There is no … (U+XXXX) in font …!` by font and character,
+and sends `missing-glyphs` diagnostics with current UTF-16 source-line locations.
+Live logs explain ctex/fontspec font coverage; P4 gutter markers show those
+locations in the current document. Each pass replaces this group, including an
+empty group after a clean pass. Real-rtex acceptance inserts Chinese into the
+Latin Modern fixture and checks the warning, deduplication and locations.
 
 Busy and failed sessions explain that normal compilation still works. Failure
 has a Retry button that obtains a new opening ticket and reopens this window's

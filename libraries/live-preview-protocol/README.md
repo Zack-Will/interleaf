@@ -21,6 +21,15 @@ the existing frame encoding and type ids. A removed or unidentified unit may hav
 no range. See `services/live-preview/README.md` for notification resync and
 diagnostics semantics.
 
+Layout headers carry `snapshot_source_revision`, the source revision contained
+in the pass PDF. `versions.source_revision` can be newer: pinned rtex 0.0.3
+samples it at delivery. `Layout.mjs` derives the snapshot from
+`Stale.pending_since - 1` for older frames, and otherwise uses the source revision.
+Both resync retention and browser overlays compare paragraph revisions against
+the snapshot, then re-anchor surviving results with `placements[].fragments`.
+Missing-glyph diagnostics use source `missing-glyphs`, one warning per font per
+pass, with optional `locations: [{doc_id, file, line, range}]` for source markers.
+
 The release implementation limits client WebSocket messages to 4 KiB and accepts
 only ping/resync. Opening tickets authorize a single project; HTTP access tokens
 cannot open sockets. PDF/glyph requests recheck tokens and use private `no-store`
