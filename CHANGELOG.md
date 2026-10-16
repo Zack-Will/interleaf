@@ -14,7 +14,7 @@ Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
   agent's name in open editors instead of "Deleted user": adding the agent as a
   collaborator now tells open editors to reload the member list.
 
-
+## 0.2.1 (2026-10-16)
 
 Images: `ghcr.io/<owner>/interleaf:6.2.6`, `ghcr.io/<owner>/git-bridge:6.2.6`,
 also published as `docker.io/zackwill/interleaf:6.2.6` and `docker.io/zackwill/git-bridge:6.2.6`.
