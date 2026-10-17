@@ -76,7 +76,8 @@ no editor to do it. Drop these when upstream offers equivalents.
 Upstream commit `4622848a19` removed `develop/`, the per-service Dockerfiles
 and Makefiles, the web eslint and stylelint configs, `server-ce/test/` and the
 storybook stories from the public repository. The fork keeps the development
-environment, the Dockerfiles, the web Makefile and the lint configs (it owns
+environment, the Dockerfiles, the web and git-bridge Makefiles (the
+git-bridge image runs `make package`) and the lint configs (it owns
 them now) and dropped `server-ce/test/` and storybook with upstream. After the
 6.3 merge they no longer conflict.
 
