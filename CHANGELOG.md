@@ -3,10 +3,17 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
-## Unreleased
+## 0.3.0 (2026-10-17)
+
+Images: `ghcr.io/<owner>/interleaf:6.3.0`, `ghcr.io/<owner>/git-bridge:6.3.0`,
+built on `ghcr.io/<owner>/interleaf-base:6.3.1`; also published as
+`docker.io/zackwill/interleaf:6.3.0`, `docker.io/zackwill/git-bridge:6.3.0` and
+`docker.io/zackwill/interleaf-base:6.3.1`.
 
 Based on Overleaf Community Edition 6.3.1 (public commit `e039ad26c5` plus the
-6.3.1 hotfix patches), up from a pre-6.2.1 `main` snapshot.
+6.3.1 hotfix patches), up from a pre-6.2.1 `main` snapshot. The image now runs
+Node.js 24 and TeX Live 2026. No database migrations; upgrading is a change of
+`config/version` after the usual backup.
 
 ### Changed
 
@@ -17,14 +24,20 @@ Based on Overleaf Community Edition 6.3.1 (public commit `e039ad26c5` plus the
   with `track_changes` to `POST .../doc/:doc_id/suggest`, built on upstream's
   own tracked `setDoc`. Adding a comment and rejecting changes keep their
   routes, now served from `ReviewApiController`.
+- document-updater's `setDoc` accepts an origin object as `source` again; 6.3
+  only accepted a string, which made `edit_file` and `revert_to` fail.
+- The image is built on `interleaf-base`, built in this repository from
+  upstream's `Dockerfile-base` plus the TeX Live collections
+  (`build-image.yml` with `build_base`), because upstream no longer publishes
+  its base image. A release now replaces only the application layers.
 
 ### Internal
 
 - Fewer edits to upstream files, to make upstream merges smaller: module
   settings live in `services/web/config/settings.interleaf.js`, the review
-  panel's track-changes setter moved
-  into the `review` module, and the history panel styles moved into
-  `agent-sync.scss`. No behaviour change. See `doc/upstream-sync.md`.
+  panel's track-changes setter moved into the `review` module, and the history
+  panel styles moved into `agent-sync.scss`. No behaviour change. See
+  `doc/upstream-sync.md`.
 
 ### Fixed
 
