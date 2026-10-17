@@ -2,6 +2,7 @@
 
 const { expect } = require('chai')
 const { Change, McpOrigin, Origin } = require('../..')
+const schemas = require('../../lib/schemas')
 
 describe('McpOrigin', function () {
   it('converts to and from raw with an agent and a message', function () {
@@ -95,5 +96,51 @@ describe('McpOrigin', function () {
     expect(origin.getAgent()).to.equal('Claude Code')
     expect(origin.getMessage()).to.equal('hello')
     expect(origin.isSuggestion()).to.be.true
+  })
+
+  it('keeps the client id that submitted the change', function () {
+    const id = '8a1f2a3e-1b6f-4f2a-9a55-0c6d8e2f4b11'
+    const origin = McpOrigin.fromRaw({
+      kind: 'mcp',
+      agent: 'a',
+      historyClientId: id,
+    })
+    expect(origin.getHistoryClientId()).to.equal(id)
+    expect(origin.toRaw()).to.eql({
+      kind: 'mcp',
+      historyClientId: id,
+      agent: 'a',
+    })
+  })
+
+  describe('schema', function () {
+    it('accepts the raw form of every McpOrigin', function () {
+      for (const origin of [
+        new McpOrigin(),
+        new McpOrigin('Claude Code', 'Rewrite the abstract'),
+        new McpOrigin('Claude Code', 'Tighten', true),
+      ]) {
+        expect(schemas.rawOrigin.safeParse(origin.toRaw()).success).to.be.true
+      }
+    })
+
+    it('accepts a change carrying an MCP origin', function () {
+      const raw = {
+        operations: [],
+        timestamp: '2026-10-17T00:00:00.000Z',
+        origin: { kind: 'mcp', agent: 'Claude Code', suggestion: true },
+      }
+      expect(schemas.rawChange.safeParse(raw).success).to.be.true
+    })
+
+    it('refuses fields an McpOrigin does not keep', function () {
+      expect(
+        schemas.rawOrigin.safeParse({ kind: 'mcp', revert: { from: 1, to: 2 } })
+          .success
+      ).to.be.false
+      expect(
+        schemas.rawOrigin.safeParse({ kind: 'mcp', suggestion: false }).success
+      ).to.be.false
+    })
   })
 })

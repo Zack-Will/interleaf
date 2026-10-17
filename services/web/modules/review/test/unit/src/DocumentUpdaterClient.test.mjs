@@ -107,14 +107,27 @@ describe('review document-updater client', () => {
     )
     expect(result).toEqual({ rev: '9', change_ids: ['c1'] })
     const [url, options] = fetchJson.firstCall.args
-    expect(url).toBe(`http://docupdater.test/project/${projectId}/doc/${docId}`)
+    expect(url).toBe(
+      `http://docupdater.test/project/${projectId}/doc/${docId}/suggest`
+    )
     expect(options.method).toBe('POST')
     expect(options.json).toEqual({
       lines: ['one', 'two'],
       source,
       user_id: 'user-1',
-      track_changes: true,
     })
+  })
+
+  it('rejects tracked changes through the reject route', async () => {
+    const fetchJson = sinon.stub().resolves({ rejectedChangeIds: ['c1'] })
+    const client = await clientWith(fetchJson)
+    const result = await client.rejectChanges(projectId, docId, ['c1'], 'u-1')
+    expect(result).toEqual({ rejectedChangeIds: ['c1'] })
+    const [url, options] = fetchJson.firstCall.args
+    expect(url).toBe(
+      `http://docupdater.test/project/${projectId}/doc/${docId}/change/reject`
+    )
+    expect(options.json).toEqual({ change_ids: ['c1'], user_id: 'u-1' })
   })
 
   it('reports no change ids when setDoc answers without them', async () => {

@@ -14,9 +14,6 @@ class OTTypeMismatchError extends OError {
     super('ot type mismatch', { got, want })
   }
 }
-// when the text a caller wants to comment on is not the text the document
-// currently holds at that position
-class CommentTextMismatchError extends OError {}
 // when the doc returned by web/API fails validation (e.g. missing/invalid fields)
 class DocumentValidationError extends OError {}
 class WebApiServerError extends OError {}
@@ -28,7 +25,6 @@ module.exports = {
   DeleteMismatchError,
   FileTooLargeError,
   OTTypeMismatchError,
-  CommentTextMismatchError,
   DocumentValidationError,
   WebApiServerError,
 }

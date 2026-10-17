@@ -247,7 +247,8 @@ export function createSuggestionService(services = {}) {
    * @return {Promise<{change_ids: string[], remaining: number}>}
    */
   async function rejectSuggestions(projectId, docId, changeIds, userId) {
-    const reject = (...args) => documentUpdater.promises.rejectChanges(...args)
+    const reject = (...args) =>
+      documentUpdaterClient.promises.rejectChanges(...args)
     return applyToSuggestions(reject, projectId, docId, changeIds, userId)
   }
 

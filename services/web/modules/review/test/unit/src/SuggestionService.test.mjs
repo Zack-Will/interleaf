@@ -31,7 +31,6 @@ describe('suggestion service', () => {
     ctx.documentUpdater = {
       promises: {
         acceptChanges: sinon.stub().resolves(),
-        rejectChanges: sinon.stub().resolves({ rejectedChangeIds: [] }),
       },
     }
     ctx.documentUpdaterClient = {
@@ -39,6 +38,7 @@ describe('suggestion service', () => {
         setDocumentTracked: sinon
           .stub()
           .resolves({ rev: '7', change_ids: ['change-2'] }),
+        rejectChanges: sinon.stub().resolves({ rejectedChangeIds: [] }),
       },
     }
     ctx.projectEntityHandler = {
@@ -264,9 +264,9 @@ describe('suggestion service', () => {
         null,
         'human-1'
       )
-      expect(ctx.documentUpdater.promises.rejectChanges.firstCall.args).toEqual(
-        [projectId, docId, ['change-2', 'change-3'], 'human-1']
-      )
+      expect(
+        ctx.documentUpdaterClient.promises.rejectChanges.firstCall.args
+      ).toEqual([projectId, docId, ['change-2', 'change-3'], 'human-1'])
       expect(result.remaining).toBe(0)
     })
 

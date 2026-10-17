@@ -1,8 +1,14 @@
+// @ts-check
+
 'use strict'
 
 const assert = require('check-types').assert
 
 const Origin = require('.')
+
+/**
+ * @import { RawMcpOrigin } from '../types'
+ */
 
 /**
  * An Origin for a Change written by an agent through the MCP endpoint.
@@ -19,25 +25,42 @@ class McpOrigin extends Origin {
    * @param {string} [message] message the client sent with the write
    * @param {boolean} [suggestion] the change was written as tracked changes
    *   for a human to accept or reject
+   * @param {string} [historyClientId] see {@link Origin}
    */
-  constructor(agent, message, suggestion) {
+  constructor(agent, message, suggestion, historyClientId) {
     assert.maybe.string(agent, 'McpOrigin: bad agent')
     assert.maybe.string(message, 'McpOrigin: bad message')
     assert.maybe.boolean(suggestion, 'McpOrigin: bad suggestion')
 
-    super(McpOrigin.KIND)
+    super(McpOrigin.KIND, historyClientId)
+    /** @type {string | undefined} */
+    this.agent = undefined
+    /** @type {string | undefined} */
+    this.message = undefined
+    /** @type {true | undefined} */
+    this.suggestion = undefined
     if (agent != null) this.agent = agent
     if (message != null) this.message = message
     if (suggestion) this.suggestion = true
   }
 
+  /**
+   * @param {RawMcpOrigin} raw
+   * @return {McpOrigin}
+   */
   static fromRaw(raw) {
-    return new McpOrigin(raw.agent, raw.message, raw.suggestion)
+    return new McpOrigin(
+      raw.agent,
+      raw.message,
+      raw.suggestion,
+      raw.historyClientId
+    )
   }
 
   /** @inheritdoc */
   toRaw() {
-    const raw = { kind: McpOrigin.KIND }
+    /** @type {RawMcpOrigin} */
+    const raw = { ...super.toRaw(), kind: McpOrigin.KIND }
     if (this.agent != null) raw.agent = this.agent
     if (this.message != null) raw.message = this.message
     // A change that is not a suggestion is the common case; storing `false`
@@ -68,6 +91,7 @@ class McpOrigin extends Origin {
   }
 }
 
+/** @type {'mcp'} */
 McpOrigin.KIND = 'mcp'
 
 module.exports = McpOrigin

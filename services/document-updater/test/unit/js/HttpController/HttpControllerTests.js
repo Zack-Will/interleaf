@@ -1,14 +1,14 @@
 const sinon = require('sinon')
-const { expect } = require('chai')
 const modulePath = '../../../../app/js/HttpController.js'
 const SandboxedModule = require('sandboxed-module')
 const Errors = require('../../../../app/js/Errors.js')
 
 describe('HttpController', function () {
   beforeEach(function () {
-    this.project_id = 'project-id-123'
+    this.project_id = 'aaaaaaaaaaaaaaaaaaaaaaaa'
     this.projectHistoryId = '123'
-    this.doc_id = 'doc-id-123'
+    this.doc_id = 'bbbbbbbbbbbbbbbbbbbbbbbb'
+    this.comment_id = 'cccccccccccccccccccccccc'
     this.source = 'editor'
     this.next = sinon.stub()
     this.res = {
@@ -26,7 +26,6 @@ describe('HttpController', function () {
         flushDocIfLoadedWithLock: sinon.stub().resolves(),
         flushAndDeleteDocWithLock: sinon.stub().resolves(),
         acceptChangesWithLock: sinon.stub().resolves(),
-        addCommentWithLock: sinon.stub(),
         updateCommentStateWithLock: sinon.stub().resolves(),
         deleteCommentWithLock: sinon.stub().resolves(),
         appendToDocWithLock: sinon.stub(),
@@ -151,7 +150,6 @@ describe('HttpController', function () {
             {
               docId: this.doc_id,
               projectId: this.project_id,
-              historyRanges: false,
             },
             'getting doc via http'
           )
@@ -205,69 +203,6 @@ describe('HttpController', function () {
             {
               docId: this.doc_id,
               projectId: this.project_id,
-              historyRanges: false,
-            },
-            'getting doc via http'
-          )
-          .should.equal(true)
-      })
-
-      it('should time the request', function () {
-        this.Metrics.Timer.prototype.done.called.should.equal(true)
-      })
-    })
-
-    describe('when historyRanges query param is true', function () {
-      beforeEach(async function () {
-        this.DocumentManager.promises.getDocAndRecentOpsWithLock.resolves({
-          lines: this.lines,
-          version: this.version,
-          ops: [],
-          ranges: this.ranges,
-          pathname: this.pathname,
-          projectHistoryId: this.projectHistoryId,
-          type: 'sharejs-text-ot',
-        })
-        this.req.query = { historyRanges: 'true' }
-        await this.HttpController.getDoc(this.req, this.res, this.next)
-      })
-
-      it('should get the doc', function () {
-        this.DocumentManager.promises.getDocAndRecentOpsWithLock.should.have.been.calledWith(
-          this.project_id,
-          this.doc_id,
-          -1
-        )
-      })
-
-      it('should return the doc as JSON with history ranges processing', function () {
-        this.res.json.should.have.been.calledWith({
-          id: this.doc_id,
-          lines: this.lines,
-          version: this.version,
-          ops: [],
-          ranges: this.ranges,
-          pathname: this.pathname,
-          ttlInS: 42,
-          type: 'sharejs-text-ot',
-        })
-      })
-
-      it('should call addTrackedDeletesToContent for history ranges processing', function () {
-        this.Utils.addTrackedDeletesToContent.called.should.equal(true)
-      })
-
-      it('should call toHistoryRanges for range conversion', function () {
-        this.HistoryConversions.toHistoryRanges.called.should.equal(true)
-      })
-
-      it('should log the request with historyRanges: true', function () {
-        this.logger.debug
-          .calledWith(
-            {
-              docId: this.doc_id,
-              projectId: this.project_id,
-              historyRanges: true,
             },
             'getting doc via http'
           )
@@ -374,7 +309,7 @@ describe('HttpController', function () {
     beforeEach(function () {
       this.lines = ['one', 'two', 'three']
       this.source = 'dropbox'
-      this.user_id = 'user-id-123'
+      this.user_id = 'dddddddddddddddddddddddd'
       this.req = {
         headers: {},
         params: {
@@ -405,21 +340,12 @@ describe('HttpController', function () {
           this.source,
           this.user_id,
           this.undoing,
-          true,
-          false
+          true
         )
       })
 
       it('should return a json response with the document rev from web', function () {
         this.res.json.calledWithMatch({ rev: '123' }).should.equal(true)
-      })
-
-      it('should not report any change ids', function () {
-        // the body is built inside the sandboxed module, so it does not carry
-        // chai's `should` getter: assert on it with `expect` instead
-        expect(this.res.json.firstCall.args[0]).to.not.have.property(
-          'change_ids'
-        )
       })
 
       it('should log the request', function () {
@@ -432,7 +358,6 @@ describe('HttpController', function () {
               source: this.source,
               userId: this.user_id,
               undoing: this.undoing,
-              trackChanges: false,
             },
             'setting doc via http'
           )
@@ -472,62 +397,6 @@ describe('HttpController', function () {
 
       it('should not call setDocWithLock', function () {
         this.DocumentManager.promises.setDocWithLock.should.not.have.been.called
-      })
-    })
-
-    describe('with track_changes', function () {
-      beforeEach(function () {
-        this.req.body.track_changes = true
-      })
-
-      describe('successfully', function () {
-        beforeEach(async function () {
-          this.DocumentManager.promises.setDocWithLock.resolves({
-            rev: '123',
-            changeIds: ['change-1', 'change-2'],
-          })
-          await this.HttpController.setDoc(this.req, this.res, this.next)
-        })
-
-        it('should ask for the diff to be tracked', function () {
-          this.DocumentManager.promises.setDocWithLock.should.have.been.calledWith(
-            this.project_id,
-            this.doc_id,
-            this.lines,
-            this.source,
-            this.user_id,
-            this.undoing,
-            true,
-            true
-          )
-        })
-
-        it('should return the ids of the tracked changes it created', function () {
-          this.res.json.should.have.been.calledWith({
-            rev: '123',
-            change_ids: ['change-1', 'change-2'],
-          })
-        })
-      })
-
-      describe('when the document is a history-ot document', function () {
-        beforeEach(async function () {
-          this.DocumentManager.promises.setDocWithLock.rejects(
-            new Errors.OTTypeMismatchError('history-ot', 'sharejs-text-ot')
-          )
-          await this.HttpController.setDoc(this.req, this.res, this.next)
-        })
-
-        it('should send back a 422 response', function () {
-          this.res.status.should.have.been.calledWith(422)
-          this.res.json.should.have.been.calledWithMatch({
-            code: 'ot_type_unsupported',
-          })
-        })
-
-        it('should not call next with the error', function () {
-          this.next.called.should.equal(false)
-        })
       })
     })
   })
@@ -782,7 +651,7 @@ describe('HttpController', function () {
 
     describe('with the background=true option from realtime', function () {
       beforeEach(async function () {
-        this.req.query = { background: true, shutdown: true }
+        this.req.query = { background: 'true', shutdown: 'true' }
         await this.HttpController.deleteProject(this.req, this.res, this.next)
       })
 
@@ -813,7 +682,7 @@ describe('HttpController', function () {
         params: {
           project_id: this.project_id,
           doc_id: this.doc_id,
-          change_id: (this.change_id = 'mock-change-od-1'),
+          change_id: (this.change_id = 'ddddddddddddddddddddddd1'),
         },
         query: {},
         body: {},
@@ -823,9 +692,20 @@ describe('HttpController', function () {
     describe('successfully with a single change', function () {
       beforeEach(async function () {
         this.changeContributors = ['user-id-1', 'user-id-2']
-        this.DocumentManager.promises.acceptChangesWithLock.resolves(
-          this.changeContributors
-        )
+        this.previews = [
+          {
+            sectionPath: [],
+            startLine: 1,
+            changes: [{ i: 'x', p: 0 }],
+            slice: 'x',
+            sliceStart: 0,
+            userIds: ['user-id-1'],
+          },
+        ]
+        this.DocumentManager.promises.acceptChangesWithLock.resolves({
+          changeContributors: this.changeContributors,
+          previews: this.previews,
+        })
         await this.HttpController.acceptChanges(this.req, this.res, this.next)
       })
 
@@ -837,10 +717,11 @@ describe('HttpController', function () {
         )
       })
 
-      it('should return a successful 200 with a list of the change contributors', function () {
+      it('should return a successful 200 with the contributors and previews', function () {
         this.res.status.should.have.been.calledWith(200)
         this.res.json.should.have.been.calledWith({
           changeContributors: this.changeContributors,
+          previews: this.previews,
         })
       })
 
@@ -861,12 +742,16 @@ describe('HttpController', function () {
     describe('succesfully with with multiple changes', function () {
       beforeEach(async function () {
         this.change_ids = [
-          'mock-change-od-1',
-          'mock-change-od-2',
-          'mock-change-od-3',
-          'mock-change-od-4',
+          'ddddddddddddddddddddddd1',
+          'ddddddddddddddddddddddd2',
+          'ddddddddddddddddddddddd3',
+          'ddddddddddddddddddddddd4',
         ]
         this.req.body = { change_ids: this.change_ids }
+        this.DocumentManager.promises.acceptChangesWithLock.resolves({
+          changeContributors: [],
+          previews: [],
+        })
         await this.HttpController.acceptChanges(this.req, this.res, this.next)
       })
 
@@ -902,156 +787,14 @@ describe('HttpController', function () {
     })
   })
 
-  describe('addComment', function () {
-    beforeEach(function () {
-      this.user_id = 'user-id-123'
-      this.thread_id = '0123456789abcdef01234567'
-      this.comment = {
-        id: this.thread_id,
-        op: { c: 'two', p: 4, t: this.thread_id },
-        metadata: { user_id: this.user_id, ts: '2026-09-12T00:00:00.000Z' },
-      }
-      this.req = {
-        params: {
-          project_id: this.project_id,
-          doc_id: this.doc_id,
-        },
-        query: {},
-        body: {
-          user_id: this.user_id,
-          thread_id: this.thread_id,
-          position: 4,
-          text: 'two',
-        },
-      }
-    })
-
-    describe('successfully', function () {
-      beforeEach(async function () {
-        this.DocumentManager.promises.addCommentWithLock.resolves({
-          comment: this.comment,
-          version: 43,
-        })
-        await this.HttpController.addComment(this.req, this.res, this.next)
-      })
-
-      it('should add the comment under the doc lock', function () {
-        this.DocumentManager.promises.addCommentWithLock.should.have.been.calledWith(
-          this.project_id,
-          this.doc_id,
-          { threadId: this.thread_id, position: 4, text: 'two' },
-          this.user_id
-        )
-      })
-
-      it('should return the comment and the new version', function () {
-        this.res.json.should.have.been.calledWith({
-          comment: this.comment,
-          version: 43,
-        })
-      })
-
-      it('should time the request', function () {
-        this.Metrics.Timer.prototype.done.called.should.equal(true)
-      })
-    })
-
-    describe('with an invalid body', function () {
-      it('should reject a thread id that is not 24 hex characters', async function () {
-        this.req.body.thread_id = 'not-a-thread-id'
-        await this.HttpController.addComment(this.req, this.res, this.next)
-        this.res.status.should.have.been.calledWith(400)
-        this.res.json.should.have.been.calledWithMatch({
-          code: 'invalid_request',
-        })
-        this.DocumentManager.promises.addCommentWithLock.called.should.equal(
-          false
-        )
-      })
-
-      it('should reject a negative position', async function () {
-        this.req.body.position = -1
-        await this.HttpController.addComment(this.req, this.res, this.next)
-        this.res.status.should.have.been.calledWith(400)
-        this.res.json.should.have.been.calledWithMatch({
-          code: 'invalid_request',
-        })
-      })
-
-      it('should reject empty text', async function () {
-        this.req.body.text = ''
-        await this.HttpController.addComment(this.req, this.res, this.next)
-        this.res.status.should.have.been.calledWith(400)
-        this.res.json.should.have.been.calledWithMatch({
-          code: 'invalid_request',
-        })
-      })
-
-      it('should reject a missing user id', async function () {
-        delete this.req.body.user_id
-        await this.HttpController.addComment(this.req, this.res, this.next)
-        this.res.status.should.have.been.calledWith(400)
-        this.res.json.should.have.been.calledWithMatch({
-          code: 'invalid_request',
-        })
-      })
-    })
-
-    describe('when the text does not match the document', function () {
-      beforeEach(async function () {
-        this.DocumentManager.promises.addCommentWithLock.rejects(
-          new Errors.CommentTextMismatchError('comment text mismatch', {
-            actualText: 'thr',
-          })
-        )
-        await this.HttpController.addComment(this.req, this.res, this.next)
-      })
-
-      it('should return a 400 with the text that is actually there', function () {
-        this.res.status.should.have.been.calledWith(400)
-        this.res.json.should.have.been.calledWithMatch({
-          code: 'text_mismatch',
-          position: 4,
-          actual_text: 'thr',
-        })
-      })
-    })
-
-    describe('when the document uses history-ot', function () {
-      beforeEach(async function () {
-        this.DocumentManager.promises.addCommentWithLock.rejects(
-          new Errors.OTTypeMismatchError('history-ot', 'sharejs-text-ot')
-        )
-        await this.HttpController.addComment(this.req, this.res, this.next)
-      })
-
-      it('should return a 422', function () {
-        this.res.status.should.have.been.calledWith(422)
-        this.res.json.should.have.been.calledWithMatch({
-          code: 'ot_type_unsupported',
-        })
-      })
-    })
-
-    describe('when the document does not exist', function () {
-      it('should pass the error on to the error handler', async function () {
-        this.DocumentManager.promises.addCommentWithLock.rejects(
-          new Errors.NotFoundError('document not found')
-        )
-        await this.HttpController.addComment(this.req, this.res, this.next)
-        this.next.should.have.been.calledWith(sinon.match.instanceOf(Error))
-      })
-    })
-  })
-
   describe('resolveComment', function () {
     beforeEach(function () {
-      this.user_id = 'user-id-123'
+      this.user_id = 'dddddddddddddddddddddddd'
       this.req = {
         params: {
           project_id: this.project_id,
           doc_id: this.doc_id,
-          comment_id: (this.comment_id = 'mock-comment-id'),
+          comment_id: (this.comment_id = 'cccccccccccccccccccccccc'),
         },
         query: {},
         body: {
@@ -1110,12 +853,12 @@ describe('HttpController', function () {
 
   describe('reopenComment', function () {
     beforeEach(function () {
-      this.user_id = 'user-id-123'
+      this.user_id = 'dddddddddddddddddddddddd'
       this.req = {
         params: {
           project_id: this.project_id,
           doc_id: this.doc_id,
-          comment_id: (this.comment_id = 'mock-comment-id'),
+          comment_id: (this.comment_id = 'cccccccccccccccccccccccc'),
         },
         query: {},
         body: {
@@ -1174,12 +917,12 @@ describe('HttpController', function () {
 
   describe('deleteComment', function () {
     beforeEach(function () {
-      this.user_id = 'user-id-123'
+      this.user_id = 'dddddddddddddddddddddddd'
       this.req = {
         params: {
           project_id: this.project_id,
           doc_id: this.doc_id,
-          comment_id: (this.comment_id = 'mock-comment-id'),
+          comment_id: (this.comment_id = 'cccccccccccccccccccccccc'),
         },
         query: {},
         body: {
@@ -1271,8 +1014,7 @@ describe('HttpController', function () {
       it('should get docs from the project manager', function () {
         this.ProjectManager.promises.getProjectDocsAndFlushIfOld.should.have.been.calledWith(
           this.project_id,
-          this.state,
-          {}
+          this.state
         )
       })
 
@@ -1282,10 +1024,7 @@ describe('HttpController', function () {
 
       it('should log the request', function () {
         this.logger.debug
-          .calledWith(
-            { projectId: this.project_id, exclude: [] },
-            'getting docs via http'
-          )
+          .calledWith({ projectId: this.project_id }, 'getting docs via http')
           .should.equal(true)
       })
 
@@ -1340,23 +1079,33 @@ describe('HttpController', function () {
 
   describe('updateProject', function () {
     beforeEach(function () {
-      this.projectHistoryId = 'history-id-123'
-      this.userId = 'user-id-123'
+      this.projectHistoryId = 'ffffffffffffffffffffffff'
+      this.userId = 'dddddddddddddddddddddddd'
       this.updates = [
         {
           type: 'rename-doc',
-          id: 1,
+          id: 'aaaaaaaaaaaaaaaaaaaaaaa1',
           pathname: 'thesis.tex',
           newPathname: 'book.tex',
         },
-        { type: 'add-doc', id: 2, pathname: 'article.tex', docLines: 'hello' },
+        {
+          type: 'add-doc',
+          id: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          pathname: 'article.tex',
+          docLines: 'hello',
+        },
         {
           type: 'rename-file',
-          id: 3,
+          id: 'aaaaaaaaaaaaaaaaaaaaaaa3',
           pathname: 'apple.png',
           newPathname: 'banana.png',
         },
-        { type: 'add-file', id: 4, url: 'filestore.example.com/4' },
+        {
+          type: 'add-file',
+          id: 'aaaaaaaaaaaaaaaaaaaaaaa4',
+          pathname: 'banana.png',
+          url: 'filestore.example.com/4',
+        },
       ]
       this.version = 1234567
       this.req = {
@@ -1411,14 +1160,95 @@ describe('HttpController', function () {
         this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
       })
     })
+
+    describe('when projectHistoryId is malformed', function () {
+      beforeEach(async function () {
+        this.req.body.projectHistoryId = '../../../../etc/passwd'
+        await this.HttpController.updateProject(this.req, this.res, this.next)
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+
+      it('should not update the project', function () {
+        this.ProjectManager.promises.updateProjectWithLocks.called.should.equal(
+          false
+        )
+      })
+    })
+
+    describe('when an add-file update has linked-file metadata with a null group_id', function () {
+      beforeEach(async function () {
+        this.req.body.updates[3].metadata = {
+          provider: 'zotero',
+          format: 'bibtex',
+          group_id: null,
+          importer_id: this.userId,
+          importedAt: '2024-01-01T00:00:00.000Z',
+        }
+        await this.HttpController.updateProject(this.req, this.res, this.next)
+      })
+
+      it('should accept the change', function () {
+        this.ProjectManager.promises.updateProjectWithLocks.should.have.been.calledWith(
+          this.project_id,
+          this.projectHistoryId,
+          this.userId,
+          this.updates,
+          this.version,
+          this.source
+        )
+      })
+    })
+
+    describe('when an update has an unrecognized type', function () {
+      beforeEach(async function () {
+        this.req.body.updates[3].type = 'add-folder'
+        await this.HttpController.updateProject(this.req, this.res, this.next)
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+
+      it('should not update the project', function () {
+        this.ProjectManager.promises.updateProjectWithLocks.called.should.equal(
+          false
+        )
+      })
+    })
+
+    describe('when an add-file update has a malformed hash', function () {
+      beforeEach(async function () {
+        this.req.body.updates[3].hash = 'not-a-valid-hash'
+        await this.HttpController.updateProject(this.req, this.res, this.next)
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+
+      it('should not update the project', function () {
+        this.ProjectManager.promises.updateProjectWithLocks.called.should.equal(
+          false
+        )
+      })
+    })
   })
 
   describe('resyncProjectHistory', function () {
     beforeEach(function () {
-      this.projectHistoryId = 'history-id-123'
-      this.docs = sinon.stub()
-      this.files = sinon.stub()
-      this.fileUpdates = sinon.stub()
+      this.projectHistoryId = 'ffffffffffffffffffffffff'
+      this.docs = [{ doc: 'bbbbbbbbbbbbbbbbbbbbbbbb', path: 'main.tex' }]
+      this.files = [
+        {
+          file: 'eeeeeeeeeeeeeeeeeeeeeeee',
+          path: 'universe.png',
+          _hash: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          createdBlob: true,
+        },
+      ]
       this.req = {
         query: {},
         body: {
@@ -1472,13 +1302,55 @@ describe('HttpController', function () {
         this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
       })
     })
+
+    describe('when projectHistoryId is malformed', function () {
+      beforeEach(async function () {
+        this.req.body.projectHistoryId = '../../../../etc/passwd'
+        await this.HttpController.resyncProjectHistory(
+          this.req,
+          this.res,
+          this.next
+        )
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+
+      it('should not resync the project history', function () {
+        this.HistoryManager.promises.resyncProjectHistory.called.should.equal(
+          false
+        )
+      })
+    })
+
+    describe('when a file _hash is malformed', function () {
+      beforeEach(async function () {
+        this.req.body.files[0]._hash = 'not-a-valid-hash'
+        await this.HttpController.resyncProjectHistory(
+          this.req,
+          this.res,
+          this.next
+        )
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+
+      it('should not resync the project history', function () {
+        this.HistoryManager.promises.resyncProjectHistory.called.should.equal(
+          false
+        )
+      })
+    })
   })
 
   describe('appendToDoc', function () {
     beforeEach(function () {
       this.lines = ['one', 'two', 'three']
       this.source = 'dropbox'
-      this.user_id = 'user-id-123'
+      this.user_id = 'dddddddddddddddddddddddd'
       this.req = {
         headers: {},
         params: {
@@ -1490,7 +1362,6 @@ describe('HttpController', function () {
           lines: this.lines,
           source: this.source,
           user_id: this.user_id,
-          undoing: (this.undoing = true),
         },
       }
     })

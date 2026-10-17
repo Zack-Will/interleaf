@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 import { handleValidationError } from '@overleaf/validation-tools'
 

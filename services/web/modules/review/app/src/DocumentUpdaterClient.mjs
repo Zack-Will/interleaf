@@ -1,9 +1,9 @@
 // The document-updater calls that `DocumentUpdaterHandler` does not make:
-// anchoring a comment thread to a range of a document, and replacing a
-// document's content so that the diff lands as tracked changes.  Both
-// endpoints are our own (`services/document-updater/app/js/HttpController.js`),
-// so the client lives with the review module rather than in the upstream
-// handler.
+// anchoring a comment thread to a range of a document, replacing a document's
+// content so that the diff lands as tracked changes, and rejecting tracked
+// changes.  The endpoints are our own
+// (`services/document-updater/app/js/ReviewApiController.js`), so the client
+// lives with the review module rather than in the upstream handler.
 import Settings from '@overleaf/settings'
 import { fetchJson } from '@overleaf/fetch-utils'
 import {
@@ -26,6 +26,14 @@ function docUrl(projectId, docId) {
 
 function commentUrl(projectId, docId) {
   return `${docUrl(projectId, docId)}/comment`
+}
+
+function suggestUrl(projectId, docId) {
+  return `${docUrl(projectId, docId)}/suggest`
+}
+
+function rejectUrl(projectId, docId) {
+  return `${docUrl(projectId, docId)}/change/reject`
 }
 
 // document-updater answers its refusals with a JSON body carrying a stable
@@ -115,13 +123,12 @@ function translateSetDocError(error, { projectId, docId }) {
  */
 async function setDocumentTracked(projectId, docId, userId, lines, source) {
   try {
-    const result = await fetchJson(docUrl(projectId, docId), {
+    const result = await fetchJson(suggestUrl(projectId, docId), {
       method: 'POST',
       json: {
         lines,
         source,
         user_id: userId,
-        track_changes: true,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
@@ -131,10 +138,34 @@ async function setDocumentTracked(projectId, docId, userId, lines, source) {
   }
 }
 
-export { addCommentRange, setDocumentTracked }
+/**
+ * Reject tracked changes by applying their inverse, so the document reads as
+ * it did before they were suggested.
+ *
+ * @param {string} projectId
+ * @param {string} docId
+ * @param {string[]} changeIds
+ * @param {string} userId the user rejecting them
+ * @return {Promise<{rejectedChangeIds: string[]}>}
+ */
+async function rejectChanges(projectId, docId, changeIds, userId) {
+  try {
+    const { rejectedChangeIds } = await fetchJson(rejectUrl(projectId, docId), {
+      method: 'POST',
+      json: { change_ids: changeIds, user_id: userId },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    return { rejectedChangeIds }
+  } catch (error) {
+    throw translateSetDocError(error, { projectId, docId })
+  }
+}
+
+export { addCommentRange, setDocumentTracked, rejectChanges }
 
 export default {
   addCommentRange,
   setDocumentTracked,
-  promises: { addCommentRange, setDocumentTracked },
+  rejectChanges,
+  promises: { addCommentRange, setDocumentTracked, rejectChanges },
 }

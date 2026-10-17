@@ -8,79 +8,22 @@ const Metrics = require('./Metrics')
 const HistoryManager = require('./HistoryManager')
 const Errors = require('./Errors')
 const RangesManager = require('./RangesManager')
+const HistoryConversions = require('./HistoryConversions')
 const { extractOriginOrSource } = require('./Utils')
 const { getTotalSizeOfLines } = require('./Limits')
 const Settings = require('@overleaf/settings')
 const RangesTracker = require('@overleaf/ranges-tracker')
-const { StringFileData } = require('overleaf-editor-core')
+const { buildSparseChangePreviews } = require('./TrackedChangePreview')
+const {
+  StringFileData,
+  SetCommentStateOperation,
+  DeleteCommentOperation,
+} = require('overleaf-editor-core')
+const {
+  diffAsTextOperation,
+} = require('overleaf-editor-core/lib/diff_as_text_operation')
 
 const MAX_UNFLUSHED_AGE = Settings.maxUnflushedAgeMs // document should be flushed to mongo this time after a change
-
-/**
- * @import { Ranges, TrackedChange } from './types'
- */
-
-/**
- * The text a tracked change covers, which is the inserted text for a tracked
- * insert and the deleted text for a tracked delete.
- *
- * @param {TrackedChange} change
- * @return {string}
- */
-function getTrackedChangeText(change) {
-  const op = change.op || {}
-  if (typeof op.i === 'string') {
-    return `i:${op.i}`
-  }
-  if (typeof op.d === 'string') {
-    return `d:${op.d}`
-  }
-  return ''
-}
-
-/**
- * The tracked changes a single update produced.
- *
- * A change the update created has an id built from the update's id seed
- * (`RangesTracker.newId()` is `idSeed` plus a counter), which is exact.  An
- * update can also grow a tracked change that was already there, when it edits
- * right up against an existing tracked change of the same user: those are
- * merged into the old change and keep its id, so they are recognised by their
- * text having changed.  Position alone is not enough — every change after an
- * edit is shifted along without being part of it — and the timestamp is not
- * enough either, because a merge keeps the *older* of the two (`pickTimestamp`
- * in `libraries/ranges-tracker/index.cjs`).  Server-side change metadata only
- * carries `user_id`, so the ownership test is on that alone.
- *
- * @param {Ranges | undefined} rangesBefore
- * @param {Ranges | undefined} rangesAfter
- * @param {string} idSeed
- * @param {string} userId
- * @return {string[]}
- */
-function findTrackedChangeIds(rangesBefore, rangesAfter, idSeed, userId) {
-  const textBefore = new Map(
-    (rangesBefore?.changes || []).map(change => [
-      change.id,
-      getTrackedChangeText(change),
-    ])
-  )
-  const ids = []
-  for (const change of rangesAfter?.changes || []) {
-    if (String(change.id).startsWith(idSeed)) {
-      ids.push(change.id)
-      continue
-    }
-    if (String(change.metadata?.user_id ?? '') !== String(userId ?? '')) {
-      continue
-    }
-    const before = textBefore.get(change.id)
-    if (before != null && before !== getTrackedChangeText(change)) {
-      ids.push(change.id)
-    }
-  }
-  return ids
-}
 
 const DocumentManager = {
   /**
@@ -198,14 +141,20 @@ const DocumentManager = {
     }
   },
 
-  async appendToDoc(projectId, docId, linesToAppend, originOrSource, userId) {
+  async appendToDoc(
+    projectId,
+    docId,
+    linesToAppend,
+    originOrSource,
+    userId,
+    trackChanges
+  ) {
     let { lines: currentLines, type } = await DocumentManager.getDoc(
       projectId,
       docId
     )
     if (type === 'history-ot') {
       const file = StringFileData.fromRaw(currentLines)
-      // TODO(24596): tc support for history-ot
       currentLines = file.getLines()
     }
     const currentLineSize = getTotalSizeOfLines(currentLines)
@@ -225,7 +174,8 @@ const DocumentManager = {
       originOrSource,
       userId,
       false,
-      false
+      false,
+      trackChanges
     )
   },
 
@@ -237,7 +187,7 @@ const DocumentManager = {
     userId,
     undoing,
     external,
-    trackChanges = false
+    trackChanges
   ) {
     if (newLines == null) {
       throw new Error('No lines were provided to setDoc')
@@ -250,16 +200,9 @@ const DocumentManager = {
     const {
       lines: oldLines,
       version,
-      ranges: oldRanges,
       alreadyLoaded,
       type,
     } = await DocumentManager.getDoc(projectId, docId)
-
-    // Tracked changes only exist on sharejs documents: `RangesManager` is not
-    // part of the history-ot path at all, so there is nothing to attach them to.
-    if (trackChanges && type === 'history-ot') {
-      throw new Errors.OTTypeMismatchError(type, 'sharejs-text-ot')
-    }
 
     logger.debug(
       { docId, projectId, oldLines, newLines },
@@ -269,9 +212,10 @@ const DocumentManager = {
     let op
     if (type === 'history-ot') {
       const file = StringFileData.fromRaw(oldLines)
-      const operation = DiffCodec.diffAsHistoryOTEditOperation(
+      const operation = diffAsTextOperation(
         file,
-        newLines.join('\n')
+        newLines.join('\n'),
+        trackChanges ? { tracking: { userId, ts: new Date() } } : {}
       )
       if (operation.isNoop()) {
         op = []
@@ -297,6 +241,9 @@ const DocumentManager = {
         user_id: userId,
       },
     }
+    if (type !== 'history-ot' && trackChanges) {
+      update.meta.tc = RangesTracker.generateIdSeed()
+    }
     if (external) {
       update.meta.type = 'external'
     }
@@ -304,13 +251,6 @@ const DocumentManager = {
       update.meta.origin = origin
     } else if (source) {
       update.meta.source = source
-    }
-    // `meta.tc` is what the websocket path carries when a user edits with track
-    // changes on: `RangesManager.applyUpdate` reads it, turns tracking on for
-    // this update and seeds the ids of the changes it records.
-    const idSeed = trackChanges ? RangesTracker.generateIdSeed() : null
-    if (idSeed) {
-      update.meta.tc = idSeed
     }
     // Keep track of external updates, whether they are for live documents
     // (flush) or unloaded documents (evict), and whether the update is a no-op.
@@ -333,40 +273,21 @@ const DocumentManager = {
       }
     }
 
-    // Read the tracked changes back from the ranges rather than deriving them
-    // from the ops we sent: the update is transformed against whatever was
-    // queued ahead of it, and adjacent changes of the same user are merged.
-    let changeIds = null
-    if (idSeed && op.length === 0) {
-      changeIds = []
-    } else if (idSeed) {
-      const { ranges: newRanges } = await DocumentManager.getDoc(
-        projectId,
-        docId
-      )
-      changeIds = findTrackedChangeIds(oldRanges, newRanges, idSeed, userId)
-    }
-
     // If the document was loaded already, then someone has it open
     // in a project, and the usual flushing mechanism will happen.
     // Otherwise we should remove it immediately since nothing else
     // is using it.
-    let result
     if (alreadyLoaded) {
-      result = await DocumentManager.flushDocIfLoaded(projectId, docId)
+      return await DocumentManager.flushDocIfLoaded(projectId, docId)
     } else {
       try {
-        result = await DocumentManager.flushAndDeleteDoc(projectId, docId, {})
+        return await DocumentManager.flushAndDeleteDoc(projectId, docId, {})
       } finally {
         // There is no harm in flushing project history if the previous
         // call failed and sometimes it is required
         HistoryManager.flushProjectChangesAsync(projectId)
       }
     }
-    if (changeIds == null) {
-      return result
-    }
-    return { ...(result || {}), changeIds }
   },
 
   async flushDocIfLoaded(projectId, docId) {
@@ -392,9 +313,7 @@ const DocumentManager = {
     logger.debug({ projectId, docId, version }, 'flushing doc')
     Metrics.inc('flush-doc-if-loaded', 1, { status: 'modified' })
     if (!Array.isArray(lines)) {
-      const file = StringFileData.fromRaw(lines)
-      // TODO(24596): tc support for history-ot
-      lines = file.getLines()
+      ;({ lines, ranges } = HistoryConversions.fromHistoryOT(lines))
     }
     const result = await PersistenceManager.promises.setDoc(
       projectId,
@@ -432,7 +351,6 @@ const DocumentManager = {
     if (changeIds == null) {
       changeIds = []
     }
-    let changeContributors = []
 
     const {
       lines,
@@ -441,12 +359,28 @@ const DocumentManager = {
       pathname,
       projectHistoryId,
       historyRangesSupport,
+      type,
     } = await DocumentManager.getDoc(projectId, docId)
     if (lines == null || version == null) {
       throw new Errors.NotFoundError(`document not found: ${docId}`)
     }
+    if (type === 'history-ot') {
+      throw new Errors.OTTypeMismatchError('sharejs-text-ot', 'history-ot')
+    }
 
-    // TODO(24596): tc support for history-ot
+    // Snapshot the accepted change objects and lines before applying the
+    // accept, so we can build the email-notification previews from them.
+    const acceptedChanges = (ranges.changes || []).filter(change =>
+      changeIds.includes(change.id)
+    )
+    const changeContributors = acceptedChanges
+      .map(change => change?.metadata?.user_id)
+      .filter(userId => userId)
+    const previews = buildSparseChangePreviews({
+      changes: acceptedChanges,
+      lines,
+    })
+
     const newRanges = RangesManager.acceptChanges(
       projectId,
       docId,
@@ -475,167 +409,37 @@ const DocumentManager = {
         projectHistoryId,
       })
 
-      if (historyUpdates.length === 0) {
-        return changeContributors
-      }
-
-      await ProjectHistoryRedisManager.promises.queueOps(
-        projectId,
-        ...historyUpdates.map(op => JSON.stringify(op))
-      )
-    }
-    changeContributors = (ranges.changes || [])
-      .filter(change => changeIds.includes(change.id))
-      .map(change => change?.metadata?.user_id)
-      .filter(userId => userId)
-    return changeContributors
-  },
-
-  async rejectChanges(projectId, docId, changeIds, userId) {
-    const UpdateManager = require('./UpdateManager')
-    const HistoryOTUpdateManager = require('./HistoryOTUpdateManager')
-
-    const { lines, version, ranges } = await DocumentManager.getDoc(
-      projectId,
-      docId
-    )
-    if (lines == null || version == null) {
-      throw new Errors.NotFoundError(`document not found: ${docId}`)
-    }
-
-    const changesToReject = ranges.changes
-      ? ranges.changes.filter(change => changeIds.includes(change.id))
-      : []
-
-    // Apply inverted operations for rejected changes (based on reject-changes.ts logic)
-    // Sort changes in reverse order by position to avoid conflicts
-    changesToReject.sort((a, b) => b.op.p - a.op.p)
-
-    const ops = []
-    for (const change of changesToReject) {
-      if (change.op.i) {
-        const deleteOp = {
-          p: change.op.p,
-          d: change.op.i,
-          u: true,
-        }
-        ops.push(deleteOp)
-      } else if (change.op.d) {
-        const insertOp = {
-          p: change.op.p,
-          i: change.op.d,
-          u: true,
-        }
-        ops.push(insertOp)
+      if (historyUpdates.length > 0) {
+        await ProjectHistoryRedisManager.promises.queueOps(
+          projectId,
+          ...historyUpdates.map(op => JSON.stringify(op))
+        )
       }
     }
-
-    const update = {
-      doc: docId,
-      op: ops,
-      v: version,
-      meta: {
-        user_id: userId,
-        ts: new Date().toISOString(),
-      },
-    }
-
-    if (HistoryOTUpdateManager.isHistoryOTEditOperationUpdate(update)) {
-      await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
-    } else {
-      await UpdateManager.promises.applyUpdate(projectId, docId, update)
-    }
-
-    return { rejectedChangeIds: changesToReject.map(c => c.id) }
-  },
-
-  /**
-   * Anchor a comment thread to a range of the document.
-   *
-   * The editor does this over the websocket; this is the HTTP equivalent for
-   * callers such as the review API. Submitting a thread id that is already
-   * anchored moves the existing comment instead of creating a second one.
-   *
-   * @param {string} projectId
-   * @param {string} docId
-   * @param {{threadId: string, position: number, text: string}} comment
-   * @param {string} userId
-   * @return {Promise<{comment: Comment, version: number}>}
-   */
-  async addComment(projectId, docId, { threadId, position, text }, userId) {
-    // Circular dependency. Import at runtime.
-    const UpdateManager = require('./UpdateManager')
-
-    const { lines, version, alreadyLoaded, type } =
-      await DocumentManager.getDoc(projectId, docId)
-    if (lines == null || version == null) {
-      throw new Errors.NotFoundError(`document not found: ${docId}`)
-    }
-    if (type !== 'sharejs-text-ot') {
-      throw new Errors.OTTypeMismatchError(type, 'sharejs-text-ot')
-    }
-
-    // The comment op is rejected by the ranges tracker unless it quotes the
-    // document verbatim, so check it here and tell the caller what is actually
-    // there, allowing them to retry against the current content.
-    const currentText = lines.join('\n').slice(position, position + text.length)
-    if (currentText !== text) {
-      throw new Errors.CommentTextMismatchError('comment text mismatch', {
-        docId,
-        position,
-        actualText: currentText,
-      })
-    }
-
-    const update = {
-      doc: docId,
-      op: [{ c: text, p: position, t: threadId }],
-      v: version,
-      meta: {
-        user_id: userId,
-        ts: Date.now(),
-        source: 'review-api',
-      },
-    }
-    await UpdateManager.promises.applyUpdate(projectId, docId, update)
-
-    // Read the comment back rather than echoing the request: the op may have
-    // been transformed against updates that were pending when we took the lock.
-    const { ranges, version: newVersion } = await DocumentManager.getDoc(
-      projectId,
-      docId
-    )
-    const comment = (ranges?.comments || []).find(
-      comment => (comment.op?.t || comment.id) === threadId
-    )
-    if (comment == null) {
-      throw new Errors.NotFoundError(`comment not found: ${threadId}`)
-    }
-
-    // Same flushing rules as setDoc: leave a doc that an editor has open to the
-    // usual flush cycle, evict one we only loaded for this call.
-    if (alreadyLoaded) {
-      await DocumentManager.flushDocIfLoaded(projectId, docId)
-    } else {
-      try {
-        await DocumentManager.flushAndDeleteDoc(projectId, docId, {})
-      } finally {
-        HistoryManager.flushProjectChangesAsync(projectId)
-      }
-    }
-
-    return { comment, version: newVersion }
+    return { changeContributors, previews }
   },
 
   async updateCommentState(projectId, docId, commentId, userId, resolved) {
-    const { lines, version, pathname, historyRangesSupport } =
+    const { lines, version, pathname, historyRangesSupport, type } =
       await DocumentManager.getDoc(projectId, docId)
 
     if (lines == null || version == null) {
       throw new Errors.NotFoundError(`document not found: ${docId}`)
     }
 
-    if (historyRangesSupport) {
+    if (type === 'history-ot') {
+      // Circular dependencies. Import at runtime.
+      const HistoryOTUpdateManager = require('./HistoryOTUpdateManager')
+
+      const op = new SetCommentStateOperation(commentId, resolved)
+      const update = {
+        doc: docId,
+        op: [op.toJSON()],
+        v: version,
+        meta: { user_id: userId },
+      }
+      await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
+    } else if (historyRangesSupport) {
       await RedisManager.promises.updateCommentState(docId, commentId, resolved)
 
       await ProjectHistoryRedisManager.promises.queueOps(
@@ -654,8 +458,11 @@ const DocumentManager = {
   },
 
   async getComment(projectId, docId, commentId) {
-    // TODO(24596): tc support for history-ot
-    const { ranges } = await DocumentManager.getDoc(projectId, docId)
+    let { lines, ranges, type } = await DocumentManager.getDoc(projectId, docId)
+
+    if (type === 'history-ot') {
+      ;({ ranges } = HistoryConversions.fromHistoryOT(lines))
+    }
 
     const comment = ranges?.comments?.find(comment => comment.id === commentId)
 
@@ -670,38 +477,51 @@ const DocumentManager = {
   },
 
   async deleteComment(projectId, docId, commentId, userId) {
-    const { lines, version, ranges, pathname, historyRangesSupport } =
+    const { lines, version, ranges, pathname, historyRangesSupport, type } =
       await DocumentManager.getDoc(projectId, docId)
     if (lines == null || version == null) {
       throw new Errors.NotFoundError(`document not found: ${docId}`)
     }
 
-    // TODO(24596): tc support for history-ot
-    const newRanges = RangesManager.deleteComment(commentId, ranges)
+    if (type === 'history-ot') {
+      // Circular dependencies. Import at runtime.
+      const HistoryOTUpdateManager = require('./HistoryOTUpdateManager')
 
-    await RedisManager.promises.updateDocument(
-      projectId,
-      docId,
-      lines,
-      version,
-      [],
-      newRanges,
-      {}
-    )
+      const op = new DeleteCommentOperation(commentId)
+      const update = {
+        doc: docId,
+        op: [op.toJSON()],
+        v: version,
+        meta: { user_id: userId },
+      }
+      await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
+    } else {
+      const newRanges = RangesManager.deleteComment(commentId, ranges)
 
-    if (historyRangesSupport) {
-      await RedisManager.promises.updateCommentState(docId, commentId, false)
-      await ProjectHistoryRedisManager.promises.queueOps(
+      await RedisManager.promises.updateDocument(
         projectId,
-        JSON.stringify({
-          pathname,
-          deleteComment: commentId,
-          meta: {
-            ts: new Date(),
-            user_id: userId,
-          },
-        })
+        docId,
+        lines,
+        version,
+        [],
+        newRanges,
+        {}
       )
+
+      if (historyRangesSupport) {
+        await RedisManager.promises.updateCommentState(docId, commentId, false)
+        await ProjectHistoryRedisManager.promises.queueOps(
+          projectId,
+          JSON.stringify({
+            pathname,
+            deleteComment: commentId,
+            meta: {
+              ts: new Date(),
+              user_id: userId,
+            },
+          })
+        )
+      }
     }
   },
 
@@ -846,7 +666,7 @@ const DocumentManager = {
     userId,
     undoing,
     external,
-    trackChanges = false
+    trackChanges
   ) {
     const UpdateManager = require('./UpdateManager')
     return await UpdateManager.promises.lockUpdatesAndDo(
@@ -862,7 +682,14 @@ const DocumentManager = {
     )
   },
 
-  async appendToDocWithLock(projectId, docId, lines, source, userId) {
+  async appendToDocWithLock(
+    projectId,
+    docId,
+    lines,
+    source,
+    userId,
+    trackChanges
+  ) {
     const UpdateManager = require('./UpdateManager')
     return await UpdateManager.promises.lockUpdatesAndDo(
       DocumentManager.appendToDoc,
@@ -870,7 +697,8 @@ const DocumentManager = {
       docId,
       lines,
       source,
-      userId
+      userId,
+      trackChanges
     )
   },
 
@@ -895,34 +723,11 @@ const DocumentManager = {
 
   async acceptChangesWithLock(projectId, docId, changeIds) {
     const UpdateManager = require('./UpdateManager')
-    const changeContributors = await UpdateManager.promises.lockUpdatesAndDo(
+    return await UpdateManager.promises.lockUpdatesAndDo(
       DocumentManager.acceptChanges,
       projectId,
       docId,
       changeIds
-    )
-    return changeContributors
-  },
-
-  async rejectChangesWithLock(projectId, docId, changeIds, userId) {
-    const UpdateManager = require('./UpdateManager')
-    return await UpdateManager.promises.lockUpdatesAndDo(
-      DocumentManager.rejectChanges,
-      projectId,
-      docId,
-      changeIds,
-      userId
-    )
-  },
-
-  async addCommentWithLock(projectId, docId, comment, userId) {
-    const UpdateManager = require('./UpdateManager')
-    return await UpdateManager.promises.lockUpdatesAndDo(
-      DocumentManager.addComment,
-      projectId,
-      docId,
-      comment,
-      userId
     )
   },
 

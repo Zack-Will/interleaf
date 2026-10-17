@@ -3,6 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
+import { Origin } from 'overleaf-editor-core'
 import LockManager from '../../../../app/src/infrastructure/LockManager.mjs'
 import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
@@ -177,7 +178,16 @@ async function writeFiles(
   }
 ) {
   return withProjectWriteLock(projectId, baseVersion, async () => {
-    const origin = { ...originExtra, kind: originKind, agent, message }
+    // Send the origin in the shape history stores it in: an MCP origin keeps
+    // its agent and message, any other kind keeps only the kind. The services
+    // validate origins against exactly that shape, so the extra fields
+    // (revert, merge) would get the write rejected.
+    const origin = Origin.fromRaw({
+      ...originExtra,
+      kind: originKind,
+      agent,
+      message,
+    }).toRaw()
     const applied = []
     const failed = []
     const unchanged = []
