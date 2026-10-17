@@ -196,19 +196,8 @@ const settings = {
   // The name this is used to describe your Overleaf Community Edition Installation
   appName: process.env.OVERLEAF_APP_NAME || 'Overleaf Community Edition',
 
-  // Git bridge (this fork): the web-side adapter in modules/git-bridge only
-  // registers its routes when this is enabled.
-  enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
-  enableReviewPanel: process.env.REVIEW_PANEL_ENABLED === 'true',
-  // The service account the MCP comment tools speak as, so that replies and
-  // resolutions made by an agent are attributable in the review panel.
-  review: {
-    agentUser: {
-      email: process.env.REVIEW_AGENT_USER_EMAIL || 'agent@overleaf.local',
-      firstName: 'Agent',
-      lastName: process.env.REVIEW_AGENT_USER_NAME || 'MCP',
-    },
-  },
+  // Interleaf: Community Edition overrides for web's settings.interleaf.js,
+  // which reads everything else from the environment.
   // Existing projects keep their current ranges support setting.
   splitTestOverrides:
     process.env.REVIEW_PANEL_ENABLED === 'true'
@@ -216,34 +205,12 @@ const settings = {
       : {},
   gitBridgePublicBaseUrl:
     process.env.GIT_BRIDGE_PUBLIC_BASE_URL || `${siteUrl}/git`,
-
-  // One-way backup of a project's git history to GitHub (this fork). The
-  // cipher password encrypts the stored GitHub and git-bridge tokens; without
-  // it the feature refuses to store a token at all. `reposDir` holds one bare
-  // mirror per linked project and belongs on the persistent data volume.
+  // One bare mirror per project linked to GitHub; it belongs on the
+  // persistent data volume.
   githubBackup: {
-    enabled: process.env.GITHUB_BACKUP_ENABLED === 'true',
-    intervalSeconds:
-      parseInt(process.env.GITHUB_BACKUP_INTERVAL_SECONDS, 10) || 600,
     reposDir:
       process.env.GITHUB_BACKUP_REPOS_DIR ||
       '/var/lib/overleaf/data/github-backup',
-    apiBaseUrl:
-      process.env.GITHUB_BACKUP_API_BASE_URL || 'https://api.github.com',
-    gitTimeoutMs:
-      parseInt(process.env.GITHUB_BACKUP_GIT_TIMEOUT_MS, 10) || 300000,
-    accessTokenEncryptor: {
-      cipherLabel: '2026.1-v3',
-      cipherPasswords: {
-        '2026.1-v3': process.env.GITHUB_BACKUP_CIPHER_PASSWORD,
-      },
-    },
-  },
-
-  livePreview: {
-    enabled: process.env.LIVE_PREVIEW_ENABLED === 'true',
-    ticketSecret: process.env.LIVE_PREVIEW_TICKET_SECRET,
-    serviceUrl: process.env.LIVE_PREVIEW_SERVICE_URL || 'http://127.0.0.1:3060',
   },
 
   restrictInvitesToExistingAccounts:
@@ -331,14 +298,6 @@ const settings = {
     project_history: {
       sendProjectStructureOps: true,
       url: 'http://127.0.0.1:3054',
-    },
-    gitBridge: {
-      url: `http://${process.env.GIT_BRIDGE_HOST || 'git-bridge'}:${
-        process.env.GIT_BRIDGE_PORT || '8000'
-      }`,
-      // How the git-bridge container reaches web, for the signed blob URLs
-      // handed out in snapshots. Defaults to siteUrl.
-      webPublicUrl: process.env.GIT_BRIDGE_WEB_PUBLIC_URL,
     },
     v1_history: {
       url: process.env.V1_HISTORY_URL || 'http://127.0.0.1:3100/api',

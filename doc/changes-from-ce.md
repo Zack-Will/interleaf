@@ -99,15 +99,16 @@ the OT pipeline. Module/service totals include their own tests and documentation
 ## Changes to upstream files
 
 Kept deliberately small. The only behavioural changes to core code are these.
+[upstream-sync.md](upstream-sync.md) lists every upstream file the fork still
+touches and how to handle each one when merging a new upstream release.
 
 | File                                                                              | Size   | Why                                                                                                    |
 | --------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------ |
 | `services/document-updater/app/js/DocumentManager.js`                             | +197   | Add a comment to a document's ranges, and apply a whole-document update as tracked changes             |
 | `services/document-updater/app/js/HttpController.js`                              | +103   | The routes for the above                                                                               |
 | `libraries/overleaf-editor-core/lib/origin/mcp_origin.js`                         | new    | `Origin.toRaw()` only kept the kind, which dropped the agent name, its message and the suggestion flag |
-| `services/web/config/settings.defaults.js`                                        | +99/-6 | Settings for the new modules, their module import order and their frontend slots                       |
-| `server-ce/config/settings.js`                                                    | +61/-1 | The same settings for the production image                                                             |
-| `services/web/app/src/Features/Project/ProjectOptionsHandler.mjs`                 | +24    | Set a project's track-changes state, which the review panel needs                                      |
+| `services/web/config/settings.defaults.js`                                        | +4     | One call into `settings.interleaf.js`, which holds the module settings, import order and slots         |
+| `server-ce/config/settings.js`                                                    | +20/-1 | The three values the production image overrides, and the invite-token fix                              |
 | `server-ce/nginx/overleaf.conf`                                                   | +42    | Proxy `/git/` and preview routes; preserve the public WebSocket Host port                              |
 | `server-ce/Dockerfile`                                                            | +57    | Optional TeX Live scheme and checksum-pinned rtex installation                                         |
 | History panel: `origin.tsx`, `history-version.tsx`, `history-version-message.tsx` | +51    | Render the agent's name and the message it sent under the author line                                  |
@@ -118,6 +119,9 @@ Kept deliberately small. The only behavioural changes to core code are these.
 The table below measures only live-preview work against the commit immediately
 before P1 (`ce6c93d82b^`), including P1-P5. This avoids counting unrelated earlier
 fork changes in the same files. New module/service/library files are listed above.
+Since then the module settings moved to `settings.interleaf.js`, and the editor
+feature flag is rendered by the module through the `editor:meta` view include,
+so `ProjectController.mjs`, `_meta.pug` and `meta.ts` are no longer touched.
 P5 changes one upstream nginx directive to preserve the public Host port for
 WebSocket Origin checks; the fork's development gateway receives the same fix.
 
@@ -137,9 +141,6 @@ WebSocket Origin checks; the fork's development gateway receives the same fix.
 | `services/web/Dockerfile`                                                           | +3/-0               | Copy protocol workspace for development builds           |
 | `services/web/package.json`                                                         | +1/-0               | Shared protocol dependency                               |
 | `services/web/config/settings.defaults.js`                                          | +36/-4              | Module order, settings and frontend slots                |
-| `services/web/app/src/Features/Project/ProjectController.mjs`                       | +1/-0               | Editor feature flag                                      |
-| `services/web/app/views/project/editor/_meta.pug`                                   | +1/-0               | Render editor feature flag                               |
-| `services/web/frontend/js/utils/meta.ts`                                            | +1/-0               | Typed feature flag                                       |
 | `services/web/frontend/js/features/ide-react/editor/share-js-doc.ts`                | +12/-2              | Configurable collaborative flush delay                   |
 | `services/web/frontend/js/shared/flush-delay.mjs`                                   | +17/-0              | Optional-module delay store                              |
 | `services/web/frontend/js/features/pdf-preview/components/pdf-compile-button.tsx`   | +12/-1              | Module dropdown slot                                     |

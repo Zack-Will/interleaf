@@ -59,7 +59,7 @@ describe('review controller', () => {
           .resolves({ overleaf: { history: { rangesSupportEnabled: true } } }),
       },
     }
-    ctx.projectOptions = {
+    ctx.trackChangesOptions = {
       promises: { setTrackChanges: sinon.stub().resolves() },
     }
     ctx.realtime = { emitToRoom: sinon.stub() }
@@ -84,7 +84,7 @@ describe('review controller', () => {
       DocumentUpdaterHandler: ctx.documentUpdater,
       DocstoreManager: ctx.docstore,
       ProjectGetter: ctx.projectGetter,
-      ProjectOptionsHandler: ctx.projectOptions,
+      TrackChangesOptions: ctx.trackChangesOptions,
       EditorRealTimeController: ctx.realtime,
       SessionManager: ctx.sessionManager,
       UserInfoManager: ctx.userInfoManager,

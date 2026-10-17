@@ -3,9 +3,9 @@ import ChatApiHandler from '../../../../app/src/Features/Chat/ChatApiHandler.mjs
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import DocstoreManager from '../../../../app/src/Features/Docstore/DocstoreManager.mjs'
 import EditorRealTimeController from '../../../../app/src/Features/Editor/EditorRealTimeController.mjs'
-import ProjectOptionsHandler from '../../../../app/src/Features/Project/ProjectOptionsHandler.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { createReviewService } from './ReviewService.mjs'
+import TrackChangesOptions from './TrackChangesOptions.mjs'
 
 function getUserId(req, sessionManager = SessionManager) {
   return sessionManager.getLoggedInUserId(req.session)
@@ -23,7 +23,8 @@ function createHandlers(services = {}) {
     services.DocumentUpdaterHandler || DocumentUpdaterHandler
   const docstore = services.DocstoreManager || DocstoreManager
   const realtime = services.EditorRealTimeController || EditorRealTimeController
-  const projectOptions = services.ProjectOptionsHandler || ProjectOptionsHandler
+  const trackChangesOptions =
+    services.TrackChangesOptions || TrackChangesOptions
   const sessionManager = services.SessionManager || SessionManager
   const reviewService = services.ReviewService || createReviewService(services)
 
@@ -171,7 +172,7 @@ function createHandlers(services = {}) {
 
   async function trackChanges(req, res) {
     const projectId = req.params.project_id
-    await projectOptions.promises.setTrackChanges(projectId, req.body)
+    await trackChangesOptions.promises.setTrackChanges(projectId, req.body)
     const state =
       typeof req.body.on === 'boolean'
         ? req.body.on

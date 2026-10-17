@@ -28,3 +28,23 @@
 .personal-access-token-scope {
   margin-right: var(--spacing-02);
 }
+
+// History panel: the agent origin and message shown on each version.
+.history-react {
+  // The origin follows the users list as a suffix on the same line
+  // ("You (via Claude Code)"), so the last name keeps a word space rather
+  // than the wider gap that separates one author from the next.
+  .history-version-metadata-users > li:last-child {
+    margin-right: var(--spacing-01);
+  }
+
+  // The message an agent sent with a write, on its own line under the author
+  // line. Messages are free text, so keep the entry one line tall and leave
+  // the whole message to the tooltip.
+  .history-version-message {
+    overflow: hidden;
+    color: var(--content-secondary-themed);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}

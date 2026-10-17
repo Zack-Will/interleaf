@@ -5,6 +5,15 @@ Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 
 ## Unreleased
 
+### Internal
+
+- Fewer edits to upstream files, to make upstream merges smaller: module
+  settings live in `services/web/config/settings.interleaf.js`, the GitHub
+  backup and live preview editor flags are rendered by their modules through
+  the `editor:meta` view include, the review panel's track-changes setter moved
+  into the `review` module, and the history panel styles moved into
+  `agent-sync.scss`. No behaviour change. See `doc/upstream-sync.md`.
+
 ### Fixed
 
 - Agent and git-bridge writes no longer open the "Document updated externally"
