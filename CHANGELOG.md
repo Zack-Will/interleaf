@@ -5,6 +5,19 @@ Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 
 ## Unreleased
 
+Based on Overleaf Community Edition 6.3.1 (public commit `e039ad26c5` plus the
+6.3.1 hotfix patches), up from a pre-6.2.1 `main` snapshot.
+
+### Changed
+
+- MCP and git-bridge writes send their origin in the shape history stores it
+  in; the 6.3 services validate origins strictly and rejected the extra
+  `revert` / `merge` fields. editor-core's origin schema knows the `mcp` kind.
+- document-updater: the tracked-change write moved from `POST .../doc/:doc_id`
+  with `track_changes` to `POST .../doc/:doc_id/suggest`, built on upstream's
+  own tracked `setDoc`. Adding a comment and rejecting changes keep their
+  routes, now served from `ReviewApiController`.
+
 ### Internal
 
 - Fewer edits to upstream files, to make upstream merges smaller: module

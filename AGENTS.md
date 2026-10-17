@@ -20,8 +20,9 @@ it in step when you change a tool.
 | `live-preview-protocol` | `libraries/live-preview-protocol/`                             | Shared browser/Node frame and display-list codecs, project-bound opening/access tickets. User guide: `doc/live-preview.md`; release evidence: `doc/design/live-preview-verification.md` |
 
 Everything new goes under these directories. Edits to upstream files must be minimal and justified
-in the commit message. Modules are registered in `moduleImportSequence` in
-`services/web/config/settings.defaults.js`.
+in the commit message, and listed in `doc/upstream-sync.md`. Modules, their
+frontend slots and settings are registered in
+`services/web/config/settings.interleaf.js`, not in `settings.defaults.js`.
 
 ## Conventions (non-negotiable)
 
@@ -30,8 +31,8 @@ in the commit message. Modules are registered in `moduleImportSequence` in
 - Format with Prettier and lint with ESLint before every commit. The source of truth is `services/web/.prettierrc`, with `semi: false`, `singleQuote: true`, `arrowParens: "avoid"`, and `trailingComma: "es5"`. From `services/web`:
 
   ```bash
-  npx prettier --write "modules/<name>/**/*.mjs"
-  npx eslint modules/<name>
+  corepack yarn run -T prettier --write "modules/<name>/**/*.mjs"
+  corepack yarn eslint modules/<name>
   ```
 
 - Async Express handlers are wrapped with `expressify` from `@overleaf/promise-utils`.
@@ -59,16 +60,17 @@ in the commit message. Modules are registered in `moduleImportSequence` in
 - MCP wiring smoke check (no database needed):
 
   ```bash
-  node modules/mcp/test/smoke/mcp-smoke.mjs
+  corepack yarn node modules/mcp/test/smoke/mcp-smoke.mjs
   ```
 
 - Report real command output. Never claim tests pass without pasting the summary line.
 
 ## Environment notes
 
-- Dependencies are installed at the repo root with `corepack yarn install` (yarn 4, node 22).
-  `yarn install` prunes lockfile entries that only upstream's private modules use; that noise in
-  `yarn.lock` is accepted.
+- Dependencies are installed at the repo root with `corepack yarn install` (yarn 4.18, Yarn PnP,
+  so there is no `node_modules`; run tools through `corepack yarn`, e.g. `corepack yarn eslint`).
+  The image runs node 24. `yarn install` prunes lockfile entries that only upstream's private
+  modules use; that noise in `yarn.lock` is accepted.
 - No Docker services run here by default; anything needing a live Overleaf is an integration
   test and must say so.
 

@@ -45,32 +45,43 @@ added with its reason.
 | `services/web/config/settings.defaults.js`                                                                                                  | One `require('./settings.interleaf').apply(...)` call at the end     |
 | `server-ce/config/settings.js`                                                                                                              | CE overrides: ranges split test, git URL from `siteUrl`, backup dir  |
 | `libraries/overleaf-editor-core/index.js`, `lib/origin/index.js`                                                                            | Register `McpOrigin` so the agent name and message survive `toRaw()` |
+| `libraries/overleaf-editor-core/lib/schemas.js`, `lib/types.ts`                                                                             | The `mcp` variant of the strict origin schema the 6.3 services check |
+| `services/document-updater/app.js`                                                                                                          | One `ReviewApiController.registerRoutes(app)` call                   |
+| `services/web/tsconfig.json`                                                                                                                | `paths` entry for `@overleaf/live-preview-protocol` (Yarn PnP)       |
 | `services/web/frontend/js/features/history/**` (4 files)                                                                                    | Show the agent origin and message in the history panel               |
 | `services/web/frontend/js/features/ide-react/context/editor-manager-context.tsx`                                                            | Treat agent writes like git-bridge writes (no "overwritten" warning) |
 | `services/web/frontend/js/features/ide-react/editor/share-js-doc.ts`                                                                        | Flush delay that live preview can shorten                            |
 | `services/web/frontend/js/features/pdf-preview/**` (4 files)                                                                                | `compileDropdownItems` slot and viewer access for the live overlay   |
 | `services/web/frontend/js/shared/context/{local,detach}-compile-context.tsx`                                                                | Live preview URL and detached-window hooks                           |
-| `services/web/types/settings-page.ts`, `frontend/stories/settings/helpers/linking.js`                                                       | Types and story fixture for the access-token widget                  |
+| `services/web/types/settings-page.ts`                                                                                                       | Types for the access-token widget                                    |
 | `services/web/frontend/stylesheets/modules/all.scss`                                                                                        | Import `agent-sync.scss`                                             |
 | `services/web/locales/en.json`, `frontend/extracted-translations.json`                                                                      | Module strings; upstream has no per-module locale files              |
 | `server-ce/Dockerfile`, `server-ce/services.js`, `server-ce/config/env.sh`, `server-ce/nginx/overleaf.conf`, `server-ce/logrotate/overleaf` | Image wiring for live preview, TeX Live extras, `/git/` proxy        |
 | `services/web/Dockerfile`, `services/web/Makefile`, `services/git-bridge/Dockerfile`                                                        | Copy the protocol library and licence files                          |
 | `package.json`, `services/web/package.json`, `yarn.lock`                                                                                    | New workspaces and dependencies                                      |
 
-### Patches to replace with upstream code
+### Upstream features the fork builds on
 
-| File                                                                                                                                 | Plan                                                                                                                                                                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `services/document-updater/app.js`, `app/js/HttpController.js`, `app/js/DocumentManager.js`, `app/js/Errors.js` and their unit tests | Upstream 6.3 added tracked-change `setDoc` (`trackChanges`, #35820) and comment endpoints (#35833, no create). Switch to those and keep only `addComment` and the returned change ids. |
-| `server-ce/config/settings.js` invite-token fix                                                                                      | Fixed upstream in 6.2.2; take upstream's version                                                                                                                                       |
+Upstream 6.3 added tracked-change `setDoc` (`trackChanges`, #35820) and
+comment routes without a create route (#35833), and removed the reject route
+(#35864) because the editor now rejects changes itself. document-updater's
+`ReviewApiManager` / `ReviewApiController` (new files) wrap upstream's `setDoc`
+to report the ids of the changes a suggestion made (`POST .../suggest`), and
+keep `POST .../comment` and `POST .../change/reject` for the agent, which has
+no editor to do it. Drop these when upstream offers equivalents.
 
 ### Files upstream no longer publishes
 
 Upstream commit `4622848a19` removed `develop/`, the per-service Dockerfiles
-and Makefiles, `server-ce/test/` and the storybook stories from the public
-repository. When a merge reports them as "deleted by them", keep ours: the
-fork now owns its development environment and these build files. After that
-merge they no longer conflict.
+and Makefiles, the web eslint and stylelint configs, `server-ce/test/` and the
+storybook stories from the public repository. The fork keeps the development
+environment, the Dockerfiles, the web Makefile and the lint configs (it owns
+them now) and dropped `server-ce/test/` and storybook with upstream. After the
+6.3 merge they no longer conflict.
+
+Upstream switched to Yarn PnP in the same period. `yarn install` writes
+`.pnp.cjs`, `.pnp.loader.mjs` and `.yarn/cache/`, which upstream does not
+track; keep them in `.git/info/exclude` rather than editing `.gitignore`.
 
 ## Merge procedure
 
@@ -79,8 +90,10 @@ merge they no longer conflict.
 3. Resolve conflicts with the tables above. For `yarn.lock`, take upstream's
    file and run `corepack yarn install` to re-add the fork's entries rather
    than resolving hunks by hand.
-4. Run the module unit tests, the document-updater unit tests and the frontend
-   type check one at a time, then exercise MCP reads and writes, branches,
+4. Run the module unit tests, the document-updater unit tests (with
+   `REQ_VALIDATION_MODE=enforce-log`, the mode the image runs in; several
+   upstream tests fail in the default `log` mode) and the frontend type check
+   one at a time, then exercise MCP reads and writes, branches,
    comments and suggestions, git clone/push and live preview on the develop
    stack.
 5. Apply the release's hotfix patches if upstream `main` does not have them yet.
