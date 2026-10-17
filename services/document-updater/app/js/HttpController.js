@@ -241,7 +241,9 @@ const setDocSchema = z.object({
   params: docParamsSchema,
   body: z.strictObject({
     lines: z.array(z.string()),
-    source: z.string(),
+    // Interleaf: web's UpdateMerger passes the origin object of MCP and
+    // git-bridge writes here, as updateProject already accepts.
+    source: editorCoreSchemas.rawOrigin.or(z.string()),
     user_id: zz.objectId().nullish(),
     undoing: z.boolean().optional(),
     trackChanges: z.boolean().optional(),
