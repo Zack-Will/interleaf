@@ -28,7 +28,9 @@ patches, see [upstream-sync.md](upstream-sync.md)).
 The image is built on `ghcr.io/<owner>/interleaf-base:<tag>`, which the
 **Build Interleaf base image** workflow produces from upstream's
 `server-ce/Dockerfile-base` plus the TeX Live collections
-(`gh workflow run build-base.yml --ref <branch> -f tag=6.3.1`). Upstream stopped
+(`gh workflow run build-base.yml --ref <branch> -f tag=6.3.1`, or
+`-f build_base=true` on the image workflow below, which also works from a
+branch before `build-base.yml` is on the default branch). Upstream stopped
 publishing its base image after 6.1.0, and 6.3 needs Node.js 24 and TeX Live
 2026, so the base is built here. It only needs rebuilding when upstream changes
 `Dockerfile-base` or TeX Live has a new release.

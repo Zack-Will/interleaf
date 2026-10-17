@@ -17,10 +17,15 @@ on:
         description: 'Image tag, must look like X.Y.Z for the Overleaf Toolkit'
         required: true
         default: '6.3.0'
-      base_image:
-        description: 'Base image to build on, from build-base.yml (TeX Live included)'
+      base_tag:
+        description: 'Tag of ghcr.io/<owner>/interleaf-base to build on (TeX Live included)'
         required: true
-        default: 'ghcr.io/zack-will/interleaf-base:6.3.1'
+        default: '6.3.1'
+      build_base:
+        description: 'Build that base image first (build-base.yml)'
+        type: boolean
+        required: false
+        default: false
       rtex_release:
         description: 'Pinned release of Zack-Will/realtime-tex'
         required: true
@@ -35,7 +40,17 @@ permissions:
   packages: write
 
 jobs:
+  base:
+    if: ${{ inputs.build_base }}
+    uses: ./.github/workflows/build-base.yml
+    with:
+      tag: ${{ inputs.base_tag }}
+    secrets: inherit
+
   build:
+    needs: base
+    # Runs after the base job, or without it when build_base is off.
+    if: ${{ !cancelled() && (needs.base.result == 'success' || needs.base.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -109,7 +124,7 @@ jobs:
           file: server-ce/Dockerfile
           push: true
           build-args: |
-            OVERLEAF_BASE_TAG=${{ inputs.base_image }}
+            OVERLEAF_BASE_TAG=ghcr.io/${{ env.OWNER }}/interleaf-base:${{ inputs.base_tag }}
             RTEX_RELEASE=${{ inputs.rtex_release }}
             RTEX_SHA256=${{ inputs.rtex_sha256 }}
           labels: |

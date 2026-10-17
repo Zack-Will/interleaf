@@ -29,6 +29,22 @@ on:
         description: 'TeX Live repository used for both stages'
         required: true
         default: 'https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet'
+  # build-image.yml runs this first when asked to (build_base), so the base can
+  # be built from a branch before this file reaches the default branch, where
+  # GitHub looks up workflows that are dispatched by hand.
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      texlive_scheme:
+        type: string
+        required: false
+        default: 'scheme-full'
+      texlive_mirror:
+        type: string
+        required: false
+        default: 'https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet'
 
 permissions:
   contents: read
