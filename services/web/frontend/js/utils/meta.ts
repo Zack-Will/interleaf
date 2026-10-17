@@ -139,6 +139,7 @@ export interface Meta {
   'ol-gitBridgeEnabled': boolean
   'ol-gitBridgePublicBaseUrl': string
   'ol-github': { enabled: boolean; error: boolean; expired?: boolean }
+  'ol-githubBackupEnabled': boolean
   'ol-groupAuditLogs': []
   'ol-groupDomains': []
   'ol-groupId': string
@@ -216,6 +217,7 @@ export interface Meta {
   'ol-legacyEditorThemes': { name: string; dark: boolean }[]
   'ol-libraryView': 'library' | 'trashed'
   'ol-licenseQuantity'?: number
+  'ol-livePreviewEnabled': boolean
   'ol-loadingText': string
   'ol-localIndividualPlans': LocalIndividualPlans
   'ol-managedGroupSubscriptions': ManagedGroupSubscription[]

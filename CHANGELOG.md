@@ -21,9 +21,8 @@ Based on Overleaf Community Edition 6.3.1 (public commit `e039ad26c5` plus the
 ### Internal
 
 - Fewer edits to upstream files, to make upstream merges smaller: module
-  settings live in `services/web/config/settings.interleaf.js`, the GitHub
-  backup and live preview editor flags are rendered by their modules through
-  the `editor:meta` view include, the review panel's track-changes setter moved
+  settings live in `services/web/config/settings.interleaf.js`, the review
+  panel's track-changes setter moved
   into the `review` module, and the history panel styles moved into
   `agent-sync.scss`. No behaviour change. See `doc/upstream-sync.md`.
 

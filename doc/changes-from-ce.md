@@ -119,9 +119,7 @@ touches and how to handle each one when merging a new upstream release.
 The table below measures only live-preview work against the commit immediately
 before P1 (`ce6c93d82b^`), including P1-P5. This avoids counting unrelated earlier
 fork changes in the same files. New module/service/library files are listed above.
-Since then the module settings moved to `settings.interleaf.js`, and the editor
-feature flag is rendered by the module through the `editor:meta` view include,
-so `ProjectController.mjs`, `_meta.pug` and `meta.ts` are no longer touched.
+Since then the module settings moved to `settings.interleaf.js`.
 P5 changes one upstream nginx directive to preserve the public Host port for
 WebSocket Origin checks; the fork's development gateway receives the same fix.
 

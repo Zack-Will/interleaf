@@ -46,13 +46,6 @@ const MODULE_IMPORTS = {
   ],
 }
 
-const VIEW_INCLUDES = {
-  'editor:meta': [
-    'github-backup/app/views/_editor_meta.pug',
-    'live-preview/app/views/_editor_meta.pug',
-  ],
-}
-
 function appendAll(target, key, values) {
   target[key] = [...(target[key] || []), ...values]
 }
@@ -64,9 +57,6 @@ function apply(settings) {
   ]
   for (const [slot, files] of Object.entries(MODULE_IMPORTS)) {
     appendAll(settings.overleafModuleImports, slot, files.map(moduleFile))
-  }
-  for (const [view, files] of Object.entries(VIEW_INCLUDES)) {
-    appendAll(settings.viewIncludes, view, files.map(moduleFile))
   }
 
   settings.apis.gitBridge = {

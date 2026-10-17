@@ -1166,6 +1166,8 @@ const _ProjectController = {
         imageNames,
         gitBridgePublicBaseUrl: Settings.gitBridgePublicBaseUrl,
         gitBridgeEnabled: Features.hasFeature('git-bridge'),
+        githubBackupEnabled: Boolean(Settings.githubBackup?.enabled),
+        livePreviewEnabled: Boolean(Settings.livePreview?.enabled),
         wsUrl,
         showSupport: Features.hasFeature('support'),
         showTemplatesServerPro,
