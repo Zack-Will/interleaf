@@ -7,7 +7,7 @@ import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import OLFormLabel from '@/shared/components/ol/ol-form-label'
-import OLNotification from '@/shared/components/ol/ol-notification'
+import Notification from '@/shared/components/notification'
 import {
   OLModal,
   OLModalBody,
@@ -83,22 +83,24 @@ function GitAndAgentsModal({
       </OLModalHeader>
       <OLModalBody>
         {write ? null : (
-          <OLNotification
-            type="warning"
-            content={
-              trackedWrite ? (
-                <Trans
-                  i18nKey="git_bridge_modal_review_access"
-                  components={{ 0: <strong /> }}
-                />
-              ) : (
-                <Trans
-                  i18nKey="git_bridge_modal_read_only"
-                  components={{ strong: <strong /> }}
-                />
-              )
-            }
-          />
+          <div className="notification-list">
+            <Notification
+              type="warning"
+              content={
+                trackedWrite ? (
+                  <Trans
+                    i18nKey="git_bridge_modal_review_access"
+                    components={{ 0: <strong /> }}
+                  />
+                ) : (
+                  <Trans
+                    i18nKey="git_bridge_modal_read_only"
+                    components={{ strong: <strong /> }}
+                  />
+                )
+              }
+            />
+          </div>
         )}
         <p>{t('git_bridge_modal_git_clone_your_project')}</p>
         <Snippet

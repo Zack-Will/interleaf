@@ -16,7 +16,7 @@ import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormText from '@/shared/components/ol/ol-form-text'
-import OLNotification from '@/shared/components/ol/ol-notification'
+import Notification from '@/shared/components/notification'
 import OLTag from '@/shared/components/ol/ol-tag'
 import {
   OLModal,
@@ -147,7 +147,9 @@ function GithubBackupModal({
         </OLModalHeader>
         <OLModalBody>
           {errorMessage ? (
-            <OLNotification type="error" content={errorMessage} />
+            <div className="notification-list">
+              <Notification type="error" content={errorMessage} />
+            </div>
           ) : null}
           {status == null ? (
             <p>{t('loading')}…</p>
@@ -160,10 +162,12 @@ function GithubBackupModal({
               onError={setErrorMessage}
             />
           ) : (
-            <OLNotification
-              type="info"
-              content={t('github_backup_owner_only')}
-            />
+            <div className="notification-list">
+              <Notification
+                type="info"
+                content={t('github_backup_owner_only')}
+              />
+            </div>
           )}
         </OLModalBody>
         <OLModalFooter>
@@ -268,10 +272,12 @@ function LinkedBackup({ status }: { status: BackupStatus }) {
         )}
       </p>
       {status.lastError ? (
-        <OLNotification
-          type={state === 'diverged' ? 'warning' : 'error'}
-          content={status.lastError.message}
-        />
+        <div className="notification-list">
+          <Notification
+            type={state === 'diverged' ? 'warning' : 'error'}
+            content={status.lastError.message}
+          />
+        </div>
       ) : null}
     </>
   )

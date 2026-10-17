@@ -22,6 +22,9 @@
       "@modules/*": ["./modules/*"],
       "@overleaf/o-error": ["../../libraries/o-error"],
       "@overleaf/ranges-tracker": ["../../libraries/ranges-tracker"],
+      "@overleaf/live-preview-protocol/*": [
+        "../../libraries/live-preview-protocol/*"
+      ],
       "@overleaf/validation-tools": ["../../libraries/validation-tools"],
       "overleaf-editor-core": ["../../libraries/overleaf-editor-core"],
       "overleaf-editor-core/*": ["../../libraries/overleaf-editor-core/*"],

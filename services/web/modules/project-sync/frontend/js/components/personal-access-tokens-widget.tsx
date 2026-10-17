@@ -15,7 +15,7 @@ import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormSelect from '@/shared/components/ol/ol-form-select'
-import OLNotification from '@/shared/components/ol/ol-notification'
+import Notification from '@/shared/components/notification'
 import OLTable from '@/shared/components/ol/ol-table'
 import OLTag from '@/shared/components/ol/ol-tag'
 import {
@@ -92,7 +92,9 @@ export default function PersonalAccessTokensWidget() {
         </div>
         <p className="small">{t('personal_access_tokens_description')}</p>
         {errorMessage ? (
-          <OLNotification type="error" content={errorMessage} />
+          <div className="notification-list">
+            <Notification type="error" content={errorMessage} />
+          </div>
         ) : null}
         {tokens.length === 0 ? (
           <p className="small">{t('no_personal_access_tokens')}</p>
@@ -310,7 +312,9 @@ function GenerateTokenModal({
         <form onSubmit={handleSubmit}>
           <OLModalBody>
             {errorMessage ? (
-              <OLNotification type="error" content={errorMessage} />
+              <div className="notification-list">
+                <Notification type="error" content={errorMessage} />
+              </div>
             ) : null}
             <OLFormGroup controlId="personal-access-token-label">
               <OLFormLabel>{t('token_label')}</OLFormLabel>
@@ -398,24 +402,26 @@ function GeneratedTokenDetails({
           }
         />
       </OLFormGroup>
-      <OLNotification
-        type="warning"
-        content={
-          <Trans
-            i18nKey="git_bridge_modal_see_once"
-            components={{
-              0: (
-                // eslint-disable-next-line jsx-a11y/anchor-has-content
-                <a
-                  href={AUTH_TOKEN_HELP_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                />
-              ),
-            }}
-          />
-        }
-      />
+      <div className="notification-list">
+        <Notification
+          type="warning"
+          content={
+            <Trans
+              i18nKey="git_bridge_modal_see_once"
+              components={{
+                0: (
+                  // eslint-disable-next-line jsx-a11y/anchor-has-content
+                  <a
+                    href={AUTH_TOKEN_HELP_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                ),
+              }}
+            />
+          }
+        />
+      </div>
       <Snippet
         label={t('use_this_token_with_git')}
         snippet={gitCloneSnippet(siteUrl)}

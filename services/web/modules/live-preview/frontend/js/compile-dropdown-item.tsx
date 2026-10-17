@@ -1,8 +1,8 @@
 import {
-  DropdownDivider,
-  DropdownHeader,
-  DropdownItem,
-} from '@/shared/components/dropdown/dropdown-menu'
+  OLDropdownDivider,
+  OLDropdownHeader,
+  OLDropdownItem,
+} from '@/shared/components/ol/ol-dropdown-menu'
 import { useLivePreviewContext } from './live-preview-provider'
 import { useTranslation } from 'react-i18next'
 
@@ -12,19 +12,19 @@ export default function LivePreviewCompileDropdownItem() {
   if (!live?.available) return null
   return (
     <>
-      <DropdownHeader>{t('live_preview_section')}</DropdownHeader>
+      <OLDropdownHeader>{t('live_preview_section')}</OLDropdownHeader>
       {[true, false].map(enabled => (
         <li role="none" key={String(enabled)}>
-          <DropdownItem
+          <OLDropdownItem
             as="button"
             trailingIcon={live.enabled === enabled ? 'check' : null}
             onClick={() => live.setEnabled(enabled)}
           >
             {t(enabled ? 'on' : 'off')}
-          </DropdownItem>
+          </OLDropdownItem>
         </li>
       ))}
-      <DropdownDivider />
+      <OLDropdownDivider />
     </>
   )
 }
