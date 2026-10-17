@@ -1,0 +1,121 @@
+# Builds the base image the Interleaf image is built on, and pushes it to the
+# GitHub Container Registry, and to Docker Hub when the DOCKERHUB_USERNAME and
+# DOCKERHUB_TOKEN secrets are set:
+#
+#   interleaf-base:<tag>-upstream  server-ce/Dockerfile-base as upstream ships it
+#                                  (OS packages, Node.js, TeX Live scheme-basic)
+#   interleaf-base:<tag>           the above plus the TeX Live collections from
+#                                  server-ce/Dockerfile-base-interleaf
+#
+# Upstream does not publish its base image for every release (Docker Hub stops
+# at sharelatex-base:6.1.0), so the fork builds it. Both stages run in one job
+# from one TeX Live mirror, so they install from the same TeX Live release.
+# Rebuild it when upstream changes Dockerfile-base or TeX Live has a new
+# release; application releases reuse it unchanged.
+name: Build Interleaf base image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Base image tag, e.g. the CE release it matches (6.3.1)'
+        required: true
+        default: '6.3.1'
+      texlive_scheme:
+        description: 'Extra TeX Live to install, e.g. scheme-full. Empty keeps scheme-basic'
+        required: false
+        default: 'scheme-full'
+      texlive_mirror:
+        description: 'TeX Live repository used for both stages'
+        required: true
+        default: 'https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_ENABLED: ${{ secrets.DOCKERHUB_TOKEN != '' && secrets.DOCKERHUB_USERNAME != '' }}
+    steps:
+      # TeX Live with scheme-full needs the space the preinstalled toolchains
+      # occupy.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      # Container repository names must be lowercase, and a GitHub account name
+      # need not be.
+      - name: Resolve the registry namespace
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Resolve image tags
+        id: tags
+        run: |
+          echo "upstream=ghcr.io/$OWNER/interleaf-base:${{ inputs.tag }}-upstream" >> "$GITHUB_OUTPUT"
+          {
+            echo 'base<<EOF'
+            echo "ghcr.io/$OWNER/interleaf-base:${{ inputs.tag }}"
+            if [ "$DOCKERHUB_ENABLED" = true ]; then
+              echo "docker.io/${DOCKERHUB_USERNAME,,}/interleaf-base:${{ inputs.tag }}"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v3
+        if: env.DOCKERHUB_ENABLED == 'true'
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # upstream's Makefile builds the base from the monorepo root with the
+      # server-ce ignore file in place.
+      - name: Stage the build context
+        run: cp server-ce/.dockerignore .dockerignore
+
+      - name: Build and push the upstream base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server-ce/Dockerfile-base
+          push: true
+          pull: true
+          build-args: |
+            TEXLIVE_MIRROR=${{ inputs.texlive_mirror }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: ${{ steps.tags.outputs.upstream }}
+          cache-from: type=gha,scope=base-upstream
+          cache-to: type=gha,mode=max,scope=base-upstream
+
+      - name: Build and push the Interleaf base
+        uses: docker/build-push-action@v6
+        with:
+          context: server-ce
+          file: server-ce/Dockerfile-base-interleaf
+          push: true
+          build-args: |
+            UPSTREAM_BASE=${{ steps.tags.outputs.upstream }}
+            TEXLIVE_SCHEME=${{ inputs.texlive_scheme }}
+            TEXLIVE_MIRROR=${{ inputs.texlive_mirror }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: ${{ steps.tags.outputs.base }}

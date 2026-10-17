@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------
+# Interleaf base image: upstream's base plus the TeX Live it ships
+# ---------------------------------------------------------------
+#
+# Built by .github/workflows/build-base.yml on top of an image built from the
+# unmodified server-ce/Dockerfile-base, in the same job and from the same TeX
+# Live mirror, so both layers come from one TeX Live release. The application
+# image (server-ce/Dockerfile) builds on the result, so an Interleaf release
+# only replaces the application layers and never the multi-gigabyte TeX Live.
+
+ARG UPSTREAM_BASE
+FROM $UPSTREAM_BASE
+
+# Extra TeX Live on top of upstream's scheme-basic. Empty installs nothing.
+# Upstream turned off doc and source files, so a full scheme stays around 5 GB.
+ARG TEXLIVE_SCHEME=scheme-full
+# Must serve the release the upstream base installed, or every package
+# checksum mismatches. The workflow passes the mirror it built that base from.
+ARG TEXLIVE_MIRROR=https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet
+
+# `fmtutil` runs with --strict in tlmgr's post actions, and one Polish format
+# (utf8mex) does not build here, which would abort an otherwise complete
+# install. Disable that format and finish the install.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      '[ -n "$TEXLIVE_SCHEME" ] || exit 0' \
+      'tlmgr option repository "$TEXLIVE_MIRROR" >/dev/null' \
+      'tlmgr install "$@" || { fmtutil-sys --disablefmt utf8mex || true; tlmgr install "$@"; }' \
+      'tlmgr path add >/dev/null' \
+      'rm -rf /usr/local/texlive/*/tlpkg/backups' \
+      > /usr/local/bin/tl-install \
+ && chmod +x /usr/local/bin/tl-install
+
+# Installed in groups rather than one `scheme-full` step, so that the result is
+# a handful of moderate layers instead of a single multi-gigabyte blob. A host
+# on a slow or lossy link retries one group at a time.
+RUN tl-install scheme-small
+RUN tl-install collection-latexrecommended collection-fontsrecommended
+RUN tl-install collection-latexextra
+RUN tl-install collection-fontsextra
+RUN tl-install collection-mathscience collection-bibtexextra collection-pictures
+RUN tl-install collection-langeuropean collection-langcjk collection-langother
+RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
+      tl-install "$TEXLIVE_SCHEME" \
+      &&  kpsewhich xkeyval.sty \
+      &&  kpsewhich acmart.cls \
+      &&  kpsewhich IEEEtran.cls ; \
+    fi

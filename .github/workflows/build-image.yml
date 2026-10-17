@@ -16,19 +16,11 @@ on:
       version:
         description: 'Image tag, must look like X.Y.Z for the Overleaf Toolkit'
         required: true
-        default: '6.2.0'
+        default: '6.3.0'
       base_image:
-        description: 'Published Overleaf base image to build on'
+        description: 'Base image to build on, from build-base.yml (TeX Live included)'
         required: true
-        default: 'sharelatex/sharelatex-base:6.1.0'
-      texlive_scheme:
-        description: 'Extra TeX Live to install, e.g. scheme-full. Empty keeps the base scheme-basic'
-        required: false
-        default: 'scheme-full'
-      texlive_mirror:
-        description: 'TeX Live repository, must serve the same release as the base image'
-        required: false
-        default: 'https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final'
+        default: 'ghcr.io/zack-will/interleaf-base:6.3.1'
       rtex_release:
         description: 'Pinned release of Zack-Will/realtime-tex'
         required: true
@@ -54,8 +46,8 @@ jobs:
           echo "${{ inputs.version }}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "version must be X.Y.Z"; exit 1; }
 
-      # The image carries TeX Live and a full node_modules tree; the hosted
-      # runner needs the space the preinstalled toolchains occupy.
+      # The base image carries TeX Live; the hosted runner needs the space the
+      # preinstalled toolchains occupy.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -118,8 +110,6 @@ jobs:
           push: true
           build-args: |
             OVERLEAF_BASE_TAG=${{ inputs.base_image }}
-            TEXLIVE_SCHEME=${{ inputs.texlive_scheme }}
-            TEXLIVE_MIRROR=${{ inputs.texlive_mirror }}
             RTEX_RELEASE=${{ inputs.rtex_release }}
             RTEX_SHA256=${{ inputs.rtex_sha256 }}
           labels: |

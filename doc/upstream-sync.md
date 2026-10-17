@@ -56,7 +56,7 @@ added with its reason.
 | `services/web/types/settings-page.ts`                                                                                                       | Types for the access-token widget                                    |
 | `services/web/frontend/stylesheets/modules/all.scss`                                                                                        | Import `agent-sync.scss`                                             |
 | `services/web/locales/en.json`, `frontend/extracted-translations.json`                                                                      | Module strings; upstream has no per-module locale files              |
-| `server-ce/Dockerfile`, `server-ce/services.js`, `server-ce/config/env.sh`, `server-ce/nginx/overleaf.conf`, `server-ce/logrotate/overleaf` | Image wiring for live preview, TeX Live extras, `/git/` proxy        |
+| `server-ce/Dockerfile`, `server-ce/services.js`, `server-ce/config/env.sh`, `server-ce/nginx/overleaf.conf`, `server-ce/logrotate/overleaf` | Image wiring for live preview (rtex), `/git/` proxy, licence files   |
 | `services/web/Dockerfile`, `services/web/Makefile`, `services/git-bridge/Dockerfile`                                                        | Copy the protocol library and licence files                          |
 | `package.json`, `services/web/package.json`, `yarn.lock`                                                                                    | New workspaces and dependencies                                      |
 

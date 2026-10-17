@@ -20,15 +20,22 @@ for what they do. Interleaf 0.2.1 uses image tag **6.2.6** for both images.
 | Image tag  | An Overleaf release               | Must still look like `X.Y.Z`: the toolkit validates it and derives the git-bridge tag from it |
 
 The tag is therefore a deployment number, not an upstream version. This fork is
-built from upstream `28ad3b0` (after the 6.1.2 hotfix, June 2026), and the
-git-bridge image mirrored beside it is the official `6.2.0`.
+based on Community Edition 6.3.1 (upstream `e039ad26c5` plus the 6.3.1 hotfix
+patches, see [upstream-sync.md](upstream-sync.md)).
 
 ## 1. Build the image
 
-In the fork, run the **Build CE image** workflow (Actions tab, or
-`gh workflow run build-image.yml --ref <branch> -f version=6.2.6`). It builds
-`server-ce/Dockerfile` on the published `sharelatex/sharelatex-base:6.1.0` and
-pushes two packages:
+The image is built on `ghcr.io/<owner>/interleaf-base:<tag>`, which the
+**Build Interleaf base image** workflow produces from upstream's
+`server-ce/Dockerfile-base` plus the TeX Live collections
+(`gh workflow run build-base.yml --ref <branch> -f tag=6.3.1`). Upstream stopped
+publishing its base image after 6.1.0, and 6.3 needs Node.js 24 and TeX Live
+2026, so the base is built here. It only needs rebuilding when upstream changes
+`Dockerfile-base` or TeX Live has a new release.
+
+Then run the **Build Interleaf images** workflow (Actions tab, or
+`gh workflow run build-image.yml --ref <branch> -f version=6.3.0`). It builds
+`server-ce/Dockerfile` on that base and pushes two packages:
 
 - `ghcr.io/<owner>/interleaf:<version>` — this fork
 - `ghcr.io/<owner>/git-bridge:<version>` — the MIT-licensed Java bridge, built
@@ -272,16 +279,16 @@ they fetch fresh opening tickets, reconnect and rebuild from current project tex
 
 ## TeX Live
 
-The published base image carries only `scheme-basic`, which is missing packages
-that most conference templates need, so the workflow's `texlive_scheme` input
-defaults to `scheme-full` and the install is the **first** layer of the image.
-Two things follow from that:
+Upstream's base carries only `scheme-basic`, which is missing packages that most
+conference templates need, so the base workflow's `texlive_scheme` input
+defaults to `scheme-full` and installs it into `interleaf-base`, from the same
+TeX Live mirror the upstream stage used. Two things follow from that:
 
 - The TeX environment is part of the image, not state to be preserved. Rolling
   back to an older tag gives you exactly the TeX Live that tag was built with.
-- Because the layer sits above the base image and below every source layer, a
-  rebuild that only changes application code reuses it, and the host pulling the
-  new tag downloads only the small layers.
+- Because TeX Live lives in the base image, an application release reuses those
+  layers unchanged, and the host pulling the new tag downloads only the small
+  application layers.
 
 Packages added by hand inside a running container are still lost on the next
 recreate, as they always were. For those, keep a site-local tree on the host and

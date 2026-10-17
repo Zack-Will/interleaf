@@ -6,46 +6,9 @@
 ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
-# Extra TeX Live on top of the base image's scheme-basic. Kept as the first
-# layer so that a source change never invalidates a multi-gigabyte download,
-# and empty by default so the stock build is unchanged. The base image turned
-# off doc and source files, so a full scheme stays around 5 GB.
-ARG TEXLIVE_SCHEME=
-# The rolling tlnet mirrors now serve TeX Live 2026 while the base image has
-# 2025 installed, and every package checksum then mismatches. Point at the
-# frozen 2025 tree instead, which also makes the layer reproducible.
-ARG TEXLIVE_MIRROR=https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/tlnet-final
-# `fmtutil` runs with --strict in tlmgr's post actions, and one Polish format
-# (utf8mex) does not build here, which would abort an otherwise complete
-# install. Disable that format and finish the install.
-RUN printf '%s\n' \
-      '#!/bin/sh' \
-      'set -e' \
-      '[ -n "$TEXLIVE_SCHEME" ] || exit 0' \
-      'tlmgr option repository "$TEXLIVE_MIRROR" >/dev/null' \
-      'tlmgr install "$@" || { fmtutil-sys --disablefmt utf8mex || true; tlmgr install "$@"; }' \
-      'tlmgr path add >/dev/null' \
-      'rm -rf /usr/local/texlive/*/tlpkg/backups' \
-      > /usr/local/bin/tl-install \
- && chmod +x /usr/local/bin/tl-install
-
-# Installed in groups rather than one `scheme-full` step, so that the result is
-# a handful of moderate layers instead of a single multi-gigabyte blob. A host
-# on a slow or lossy link retries one group at a time, and an image rebuild that
-# only changes application code re-downloads none of them.
-RUN tl-install scheme-small
-RUN tl-install collection-latexrecommended collection-fontsrecommended
-RUN tl-install collection-latexextra
-RUN tl-install collection-fontsextra
-RUN tl-install collection-mathscience collection-bibtexextra collection-pictures
-RUN tl-install collection-langeuropean collection-langcjk collection-langother
-RUN if [ -n "$TEXLIVE_SCHEME" ]; then \
-      tl-install "$TEXLIVE_SCHEME" \
-      &&  kpsewhich xkeyval.sty \
-      &&  kpsewhich acmart.cls \
-      &&  kpsewhich IEEEtran.cls ; \
-    fi
-
+# Interleaf: the base is ghcr.io/<owner>/interleaf-base, which adds the TeX
+# Live collections to upstream's base (server-ce/Dockerfile-base-interleaf).
+#
 # The fork publishes the engine and its matching support files together.
 # Keep them outside TEXMFLOCAL, which toolkit operators can mount over.
 ARG RTEX_RELEASE=interleaf-0.0.3-2
