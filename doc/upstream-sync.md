@@ -67,10 +67,13 @@ added with its reason.
 Upstream 6.3 added tracked-change `setDoc` (`trackChanges`, #35820) and
 comment routes without a create route (#35833), and removed the reject route
 (#35864) because the editor now rejects changes itself. document-updater's
-`ReviewApiManager` / `ReviewApiController` (new files) wrap upstream's `setDoc`
-to report the ids of the changes a suggestion made (`POST .../suggest`), and
-keep `POST .../comment` and `POST .../change/reject` for the agent, which has
-no editor to do it. Drop these when upstream offers equivalents.
+`ReviewApiManager` / `ReviewApiController` (new files) apply a suggestion as a
+tracked update the way upstream's `setDoc` does, but with one delete/insert
+pair per changed sentence (`SentenceDiff.js`) instead of `DiffCodec`'s
+character diff, and report the ids of the changes it made
+(`POST .../suggest`). They also keep `POST .../comment` and
+`POST .../change/reject` for the agent, which has no editor to do it. Drop
+these when upstream offers equivalents.
 
 ### Files upstream no longer publishes
 
