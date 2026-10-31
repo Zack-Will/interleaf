@@ -22,6 +22,7 @@ import {
   EditIcon,
 } from '@/features/review-panel/components/review-panel-action-icons'
 import { useDeepLinkContext } from '@/features/ide-react/context/deep-link-context'
+import { SuggestionDiff } from '@modules/review/frontend/js/components/suggestion-diff'
 
 export const ReviewPanelChange = memo<{
   change: Change<EditOperation>
@@ -176,22 +177,10 @@ export const ReviewPanelChange = memo<{
                 {aggregateChange ? <EditIcon /> : <AddIcon />}
 
                 {aggregateChange ? (
-                  <span>
-                    {translations.aggregate_changed}:{' '}
-                    <del className="review-panel-content-highlight">
-                      <ExpandableContent
-                        inline
-                        content={aggregate.op.d}
-                        checkNewLines={false}
-                      />
-                    </del>{' '}
-                    {translations.aggregate_to}{' '}
-                    <ExpandableContent
-                      inline
-                      content={change.op.i}
-                      checkNewLines={false}
-                    />
-                  </span>
+                  <SuggestionDiff
+                    deleted={aggregate.op.d}
+                    inserted={change.op.i}
+                  />
                 ) : (
                   <span>
                     {translations.tracked_change_added}:&nbsp;

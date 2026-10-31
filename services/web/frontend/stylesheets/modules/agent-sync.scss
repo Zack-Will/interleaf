@@ -48,3 +48,100 @@
     text-overflow: ellipsis;
   }
 }
+
+// Review module: suggestions shown like a git diff, in the review panel card
+// (SuggestionDiff) and in the editor tooltip over suggested text. The default
+// theme is dark; translucent backgrounds keep the text colour of either theme.
+:root {
+  --suggestion-diff-removed-bg: rgb(248 81 73 / 15%);
+  --suggestion-diff-removed-word-bg: rgb(248 81 73 / 40%);
+  --suggestion-diff-removed-sign: #f85149;
+  --suggestion-diff-added-bg: rgb(46 160 67 / 15%);
+  --suggestion-diff-added-word-bg: rgb(46 160 67 / 40%);
+  --suggestion-diff-added-sign: #3fb950;
+}
+
+@include theme('light') {
+  --suggestion-diff-removed-bg: #ffebe9;
+  --suggestion-diff-removed-word-bg: #ffcecb;
+  --suggestion-diff-removed-sign: #cf222e;
+  --suggestion-diff-added-bg: #e6ffec;
+  --suggestion-diff-added-word-bg: #abf2bc;
+  --suggestion-diff-added-sign: #1a7f37;
+}
+
+.suggestion-diff {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+
+  .btn-inline-link {
+    align-self: flex-start;
+  }
+}
+
+.suggestion-diff-block {
+  display: flex;
+  gap: var(--spacing-02);
+  padding: var(--spacing-01) var(--spacing-02);
+  border-radius: var(--border-radius-base);
+  color: var(--review-panel-color, inherit);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.suggestion-diff-sign {
+  flex-shrink: 0;
+  font-family: 'DM Mono', monospace;
+  font-weight: bold;
+  user-select: none;
+}
+
+.suggestion-diff-text {
+  min-width: 0;
+}
+
+.suggestion-diff-word {
+  border-radius: 2px;
+  text-decoration: none;
+}
+
+.suggestion-diff-removed {
+  background-color: var(--suggestion-diff-removed-bg);
+
+  .suggestion-diff-sign {
+    color: var(--suggestion-diff-removed-sign);
+  }
+
+  .suggestion-diff-word {
+    background-color: var(--suggestion-diff-removed-word-bg);
+  }
+}
+
+.suggestion-diff-added {
+  background-color: var(--suggestion-diff-added-bg);
+
+  .suggestion-diff-sign {
+    color: var(--suggestion-diff-added-sign);
+  }
+
+  .suggestion-diff-word {
+    background-color: var(--suggestion-diff-added-word-bg);
+  }
+}
+
+.suggestion-diff-tooltip {
+  max-width: 480px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--spacing-02);
+  font-size: var(--font-size-02);
+  line-height: var(--line-height-02);
+}
+
+.suggestion-diff-label {
+  color: var(--content-secondary-themed);
+  font-size: var(--font-size-01);
+}
