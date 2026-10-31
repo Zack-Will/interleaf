@@ -2,13 +2,13 @@
 // not expose over HTTP. Kept out of DocumentManager so that file stays as
 // upstream ships it; everything here is built on its public methods.
 
-const OError = require("@overleaf/o-error");
-const DocumentManager = require("./DocumentManager");
-const HistoryManager = require("./HistoryManager");
-const Errors = require("./Errors");
-const SentenceDiff = require("./SentenceDiff");
-const RangesTracker = require("@overleaf/ranges-tracker");
-const { extractOriginOrSource } = require("./Utils");
+const OError = require('@overleaf/o-error')
+const DocumentManager = require('./DocumentManager')
+const HistoryManager = require('./HistoryManager')
+const Errors = require('./Errors')
+const SentenceDiff = require('./SentenceDiff')
+const RangesTracker = require('@overleaf/ranges-tracker')
+const { extractOriginOrSource } = require('./Utils')
 
 /**
  * @import { Ranges, TrackedChange } from './types'
@@ -26,14 +26,14 @@ class CommentTextMismatchError extends OError {}
  * @return {string}
  */
 function getTrackedChangeText(change) {
-  const op = /** @type {any} */ (change.op || {});
-  if (typeof op.i === "string") {
-    return `i:${op.i}`;
+  const op = /** @type {any} */ (change.op || {})
+  if (typeof op.i === 'string') {
+    return `i:${op.i}`
   }
-  if (typeof op.d === "string") {
-    return `d:${op.d}`;
+  if (typeof op.d === 'string') {
+    return `d:${op.d}`
   }
-  return "";
+  return ''
 }
 
 /**
@@ -57,26 +57,26 @@ function getTrackedChangeText(change) {
  */
 function findTrackedChangeIds(rangesBefore, rangesAfter, userId) {
   const textBefore = new Map(
-    (rangesBefore?.changes || []).map((change) => [
+    (rangesBefore?.changes || []).map(change => [
       change.id,
       getTrackedChangeText(change),
-    ]),
-  );
-  const ids = [];
+    ])
+  )
+  const ids = []
   for (const change of rangesAfter?.changes || []) {
-    const before = textBefore.get(change.id);
+    const before = textBefore.get(change.id)
     if (before == null) {
-      ids.push(change.id);
-      continue;
+      ids.push(change.id)
+      continue
     }
-    if (String(change.metadata?.user_id ?? "") !== String(userId ?? "")) {
-      continue;
+    if (String(change.metadata?.user_id ?? '') !== String(userId ?? '')) {
+      continue
     }
     if (before !== getTrackedChangeText(change)) {
-      ids.push(change.id);
+      ids.push(change.id)
     }
   }
-  return ids;
+  return ids
 }
 
 /**
@@ -89,15 +89,15 @@ function findTrackedChangeIds(rangesBefore, rangesAfter, userId) {
  */
 async function flushOrEvict(projectId, docId, alreadyLoaded) {
   if (alreadyLoaded) {
-    await DocumentManager.promises.flushDocIfLoaded(projectId, docId);
-    return;
+    await DocumentManager.promises.flushDocIfLoaded(projectId, docId)
+    return
   }
   try {
-    await DocumentManager.promises.flushAndDeleteDoc(projectId, docId, {});
+    await DocumentManager.promises.flushAndDeleteDoc(projectId, docId, {})
   } finally {
     // There is no harm in flushing project history if the previous call
     // failed and sometimes it is required
-    HistoryManager.flushProjectChangesAsync(projectId);
+    HistoryManager.flushProjectChangesAsync(projectId)
   }
 }
 
@@ -106,16 +106,16 @@ async function flushOrEvict(projectId, docId, alreadyLoaded) {
  * @param {string} docId
  */
 async function getSharejsDoc(projectId, docId) {
-  const doc = await DocumentManager.promises.getDoc(projectId, docId);
+  const doc = await DocumentManager.promises.getDoc(projectId, docId)
   if (doc.lines == null || doc.version == null) {
-    throw new Errors.NotFoundError(`document not found: ${docId}`);
+    throw new Errors.NotFoundError(`document not found: ${docId}`)
   }
   // Tracked changes and comment ops are only implemented here for sharejs
   // documents; upstream's acceptChanges has the same restriction.
-  if (doc.type !== "sharejs-text-ot") {
-    throw new Errors.OTTypeMismatchError(doc.type, "sharejs-text-ot");
+  if (doc.type !== 'sharejs-text-ot') {
+    throw new Errors.OTTypeMismatchError(doc.type, 'sharejs-text-ot')
   }
-  return doc;
+  return doc
 }
 
 /**
@@ -129,7 +129,7 @@ async function getSharejsDoc(projectId, docId) {
  * @param {string} userId
  */
 function buildSuggestionUpdate(docId, op, version, originOrSource, userId) {
-  const { origin, source } = extractOriginOrSource(originOrSource);
+  const { origin, source } = extractOriginOrSource(originOrSource)
   /** @type {any} */
   const update = {
     doc: docId,
@@ -138,15 +138,15 @@ function buildSuggestionUpdate(docId, op, version, originOrSource, userId) {
     meta: {
       user_id: userId,
       tc: RangesTracker.generateIdSeed(),
-      type: "external",
+      type: 'external',
     },
-  };
-  if (origin) {
-    update.meta.origin = origin;
-  } else if (source) {
-    update.meta.source = source;
   }
-  return update;
+  if (origin) {
+    update.meta.origin = origin
+  } else if (source) {
+    update.meta.source = source
+  }
+  return update
 }
 
 const ReviewApiManager = {
@@ -169,42 +169,42 @@ const ReviewApiManager = {
    */
   async suggestDoc(projectId, docId, lines, source, userId) {
     // Circular dependency. Import at runtime.
-    const UpdateManager = require("./UpdateManager");
+    const UpdateManager = require('./UpdateManager')
 
     if (lines == null) {
-      throw new Error("No lines were provided to suggestDoc");
+      throw new Error('No lines were provided to suggestDoc')
     }
     const {
       lines: oldLines,
       version,
       ranges: rangesBefore,
       alreadyLoaded,
-    } = await getSharejsDoc(projectId, docId);
+    } = await getSharejsDoc(projectId, docId)
 
     const op = SentenceDiff.diffAsShareJsOp(
       /** @type {string[]} */ (oldLines),
-      lines,
-    );
+      lines
+    )
     if (op.length > 0) {
       await UpdateManager.promises.applyUpdate(
         projectId,
         docId,
-        buildSuggestionUpdate(docId, op, version, source, userId),
-      );
+        buildSuggestionUpdate(docId, op, version, source, userId)
+      )
     }
     const result = await DocumentManager.promises.flushDocIfLoaded(
       projectId,
-      docId,
-    );
+      docId
+    )
     const { ranges: rangesAfter } = await DocumentManager.promises.getDoc(
       projectId,
-      docId,
-    );
-    await flushOrEvict(projectId, docId, alreadyLoaded);
+      docId
+    )
+    await flushOrEvict(projectId, docId, alreadyLoaded)
     return {
       ...(result || {}),
       changeIds: findTrackedChangeIds(rangesBefore, rangesAfter, userId),
-    };
+    }
   },
 
   /**
@@ -221,24 +221,24 @@ const ReviewApiManager = {
    */
   async rejectChanges(projectId, docId, changeIds, userId) {
     // Circular dependency. Import at runtime.
-    const UpdateManager = require("./UpdateManager");
+    const UpdateManager = require('./UpdateManager')
 
-    const { version, ranges } = await getSharejsDoc(projectId, docId);
-    const changesToReject = (ranges.changes || []).filter((change) =>
-      changeIds.includes(change.id),
-    );
+    const { version, ranges } = await getSharejsDoc(projectId, docId)
+    const changesToReject = (ranges.changes || []).filter(change =>
+      changeIds.includes(change.id)
+    )
 
     // Reverse order by position, so undoing one change does not move the
     // others: see reject-changes.ts in web for the worked example.
-    changesToReject.sort((a, b) => b.op.p - a.op.p);
+    changesToReject.sort((a, b) => b.op.p - a.op.p)
 
-    const ops = [];
+    const ops = []
     for (const change of changesToReject) {
-      const op = /** @type {any} */ (change.op);
+      const op = /** @type {any} */ (change.op)
       if (op.i) {
-        ops.push({ p: op.p, d: op.i, u: true });
+        ops.push({ p: op.p, d: op.i, u: true })
       } else if (op.d) {
-        ops.push({ p: op.p, i: op.d, u: true });
+        ops.push({ p: op.p, i: op.d, u: true })
       }
     }
 
@@ -251,10 +251,10 @@ const ReviewApiManager = {
           user_id: userId,
           ts: new Date().toISOString(),
         },
-      });
+      })
     }
 
-    return { rejectedChangeIds: changesToReject.map((c) => c.id) };
+    return { rejectedChangeIds: changesToReject.map(c => c.id) }
   },
 
   /**
@@ -272,25 +272,25 @@ const ReviewApiManager = {
    */
   async addComment(projectId, docId, { threadId, position, text }, userId) {
     // Circular dependency. Import at runtime.
-    const UpdateManager = require("./UpdateManager");
+    const UpdateManager = require('./UpdateManager')
 
     const { lines, version, alreadyLoaded } = await getSharejsDoc(
       projectId,
-      docId,
-    );
+      docId
+    )
 
     // The comment op is rejected by the ranges tracker unless it quotes the
     // document verbatim, so check it here and tell the caller what is actually
     // there, allowing them to retry against the current content.
     const currentText = /** @type {string[]} */ (lines)
-      .join("\n")
-      .slice(position, position + text.length);
+      .join('\n')
+      .slice(position, position + text.length)
     if (currentText !== text) {
-      throw new CommentTextMismatchError("comment text mismatch", {
+      throw new CommentTextMismatchError('comment text mismatch', {
         docId,
         position,
         actualText: currentText,
-      });
+      })
     }
 
     await UpdateManager.promises.applyUpdate(projectId, docId, {
@@ -300,25 +300,25 @@ const ReviewApiManager = {
       meta: {
         user_id: userId,
         ts: Date.now(),
-        source: "review-api",
+        source: 'review-api',
       },
-    });
+    })
 
     // Read the comment back rather than echoing the request: the op may have
     // been transformed against updates that were pending when we took the lock.
     const { ranges, version: newVersion } =
-      await DocumentManager.promises.getDoc(projectId, docId);
+      await DocumentManager.promises.getDoc(projectId, docId)
     const comment = (ranges?.comments || []).find(
-      (comment) => (comment.op?.t || comment.id) === threadId,
-    );
+      comment => (comment.op?.t || comment.id) === threadId
+    )
     if (comment == null) {
-      throw new Errors.NotFoundError(`comment not found: ${threadId}`);
+      throw new Errors.NotFoundError(`comment not found: ${threadId}`)
     }
 
-    await flushOrEvict(projectId, docId, alreadyLoaded);
-    return { comment, version: newVersion };
+    await flushOrEvict(projectId, docId, alreadyLoaded)
+    return { comment, version: newVersion }
   },
-};
+}
 
 /**
  * @param {Function} method
@@ -330,14 +330,14 @@ function withLock(method) {
     /** @type {any[]} */ ...args
   ) => {
     // Circular dependency. Import at runtime.
-    const UpdateManager = require("./UpdateManager");
+    const UpdateManager = require('./UpdateManager')
     return await UpdateManager.promises.lockUpdatesAndDo(
       method,
       projectId,
       docId,
-      ...args,
-    );
-  };
+      ...args
+    )
+  }
 }
 
 module.exports = {
@@ -349,4 +349,4 @@ module.exports = {
     rejectChangesWithLock: withLock(ReviewApiManager.rejectChanges),
     addCommentWithLock: withLock(ReviewApiManager.addComment),
   },
-};
+}

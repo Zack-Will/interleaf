@@ -7,36 +7,36 @@
 // at the same position, which the review panel shows as a single "changed"
 // entry. Pure functions only; ReviewApiManager applies the ops.
 
-const DMP = require("diff-match-patch");
+const DMP = require('diff-match-patch')
 
-const dmp = new DMP();
+const dmp = new DMP()
 
 // Segments are aligned as single characters, so documents are small inputs
-dmp.Diff_Timeout = 0.5;
+dmp.Diff_Timeout = 0.5
 
-const DIFF_DELETE = -1;
-const DIFF_INSERT = 1;
-const DIFF_EQUAL = 0;
+const DIFF_DELETE = -1
+const DIFF_INSERT = 1
+const DIFF_EQUAL = 0
 
 // One character per distinct segment, kept below the surrogate range so every
 // segment is exactly one UTF-16 code unit
-const MAX_DISTINCT_SEGMENTS = 0xd000;
+const MAX_DISTINCT_SEGMENTS = 0xd000
 
-const SENTENCE_TERMINATORS = ".?!";
-const CJK_TERMINATORS = "。！？";
-const CLOSING_CHARACTERS = ")]}\"'’”」』）";
+const SENTENCE_TERMINATORS = '.?!'
+const CJK_TERMINATORS = '。！？'
+const CLOSING_CHARACTERS = ')]}"\'’”」』）'
 
 // A period after one of these words does not end the sentence. Matched
 // lower-cased against the text right before the period; the lookbehind is
 // longer than any of them, so the character before the word is in view.
 const ABBREVIATION =
-  /[\s([{~](?:e\.g|i\.e|et al|etc|figs?|eqs?|secs?|vs|cf|nos?)$/;
-const ABBREVIATION_LOOKBEHIND = 8;
+  /[\s([{~](?:e\.g|i\.e|et al|etc|figs?|eqs?|secs?|vs|cf|nos?)$/
+const ABBREVIATION_LOOKBEHIND = 8
 
 // Lines that are LaTeX structure rather than prose: environment boundaries,
 // sectioning commands and comments. Each one is a segment of its own.
 const STRUCTURE_LINE =
-  /^\s*(?:%|\\(?:begin|end)\s*\{|\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*[[{])/;
+  /^\s*(?:%|\\(?:begin|end)\s*\{|\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*[[{])/
 
 /**
  * @typedef {Object} Segment
@@ -48,7 +48,7 @@ const STRUCTURE_LINE =
  * @param {string} character
  */
 function isWhitespace(character) {
-  return /\s/.test(character);
+  return /\s/.test(character)
 }
 
 /**
@@ -56,11 +56,11 @@ function isWhitespace(character) {
  * @param {number} index
  */
 function isEscaped(text, index) {
-  let backslashes = 0;
-  for (let i = index - 1; i >= 0 && text[i] === "\\"; i--) {
-    backslashes++;
+  let backslashes = 0
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) {
+    backslashes++
   }
-  return backslashes % 2 === 1;
+  return backslashes % 2 === 1
 }
 
 /**
@@ -68,12 +68,12 @@ function isEscaped(text, index) {
  * @param {number} periodIndex
  */
 function followsAbbreviation(text, periodIndex) {
-  const start = Math.max(0, periodIndex - ABBREVIATION_LOOKBEHIND);
+  const start = Math.max(0, periodIndex - ABBREVIATION_LOOKBEHIND)
   // at the start of the text there is no character before the word
-  const boundary = start === 0 ? " " : "";
+  const boundary = start === 0 ? ' ' : ''
   return ABBREVIATION.test(
-    boundary + text.slice(start, periodIndex).toLowerCase(),
-  );
+    boundary + text.slice(start, periodIndex).toLowerCase()
+  )
 }
 
 /**
@@ -81,11 +81,11 @@ function followsAbbreviation(text, periodIndex) {
  * @param {number} index
  */
 function skipClosingCharacters(text, index) {
-  let end = index;
+  let end = index
   while (end < text.length && CLOSING_CHARACTERS.includes(text[end])) {
-    end++;
+    end++
   }
-  return end;
+  return end
 }
 
 /**
@@ -97,28 +97,28 @@ function skipClosingCharacters(text, index) {
  * @return {number}
  */
 function sentenceEndAt(text, index) {
-  const character = text[index];
+  const character = text[index]
   if (CJK_TERMINATORS.includes(character)) {
-    return skipClosingCharacters(text, index + 1);
+    return skipClosingCharacters(text, index + 1)
   }
   if (!SENTENCE_TERMINATORS.includes(character)) {
-    return -1;
+    return -1
   }
   if (isEscaped(text, index)) {
-    return -1;
+    return -1
   }
-  let end = index + 1;
+  let end = index + 1
   while (end < text.length && SENTENCE_TERMINATORS.includes(text[end])) {
-    end++;
+    end++
   }
-  end = skipClosingCharacters(text, end);
+  end = skipClosingCharacters(text, end)
   if (end < text.length && !isWhitespace(text[end])) {
-    return -1;
+    return -1
   }
-  if (character === "." && followsAbbreviation(text, index)) {
-    return -1;
+  if (character === '.' && followsAbbreviation(text, index)) {
+    return -1
   }
-  return end;
+  return end
 }
 
 /**
@@ -129,23 +129,23 @@ function sentenceEndAt(text, index) {
  * @return {string[]}
  */
 function splitProse(text) {
-  const pieces = [];
-  let start = 0;
-  let index = 0;
+  const pieces = []
+  let start = 0
+  let index = 0
   while (index < text.length) {
-    const end = sentenceEndAt(text, index);
+    const end = sentenceEndAt(text, index)
     if (end === -1) {
-      index++;
-      continue;
+      index++
+      continue
     }
-    pieces.push(text.slice(start, end));
-    start = end;
-    index = end;
+    pieces.push(text.slice(start, end))
+    start = end
+    index = end
   }
   if (start < text.length) {
-    pieces.push(text.slice(start));
+    pieces.push(text.slice(start))
   }
-  return pieces;
+  return pieces
 }
 
 /**
@@ -153,15 +153,15 @@ function splitProse(text) {
  * @param {string} text
  */
 function pushGap(segments, text) {
-  if (text === "") {
-    return;
+  if (text === '') {
+    return
   }
-  const last = segments[segments.length - 1];
+  const last = segments[segments.length - 1]
   if (last != null && !last.sentence) {
-    last.text += text;
-    return;
+    last.text += text
+    return
   }
-  segments.push({ text, sentence: false });
+  segments.push({ text, sentence: false })
 }
 
 /**
@@ -171,13 +171,13 @@ function pushGap(segments, text) {
  * @param {string} piece
  */
 function pushPiece(segments, piece) {
-  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(piece);
-  const [, leading, content, trailing] = /** @type {RegExpExecArray} */ (match);
-  pushGap(segments, leading);
-  if (content !== "") {
-    segments.push({ text: content, sentence: true });
+  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(piece)
+  const [, leading, content, trailing] = /** @type {RegExpExecArray} */ (match)
+  pushGap(segments, leading)
+  if (content !== '') {
+    segments.push({ text: content, sentence: true })
   }
-  pushGap(segments, trailing);
+  pushGap(segments, trailing)
 }
 
 /**
@@ -190,24 +190,24 @@ function pushPiece(segments, piece) {
  */
 function splitSegments(text) {
   /** @type {Segment[]} */
-  const segments = [];
-  let prose = "";
+  const segments = []
+  let prose = ''
   const flushProse = () => {
     for (const piece of splitProse(prose)) {
-      pushPiece(segments, piece);
+      pushPiece(segments, piece)
     }
-    prose = "";
-  };
-  for (const line of text.split(/(?<=\n)/)) {
-    if (line.trim() === "" || STRUCTURE_LINE.test(line)) {
-      flushProse();
-      pushPiece(segments, line);
-      continue;
-    }
-    prose += line;
+    prose = ''
   }
-  flushProse();
-  return segments;
+  for (const line of text.split(/(?<=\n)/)) {
+    if (line.trim() === '' || STRUCTURE_LINE.test(line)) {
+      flushProse()
+      pushPiece(segments, line)
+      continue
+    }
+    prose += line
+  }
+  flushProse()
+  return segments
 }
 
 /**
@@ -219,27 +219,27 @@ function splitSegments(text) {
  * @return {{oldChars: string, newChars: string, segmentArray: string[]} | null}
  */
 function segmentsToChars(oldSegments, newSegments) {
-  const segmentArray = [];
-  const segmentIndex = new Map();
+  const segmentArray = []
+  const segmentIndex = new Map()
   const encode = (/** @type {string[]} */ segments) => {
-    let chars = "";
+    let chars = ''
     for (const segment of segments) {
-      let index = segmentIndex.get(segment);
+      let index = segmentIndex.get(segment)
       if (index == null) {
-        index = segmentArray.length;
-        segmentArray.push(segment);
-        segmentIndex.set(segment, index);
+        index = segmentArray.length
+        segmentArray.push(segment)
+        segmentIndex.set(segment, index)
       }
-      chars += String.fromCharCode(index);
+      chars += String.fromCharCode(index)
     }
-    return chars;
-  };
-  const oldChars = encode(oldSegments);
-  const newChars = encode(newSegments);
-  if (segmentArray.length > MAX_DISTINCT_SEGMENTS) {
-    return null;
+    return chars
   }
-  return { oldChars, newChars, segmentArray };
+  const oldChars = encode(oldSegments)
+  const newChars = encode(newSegments)
+  if (segmentArray.length > MAX_DISTINCT_SEGMENTS) {
+    return null
+  }
+  return { oldChars, newChars, segmentArray }
 }
 
 /**
@@ -247,11 +247,11 @@ function segmentsToChars(oldSegments, newSegments) {
  * @param {string[]} segmentArray
  */
 function charsToText(chars, segmentArray) {
-  let text = "";
+  let text = ''
   for (const char of chars) {
-    text += segmentArray[char.charCodeAt(0)];
+    text += segmentArray[char.charCodeAt(0)]
   }
-  return text;
+  return text
 }
 
 /**
@@ -263,19 +263,19 @@ function charsToText(chars, segmentArray) {
  * @return {Array<[number, string]>}
  */
 function diffSegments(oldText, newText) {
-  const oldSegments = splitSegments(oldText).map((segment) => segment.text);
-  const newSegments = splitSegments(newText).map((segment) => segment.text);
-  const encoded = segmentsToChars(oldSegments, newSegments);
+  const oldSegments = splitSegments(oldText).map(segment => segment.text)
+  const newSegments = splitSegments(newText).map(segment => segment.text)
+  const encoded = segmentsToChars(oldSegments, newSegments)
   if (encoded == null) {
     // Too many distinct sentences to encode: replace the text as one hunk
     return [
       [DIFF_DELETE, oldText],
       [DIFF_INSERT, newText],
-    ];
+    ]
   }
-  const { oldChars, newChars, segmentArray } = encoded;
-  const diffs = dmp.diff_main(oldChars, newChars, false);
-  return diffs.map(([type, chars]) => [type, charsToText(chars, segmentArray)]);
+  const { oldChars, newChars, segmentArray } = encoded
+  const diffs = dmp.diff_main(oldChars, newChars, false)
+  return diffs.map(([type, chars]) => [type, charsToText(chars, segmentArray)])
 }
 
 /**
@@ -285,16 +285,16 @@ function diffSegments(oldText, newText) {
  * @param {string} b
  */
 function commonWhitespacePrefix(a, b) {
-  let length = 0;
+  let length = 0
   while (
     length < a.length &&
     length < b.length &&
     a[length] === b[length] &&
     isWhitespace(a[length])
   ) {
-    length++;
+    length++
   }
-  return length;
+  return length
 }
 
 /**
@@ -306,16 +306,16 @@ function commonWhitespacePrefix(a, b) {
  * @param {number} skip
  */
 function commonWhitespaceSuffix(a, b, skip) {
-  let length = 0;
+  let length = 0
   while (
     length < a.length - skip &&
     length < b.length - skip &&
     a[a.length - 1 - length] === b[b.length - 1 - length] &&
     isWhitespace(a[a.length - 1 - length])
   ) {
-    length++;
+    length++
   }
-  return length;
+  return length
 }
 
 /**
@@ -329,18 +329,18 @@ function commonWhitespaceSuffix(a, b, skip) {
  *   the new text
  */
 function hunkOps(position, deleted, inserted) {
-  const prefix = commonWhitespacePrefix(deleted, inserted);
-  const suffix = commonWhitespaceSuffix(deleted, inserted, prefix);
-  const oldText = deleted.slice(prefix, deleted.length - suffix);
-  const newText = inserted.slice(prefix, inserted.length - suffix);
-  const ops = [];
-  if (oldText !== "") {
-    ops.push({ d: oldText, p: position + prefix });
+  const prefix = commonWhitespacePrefix(deleted, inserted)
+  const suffix = commonWhitespaceSuffix(deleted, inserted, prefix)
+  const oldText = deleted.slice(prefix, deleted.length - suffix)
+  const newText = inserted.slice(prefix, inserted.length - suffix)
+  const ops = []
+  if (oldText !== '') {
+    ops.push({ d: oldText, p: position + prefix })
   }
-  if (newText !== "") {
-    ops.push({ i: newText, p: position + prefix });
+  if (newText !== '') {
+    ops.push({ i: newText, p: position + prefix })
   }
-  return { ops, length: inserted.length };
+  return { ops, length: inserted.length }
 }
 
 /**
@@ -353,42 +353,42 @@ function hunkOps(position, deleted, inserted) {
  * @return {any[]}
  */
 function diffAsShareJsOp(before, after) {
-  const oldText = before.join("\n");
-  const newText = after.join("\n");
+  const oldText = before.join('\n')
+  const newText = after.join('\n')
   if (oldText === newText) {
-    return [];
+    return []
   }
-  const ops = [];
-  let position = 0;
-  let deleted = "";
-  let inserted = "";
+  const ops = []
+  let position = 0
+  let deleted = ''
+  let inserted = ''
   const flushHunk = () => {
-    if (deleted === "" && inserted === "") {
-      return;
+    if (deleted === '' && inserted === '') {
+      return
     }
-    const hunk = hunkOps(position, deleted, inserted);
-    ops.push(...hunk.ops);
-    position += hunk.length;
-    deleted = "";
-    inserted = "";
-  };
+    const hunk = hunkOps(position, deleted, inserted)
+    ops.push(...hunk.ops)
+    position += hunk.length
+    deleted = ''
+    inserted = ''
+  }
   for (const [type, text] of diffSegments(oldText, newText)) {
     if (type === DIFF_DELETE) {
-      deleted += text;
+      deleted += text
     } else if (type === DIFF_INSERT) {
-      inserted += text;
+      inserted += text
     } else if (type === DIFF_EQUAL) {
-      flushHunk();
-      position += text.length;
+      flushHunk()
+      position += text.length
     } else {
-      throw new Error("Unknown type");
+      throw new Error('Unknown type')
     }
   }
-  flushHunk();
-  return ops;
+  flushHunk()
+  return ops
 }
 
 module.exports = {
   splitSegments,
   diffAsShareJsOp,
-};
+}
