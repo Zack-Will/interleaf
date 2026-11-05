@@ -132,7 +132,7 @@ curl --fail-with-body -sS -T figure.pdf \
 
 The answer is the result: `path`, `bytes`, `sha256` to compare with the local
 file, and `project_version`. There is nothing to call afterwards. Each file is
-its own history entry, so a batch is not atomic. A ticket works for 15 minutes
+its own write, so a batch is not atomic. A ticket works for 15 minutes
 and for one successful upload, and only while the token that issued it stays
 valid and its owner can still write to the project. A failed upload can be sent
 again with the same ticket. Files are limited to `maxUploadSize` (50 MB), the
