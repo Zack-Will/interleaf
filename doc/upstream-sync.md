@@ -51,6 +51,7 @@ added with its reason.
 | `services/web/tsconfig.json`                                                                                                                | `paths` entry for `@overleaf/live-preview-protocol` (Yarn PnP)                                                                                    |
 | `services/web/frontend/js/features/history/**` (4 files)                                                                                    | Show the agent origin and message in the history panel                                                                                            |
 | `services/web/frontend/js/features/ide-react/context/editor-manager-context.tsx`                                                            | Treat agent writes like git-bridge writes (no "overwritten" warning)                                                                              |
+| `services/web/frontend/js/features/review-panel/components/review-panel-change.tsx`                                                         | Render an aggregated change with the review module's `SuggestionDiff` (old/new blocks with word highlights) instead of "Changed: x to y"          |
 | `services/web/frontend/js/features/ide-react/editor/share-js-doc.ts`                                                                        | Flush delay that live preview can shorten                                                                                                         |
 | `services/web/frontend/js/features/pdf-preview/**` (4 files)                                                                                | `compileDropdownItems` slot and viewer access for the live overlay                                                                                |
 | `services/web/frontend/js/shared/context/{local,detach}-compile-context.tsx`                                                                | Live preview URL and detached-window hooks                                                                                                        |
@@ -67,10 +68,13 @@ added with its reason.
 Upstream 6.3 added tracked-change `setDoc` (`trackChanges`, #35820) and
 comment routes without a create route (#35833), and removed the reject route
 (#35864) because the editor now rejects changes itself. document-updater's
-`ReviewApiManager` / `ReviewApiController` (new files) wrap upstream's `setDoc`
-to report the ids of the changes a suggestion made (`POST .../suggest`), and
-keep `POST .../comment` and `POST .../change/reject` for the agent, which has
-no editor to do it. Drop these when upstream offers equivalents.
+`ReviewApiManager` / `ReviewApiController` (new files) apply a suggestion as a
+tracked update the way upstream's `setDoc` does, but with one delete/insert
+pair per changed sentence (`SentenceDiff.js`) instead of `DiffCodec`'s
+character diff, and report the ids of the changes it made
+(`POST .../suggest`). They also keep `POST .../comment` and
+`POST .../change/reject` for the agent, which has no editor to do it. Drop
+these when upstream offers equivalents.
 
 ### Files upstream no longer publishes
 

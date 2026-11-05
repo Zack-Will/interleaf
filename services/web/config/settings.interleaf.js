@@ -33,6 +33,7 @@ const MODULE_IMPORTS = {
   compileDropdownItems: ['live-preview/frontend/js/compile-dropdown-item.tsx'],
   sourceEditorExtensions: [
     'live-preview/frontend/js/source-editor-extension.ts',
+    'review/frontend/js/suggestion-hover.ts',
   ],
   pdfLogEntriesComponents: ['live-preview/frontend/js/live-preview-logs.tsx'],
   pdfPreviewPromotions: ['live-preview/frontend/js/live-preview-overlay.tsx'],

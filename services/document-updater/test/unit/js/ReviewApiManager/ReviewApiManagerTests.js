@@ -5,6 +5,22 @@ const SandboxedModule = require('sandboxed-module')
 const Errors = require('../../../../app/js/Errors')
 const tk = require('timekeeper')
 
+/**
+ * Apply ShareJS text ops the way ShareJS does: each op against the text the
+ * previous ones left.
+ */
+function applyOps(text, ops) {
+  for (const op of ops) {
+    if (op.d != null) {
+      expect(text.slice(op.p, op.p + op.d.length)).to.equal(op.d)
+      text = text.slice(0, op.p) + text.slice(op.p + op.d.length)
+    } else {
+      text = text.slice(0, op.p) + op.i + text.slice(op.p)
+    }
+  }
+  return text
+}
+
 describe('ReviewApiManager', function () {
   beforeEach(function () {
     tk.freeze(new Date())
@@ -25,12 +41,14 @@ describe('ReviewApiManager', function () {
           .callsFake((method, ...args) => method(...args)),
       },
     }
+    this.RangesTracker = { generateIdSeed: sinon.stub() }
     this.ReviewApiManager = SandboxedModule.require(modulePath, {
       requires: {
         './DocumentManager': this.DocumentManager,
         './HistoryManager': this.HistoryManager,
         './UpdateManager': this.UpdateManager,
         './Errors': Errors,
+        '@overleaf/ranges-tracker': this.RangesTracker,
       },
     })
     this.project_id = 'project-id-123'
@@ -74,34 +92,100 @@ describe('ReviewApiManager', function () {
         op: { i: 'foo', p: 4 },
         metadata: { user_id: this.user_id },
       }
+      this.DocumentManager.promises.flushDocIfLoaded.resolves({ rev: '7' })
+      this.RangesTracker.generateIdSeed.returns('id-seed')
       this.source = { kind: 'mcp', agent: 'claude', suggestion: true }
+      this.newLines = ['one', 'two three', 'four']
       this.suggest = () =>
         this.ReviewApiManager.promises.suggestDocWithLock(
           this.project_id,
           this.doc_id,
-          ['one', 'foo two'],
+          this.newLines,
           this.source,
           this.user_id
         )
     })
 
-    it('should set the doc with tracked changes under the doc lock', async function () {
+    it('should apply the sentence ops as a tracked update under the doc lock', async function () {
       this.stubGetDoc()
       await this.suggest()
       this.UpdateManager.promises.lockUpdatesAndDo.should.have.been.calledOnce
-      this.DocumentManager.promises.setDoc.should.have.been.calledWith(
+      this.UpdateManager.promises.applyUpdate.should.have.been.calledWith(
         this.project_id,
         this.doc_id,
-        ['one', 'foo two'],
-        this.source,
-        this.user_id,
-        false,
-        true,
-        true
+        {
+          doc: this.doc_id,
+          op: [
+            { d: 'one\ntwo\nthree', p: 0 },
+            { i: 'one\ntwo three\nfour', p: 0 },
+          ],
+          v: this.version,
+          meta: {
+            user_id: this.user_id,
+            tc: 'id-seed',
+            type: 'external',
+            origin: this.source,
+          },
+        }
       )
+      this.DocumentManager.promises.setDoc.called.should.equal(false)
     })
 
-    it('should return the ids of the changes it created with the setDoc result', async function () {
+    it('should pass a source string as meta.source', async function () {
+      this.stubGetDoc()
+      this.source = 'review-api'
+      await this.suggest()
+      const update = this.UpdateManager.promises.applyUpdate.lastCall.args[2]
+      expect(update.meta.source).to.equal('review-api')
+      expect(update.meta).not.to.have.property('origin')
+    })
+
+    it('should turn the document into exactly the requested lines', async function () {
+      const before = [
+        'Memory tiering relocates pages. It sustains bandwidth.',
+        '',
+        '\\begin{itemize}',
+        '  \\item First. Second.',
+        '\\end{itemize}',
+      ]
+      this.newLines = [
+        'Memory tiering migrates hot pages. It sustains bandwidth.',
+        '',
+        '\\begin{itemize}',
+        '  \\item First.',
+        '\\end{itemize}',
+        'A new closing sentence.',
+      ]
+      this.stubGetDoc({ lines: before })
+      await this.suggest()
+      const update = this.UpdateManager.promises.applyUpdate.lastCall.args[2]
+      expect(applyOps(before.join('\n'), update.op)).to.equal(
+        this.newLines.join('\n')
+      )
+      expect(update.op).to.deep.equal([
+        { d: 'Memory tiering relocates pages.', p: 0 },
+        { i: 'Memory tiering migrates hot pages.', p: 0 },
+        { d: ' Second.', p: 89 },
+        { i: '\nA new closing sentence.', p: 103 },
+      ])
+    })
+
+    it('should not apply an update when nothing changed', async function () {
+      this.newLines = ['one', 'two', 'three']
+      this.stubGetDoc()
+      const result = await this.suggest()
+      this.UpdateManager.promises.applyUpdate.called.should.equal(false)
+      expect(result).to.deep.equal({ rev: '7', changeIds: [] })
+    })
+
+    it('should refuse missing lines', async function () {
+      this.newLines = null
+      this.stubGetDoc()
+      await expect(this.suggest()).to.be.rejectedWith('No lines')
+      this.UpdateManager.promises.applyUpdate.called.should.equal(false)
+    })
+
+    it('should return the ids of the changes it created with the flush result', async function () {
       this.stubGetDoc(
         { ranges: { changes: [this.changeBefore] } },
         { ranges: { changes: [this.changeBefore, this.createdChange] } }
@@ -182,7 +266,7 @@ describe('ReviewApiManager', function () {
       await expect(this.suggest()).to.be.rejectedWith(
         Errors.OTTypeMismatchError
       )
-      this.DocumentManager.promises.setDoc.called.should.equal(false)
+      this.UpdateManager.promises.applyUpdate.called.should.equal(false)
     })
 
     it('should refuse a missing document', async function () {

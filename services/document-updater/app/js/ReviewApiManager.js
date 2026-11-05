@@ -6,6 +6,9 @@ const OError = require('@overleaf/o-error')
 const DocumentManager = require('./DocumentManager')
 const HistoryManager = require('./HistoryManager')
 const Errors = require('./Errors')
+const SentenceDiff = require('./SentenceDiff')
+const RangesTracker = require('@overleaf/ranges-tracker')
+const { extractOriginOrSource } = require('./Utils')
 
 /**
  * @import { Ranges, TrackedChange } from './types'
@@ -115,15 +118,47 @@ async function getSharejsDoc(projectId, docId) {
   return doc
 }
 
+/**
+ * The tracked update for a suggestion, with the same metadata as the update
+ * DocumentManager.setDoc builds for an external tracked change.
+ *
+ * @param {string} docId
+ * @param {any[]} op
+ * @param {number} version
+ * @param {any} originOrSource
+ * @param {string} userId
+ */
+function buildSuggestionUpdate(docId, op, version, originOrSource, userId) {
+  const { origin, source } = extractOriginOrSource(originOrSource)
+  /** @type {any} */
+  const update = {
+    doc: docId,
+    op,
+    v: version,
+    meta: {
+      user_id: userId,
+      tc: RangesTracker.generateIdSeed(),
+      type: 'external',
+    },
+  }
+  if (origin) {
+    update.meta.origin = origin
+  } else if (source) {
+    update.meta.source = source
+  }
+  return update
+}
+
 const ReviewApiManager = {
   /**
-   * Replace a document's content with the diff recorded as tracked changes
-   * ("suggestions"), and report the ids of the changes that made.
+   * Replace a document's content with tracked changes ("suggestions"), one
+   * per changed sentence, and report the ids of the changes that made.
    *
-   * Upstream's setDoc does the tracking; this wraps it to read the ranges on
-   * either side. The first read loads the doc, so setDoc sees it as loaded and
-   * leaves it in redis for the second read; the doc is evicted afterwards if
-   * it was not loaded to begin with.
+   * Upstream's setDoc diffs character by character, which splits a rewritten
+   * sentence into fragments inside words; the ops come from SentenceDiff
+   * instead and are applied the way setDoc applies a tracked update. The
+   * first read loads the doc, so it stays in redis for the second read; the
+   * doc is evicted afterwards if it was not loaded to begin with.
    *
    * @param {string} projectId
    * @param {string} docId
@@ -133,19 +168,33 @@ const ReviewApiManager = {
    * @return {Promise<{changeIds: string[], rev?: string}>}
    */
   async suggestDoc(projectId, docId, lines, source, userId) {
-    const { ranges: rangesBefore, alreadyLoaded } = await getSharejsDoc(
+    // Circular dependency. Import at runtime.
+    const UpdateManager = require('./UpdateManager')
+
+    if (lines == null) {
+      throw new Error('No lines were provided to suggestDoc')
+    }
+    const {
+      lines: oldLines,
+      version,
+      ranges: rangesBefore,
+      alreadyLoaded,
+    } = await getSharejsDoc(projectId, docId)
+
+    const op = SentenceDiff.diffAsShareJsOp(
+      /** @type {string[]} */ (oldLines),
+      lines
+    )
+    if (op.length > 0) {
+      await UpdateManager.promises.applyUpdate(
+        projectId,
+        docId,
+        buildSuggestionUpdate(docId, op, version, source, userId)
+      )
+    }
+    const result = await DocumentManager.promises.flushDocIfLoaded(
       projectId,
       docId
-    )
-    const result = await DocumentManager.promises.setDoc(
-      projectId,
-      docId,
-      lines,
-      source,
-      userId,
-      false,
-      true,
-      true
     )
     const { ranges: rangesAfter } = await DocumentManager.promises.getDoc(
       projectId,

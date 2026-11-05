@@ -26,10 +26,10 @@ For the optional one-way backup of a project to a GitHub repository, see
 
 Two environment variables on the `web` service:
 
-| Variable | Effect |
-|---|---|
-| `GIT_BRIDGE_ENABLED=true` | Shows the token and integration UI, and turns on the git-bridge routes |
-| `REVIEW_PANEL_ENABLED=true` | Enables the review panel (comments and tracked changes) in CE |
+| Variable                    | Effect                                                                 |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `GIT_BRIDGE_ENABLED=true`   | Shows the token and integration UI, and turns on the git-bridge routes |
+| `REVIEW_PANEL_ENABLED=true` | Enables the review panel (comments and tracked changes) in CE          |
 
 The MCP endpoint itself is always mounted, but the settings page section that
 issues tokens is behind `GIT_BRIDGE_ENABLED`, so in practice you want both.
@@ -144,12 +144,12 @@ in order and all or nothing. Line numbers are 1-based, as `read_file` shows
 them; `occurrence` counts matches from 1. Deleting is replacing with
 `new_text: ""`.
 
-| `type` | Fields | Does |
-|---|---|---|
-| `replace_range` | `start_line`, `end_line?`, `new_text` | Replaces lines `start_line`..`end_line` (default: just `start_line`). `end_line = start_line - 1` inserts before `start_line`. |
-| `replace_anchor` | `anchor`, `new_text`, `occurrence?` | Replaces the exact text `anchor`. If it occurs more than once, `occurrence` picks one. |
-| `insert_at_anchor` | `anchor`, `side`, `new_text`, `occurrence?` | Inserts `new_text` right `before` or `after` the anchor; nothing is removed. |
-| `replace_section` | `title`, `level?`, `new_text` | Replaces a whole section, heading included, so `new_text` starts with the heading line. Without `level` any heading level matches; several headings with that title are an error listing each one's level and line. The section ends before the next heading of the same or a higher level, `\appendix`, `\bibliographystyle`, `\bibliography`, `\printbibliography`, `\begin{thebibliography}`, an appendix `\input`, or `\end{document}`, so the back matter is never replaced with it. |
+| `type`             | Fields                                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `replace_range`    | `start_line`, `end_line?`, `new_text`       | Replaces lines `start_line`..`end_line` (default: just `start_line`). `end_line = start_line - 1` inserts before `start_line`.                                                                                                                                                                                                                                                                                                                                                            |
+| `replace_anchor`   | `anchor`, `new_text`, `occurrence?`         | Replaces the exact text `anchor`. If it occurs more than once, `occurrence` picks one.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `insert_at_anchor` | `anchor`, `side`, `new_text`, `occurrence?` | Inserts `new_text` right `before` or `after` the anchor; nothing is removed.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `replace_section`  | `title`, `level?`, `new_text`               | Replaces a whole section, heading included, so `new_text` starts with the heading line. Without `level` any heading level matches; several headings with that title are an error listing each one's level and line. The section ends before the next heading of the same or a higher level, `\appendix`, `\bibliographystyle`, `\bibliography`, `\printbibliography`, `\begin{thebibliography}`, an appendix `\input`, or `\end{document}`, so the back matter is never replaced with it. |
 
 ```json
 {"type": "replace_range", "start_line": 12, "end_line": 14, "new_text": "new line 12\nnew line 13"}
@@ -211,10 +211,20 @@ are distinguishable from yours in the panel.
 
 **Suggestions.** `suggest_edits` takes the same edits as `edit_file` but records
 them as tracked changes, so nothing is applied until a human accepts them in the
-review panel. `list_suggestions` shows what is pending; `accept_suggestions` and
-`reject_suggestions` act on them as *you*, not as the agent, and only on ids the
-agent has actually seen. A suggestion is marked as one in the history panel too:
-its origin reads "(via Claude Code, suggestion)".
+review panel. Suggestions land one per changed sentence: each rewritten sentence
+(or run of adjacent rewritten sentences) becomes a single change, shown in the
+review panel like a git diff, the old text in a red block above the new text in
+a green one with the changed words highlighted, and unchanged sentences produce
+nothing. In the editor, hovering over suggested text shows the text it
+replaces. Blank lines and LaTeX structure lines (`\begin`, `\end`,
+`\section` and friends, `%` comments) are always boundaries, so a changed
+heading is its own suggestion. Agents should prefer `suggest_edits` over a
+comment whenever they propose replacement text, and keep comments for
+questions and rationale. `list_suggestions` shows what is pending;
+`accept_suggestions` and `reject_suggestions` act on them as _you_, not as the
+agent, and only on ids the agent has actually seen. A suggestion is marked as
+one in the history panel too: its origin reads "(via Claude Code,
+suggestion)".
 
 ## A review round
 

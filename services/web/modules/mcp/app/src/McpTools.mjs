@@ -2132,7 +2132,7 @@ export function registerTools(
 
   server.tool(
     'add_comment',
-    'Start a review comment thread on a passage of a document. The anchor is the exact text (optionally narrowed with occurrence, counted from 1, or start_line/end_line), a "first words...last words" passage, or a line range. Returns the thread_id and where the comment landed.',
+    'Start a review comment thread on a passage of a document, for a question or the rationale behind a change; to propose replacement text, use suggest_edits instead. The anchor is the exact text (optionally narrowed with occurrence, counted from 1, or start_line/end_line), a "first words...last words" passage, or a line range. Returns the thread_id and where the comment landed.',
     {
       project: z.string(),
       path: z.string(),
@@ -2205,7 +2205,7 @@ export function registerTools(
 
   server.tool(
     'suggest_edits',
-    `Offer structured edits to a document as tracked changes a human accepts or rejects in the review panel, instead of writing them straight into the document. Takes the same edits as edit_file and returns the ids of the suggestions it created.\n${EDITS_DESCRIPTION}\n${LABEL_GUIDANCE}`,
+    `Offer structured edits to a document as tracked changes a human accepts or rejects in the review panel, instead of writing them straight into the document. Takes the same edits as edit_file and returns the ids of the suggestions it created. Suggestions land one per changed sentence: each rewritten sentence (or run of adjacent rewritten sentences) becomes one change the reviewer sees as the old text above the new text, and unchanged sentences produce none. Prefer this over add_comment whenever you are proposing replacement text; keep comments for questions and rationale.\n${EDITS_DESCRIPTION}\n${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       path: z.string(),
