@@ -3,13 +3,26 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
-## Unreleased
+## 0.3.1 (2026-11-05)
+
+Images: `ghcr.io/<owner>/interleaf:6.3.2`, `ghcr.io/<owner>/git-bridge:6.3.2`,
+on the same `interleaf-base:6.3.1`; also published on Docker Hub. No database
+migrations; upgrading is a change of `config/version` after the usual backup.
+After upgrading, reconnect MCP clients that cache the tool list.
 
 ### Added
 
 - MCP `create_upload`: single-use `curl -T` commands that send figures and PDFs
   to a project through `PUT /mcp/uploads`, so their bytes stay out of the
-  conversation. No database migration; tickets live in Redis.
+  conversation. Tickets live in Redis.
+- The review panel shows a suggested change as a git-style diff card, and
+  hovering suggested text in the editor shows the text it replaces.
+
+### Changed
+
+- `suggest_edits` lands one tracked change per changed sentence, instead of
+  character-level fragments inside words. Image 6.3.1, deployed ahead of this
+  release, already carried this and the diff card.
 
 ## 0.3.0 (2026-10-17)
 
