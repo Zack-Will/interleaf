@@ -119,6 +119,26 @@ has moved on since the agent read it, the write is refused with
 the files that changed in between. `write_files` still returns the same number
 as `version` too; that name is deprecated and will go in the next release.
 
+**Uploading files.** A figure or a PDF should not pass through the conversation
+as base64: `write_files` can carry one in `contentBase64`, but the model has to
+write out every character. `create_upload` takes `project`, `message` and 1 to 20
+`paths` (plus `overwrite`, `agent`, `label`) and returns one `curl` command per
+path. The agent runs each in its shell after replacing `<local-file>`:
+
+```bash
+curl --fail-with-body -sS -T figure.pdf \
+  -H 'Authorization: Bearer olu_...' https://overleaf.example.com/mcp/uploads
+```
+
+The answer is the result: `path`, `bytes`, `sha256` to compare with the local
+file, and `project_version`. There is nothing to call afterwards. Each file is
+its own history entry, so a batch is not atomic. A ticket works for 15 minutes
+and for one successful upload, and only while the token that issued it stays
+valid and its owner can still write to the project. A failed upload can be sent
+again with the same ticket. Files are limited to `maxUploadSize` (50 MB), the
+same as uploading in the editor. Use `curl -T`: `--data-binary` labels the body
+as a form, and web's body parser refuses it before it reaches the upload.
+
 **Edit types.** `edit_file` and `suggest_edits` take the same `edits`, applied
 in order and all or nothing. Line numbers are 1-based, as `read_file` shows
 them; `occurrence` counts matches from 1. Deleting is replacing with
@@ -240,6 +260,9 @@ which is fine for a file only the agent touches.
 
 **`file_exists`** — `write_files` was about to replace an existing file. Pass
 `overwrite: true` (with `base_version`), or use `edit_file` for part of it.
+
+**`upload_ticket_invalid`** — the upload ticket is unknown, expired or already
+used, or the token behind it was revoked. Call `create_upload` again.
 
 **`anchor_not_found` / `anchor_ambiguous`** — the text an edit or a comment was
 anchored to is gone, or appears more than once. `anchor_ambiguous` lists the

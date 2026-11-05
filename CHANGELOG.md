@@ -3,6 +3,14 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
+## Unreleased
+
+### Added
+
+- MCP `create_upload`: single-use `curl -T` commands that send figures and PDFs
+  to a project through `PUT /mcp/uploads`, so their bytes stay out of the
+  conversation. No database migration; tickets live in Redis.
+
 ## 0.3.0 (2026-10-17)
 
 Images: `ghcr.io/<owner>/interleaf:6.3.0`, `ghcr.io/<owner>/git-bridge:6.3.0`,

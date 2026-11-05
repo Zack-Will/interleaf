@@ -1166,7 +1166,13 @@ const LABEL_GUIDANCE =
 // read it, and without `base_version` nothing else would notice.  The rule
 // lives here rather than in WriteService because revert, merge and the
 // git-bridge overwrite existing files on purpose.
-async function assertNoSilentOverwrite(services, id, files, overwrite) {
+export async function assertNoSilentOverwrite(
+  services,
+  id,
+  files,
+  overwrite,
+  next = 'to replace them pass overwrite: true, with base_version from read_file or get_project so a concurrent edit is refused; to change part of a text file use edit_file'
+) {
   if (overwrite) return
   const tree = await services.SnapshotService.getFileTree(id)
   const existing = new Set(tree.map(file => cleanPath(file.path)))
@@ -1178,10 +1184,33 @@ async function assertNoSilentOverwrite(services, id, files, overwrite) {
   const error = toolError(
     'file_exists',
     `${plural(clashes.length, 'file')} already exist${clashes.length === 1 ? 's' : ''}: ${clashes.join(', ')}; nothing was written`,
-    'to replace them pass overwrite: true, with base_version from read_file or get_project so a concurrent edit is refused; to change part of a text file use edit_file'
+    next
   )
   error.paths = clashes
   throw error
+}
+
+// `-T` matters: curl's --data-binary would label the body as a form, and web's
+// body parser would consume it before the route runs.
+function withUploadCommands(created) {
+  return {
+    ...created,
+    uploads: created.uploads.map(upload => ({
+      ...upload,
+      command: `curl --fail-with-body -sS -T <local-file> -H 'Authorization: Bearer ${upload.ticket}' ${created.upload_url}`,
+    })),
+  }
+}
+
+// The commands are the whole point of the answer, and a client may show only
+// the text.
+function uploadSummary(data) {
+  const lines = [
+    `Run one command per file, replacing <local-file>. Limit ${data.max_bytes} bytes per file; expires ${data.expires_at}.`,
+  ]
+  for (const upload of data.uploads)
+    lines.push(`${upload.path}: ${upload.command}`)
+  return lines.join('\n')
 }
 
 // The version a write that does not go through WriteService left the project
@@ -1672,8 +1701,44 @@ export function registerTools(
   )
 
   server.tool(
+    'create_upload',
+    `Upload binary files (figures, PDFs, data) to a project without passing their bytes through this conversation: returns one single-use curl command per path, valid for 15 minutes, to run in a shell after replacing <local-file>. Each command writes its file on its own, so there is nothing to call afterwards, and answers with path, bytes, sha256 and project_version; compare sha256 with the local file. A path that already exists is refused unless you pass overwrite:true. ${LABEL_GUIDANCE}`,
+    {
+      project: z.string(),
+      message: z.string(),
+      paths: z.array(z.string()).min(1).max(20),
+      overwrite: z.boolean().optional(),
+      agent: agentSchema,
+      label: z.boolean().optional(),
+    },
+    async ({ project, message, paths, overwrite = false, agent, label }) =>
+      runSummarised(uploadSummary, async () => {
+        const id = await projectIdOf(project)
+        await access(services, req, id, 'write')
+        await assertNoSilentOverwrite(
+          services,
+          id,
+          paths.map(path => ({ path })),
+          overwrite,
+          'to replace them pass overwrite: true'
+        )
+        const created = await services.UploadService.createTickets({
+          projectId: id,
+          userId,
+          tokenId: req.syncUser?.tokenId,
+          paths,
+          overwrite,
+          message,
+          agent: agent || clientName || 'mcp',
+          label,
+        })
+        return withUploadCommands(created)
+      })
+  )
+
+  server.tool(
     'write_files',
-    `Create, replace or delete whole project files in one atomic write (text in content, binary in contentBase64, delete:true to remove). A path that already exists is refused unless you pass overwrite:true; new files and deletes need nothing. Pass base_version too when overwriting, so a concurrent edit is refused instead of lost; to change part of a text file prefer edit_file. Returns project_version, the version the project is at after the write (the older name version is a deprecated alias, kept for one release), and the files applied, unchanged or failed. ${LABEL_GUIDANCE}`,
+    `Create, replace or delete whole project files in one atomic write (text in content, binary in contentBase64, delete:true to remove; for anything but a tiny binary use create_upload instead). A path that already exists is refused unless you pass overwrite:true; new files and deletes need nothing. Pass base_version too when overwriting, so a concurrent edit is refused instead of lost; to change part of a text file prefer edit_file. Returns project_version, the version the project is at after the write (the older name version is a deprecated alias, kept for one release), and the files applied, unchanged or failed. ${LABEL_GUIDANCE}`,
     {
       project: z.string(),
       message: z.string(),

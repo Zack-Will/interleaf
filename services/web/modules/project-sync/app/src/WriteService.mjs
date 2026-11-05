@@ -14,6 +14,11 @@ import { VersionConflictError } from './Errors.mjs'
 
 const clean = value => String(value || '').replace(/^\/+/, '')
 
+// Content that is not known to be text, and so cannot be compared with a doc.
+function hasRawContent(item) {
+  return item.contentBase64 != null || item.contentPath != null
+}
+
 function threadIdOf(comment) {
   return comment.op?.t || comment.id
 }
@@ -196,7 +201,7 @@ async function writeFiles(
     try {
       let docs
       const hasDocCandidates = files.some(
-        item => !item.delete && item.contentBase64 == null
+        item => !item.delete && !hasRawContent(item)
       )
       if (hasDocCandidates) {
         try {
@@ -218,9 +223,7 @@ async function writeFiles(
         // Only text documents carry comment ranges, and only they can be
         // compared against their current content.
         const docId =
-          !item.delete && item.contentBase64 == null
-            ? findDocId(docs, target)
-            : null
+          !item.delete && !hasRawContent(item) ? findDocId(docs, target) : null
         let commentsBefore = []
         let linesBefore = []
         try {
@@ -263,16 +266,20 @@ async function writeFiles(
             )
               throw new Error('delete failed: path still exists')
           } else {
-            const content =
-              item.contentBase64 != null
-                ? Buffer.from(item.contentBase64, 'base64')
-                : Buffer.from(String(item.content ?? ''), 'utf8')
-            const fsPath = path.join(
-              Settings.path.dumpFolder,
-              `${projectId}_${crypto.randomUUID()}_project-sync`
-            )
-            tempPaths.push(fsPath)
-            await fs.writeFile(fsPath, content)
+            let fsPath = item.contentPath
+            // A contentPath belongs to the caller, who removes it.
+            if (fsPath == null) {
+              const content =
+                item.contentBase64 != null
+                  ? Buffer.from(item.contentBase64, 'base64')
+                  : Buffer.from(String(item.content ?? ''), 'utf8')
+              fsPath = path.join(
+                Settings.path.dumpFolder,
+                `${projectId}_${crypto.randomUUID()}_project-sync`
+              )
+              tempPaths.push(fsPath)
+              await fs.writeFile(fsPath, content)
+            }
             await UpdateMerger.promises._mergeUpdate(
               userId,
               projectId,

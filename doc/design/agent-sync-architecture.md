@@ -318,6 +318,7 @@ Overleaf 的历史是单项目线性的，分支只能是**另一个项目**。�
 | `get_outline` | `project`, `path?` | LaTeX 章节结构，服务端解析 |
 | `search` | `project`, `query`, `regex?` | 命中列表，含行号与上下文 |
 | `write_files` | `project`, `base_version?`, `overwrite?`, `message`, `files[]`（`{path, content | contentBase64 | delete:true}`）, `label?` | 原子写入。已存在的路径须带 `overwrite: true`，否则 `file_exists`（新建与删除不需要）；规则在 MCP 层，`revert_to`、`merge_branch`、git-bridge 直接调 `WriteService` 不受影响。`label: true` 才打 label。`base_version` 不符 → `version_conflict`，附 `current_version` 与期间改过的 `changed_paths`。返回 `project_version`，`version` 为保留一个版本的弃用别名 |
+| `create_upload` | `project`, `message`, `paths[]`（1–20）, `overwrite?`, `agent?`, `label?` | 为每个路径签发一次性票据（Redis，只存哈希，15 分钟过期），返回 `curl -T` 命令。字节经 `PUT /mcp/uploads` 直传，不经过模型；该请求即完成写入，走 `WriteService`（`contentPath`）。上传时重新检查令牌、写权限与覆盖保护，失败可用同一票据重试 |
 | `edit_file` | `project`, `path`, `base_version`, `edits[]`, `message`, `label?` | `edits` 按 `type` 区分：`replace_range` / `replace_anchor`（文本锚点，`occurrence` 从 1 计数）/ `insert_at_anchor`（`side: before|after`）/ `replace_section`（按标题，`level` 可省，省略时匹配任意级别、多处匹配报错；`new_text` 须以标题行开头）。删除即 `new_text: ""`。先整体校验再执行，错误带 `edits[i]`。服务端算出新内容后走 `write_files` |
 | `list_history` | `project`, `limit?` | label 与 updates 统一形状：`from_version`、`to_version`、`created_at`、`authors`、`agent`、`message`，可直接交给 `diff` / `revert_to` |
 | `diff` | `project`, `from_version`, `to_version`, `path?` | 带 `path`：3 行上下文的 unified diff；不带：只列有变化的文件及 `operation` |

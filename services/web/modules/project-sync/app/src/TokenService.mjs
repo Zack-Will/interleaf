@@ -123,6 +123,15 @@ async function verifyToken(token, requiredScope) {
   }
 }
 
+// For work a token authorised earlier and that happens later: an upload ticket
+// must stop working when the token behind it is revoked.
+async function isTokenActive(tokenId) {
+  const record = await maybeExec(PersonalAccessToken.findOne({ _id: tokenId }))
+  if (!record) return false
+  if (!record.expiresAt) return true
+  return new Date(record.expiresAt).getTime() > Date.now()
+}
+
 async function listTokens(userId) {
   const query = PersonalAccessToken.find({ user_id: userId })
   const sorted =
@@ -156,6 +165,7 @@ async function revokeAllForUser(userId) {
 const methods = {
   createToken,
   verifyToken,
+  isTokenActive,
   listTokens,
   revokeToken,
   revokeAllForUser,

@@ -54,6 +54,16 @@ const services = {
       return { version: 4, project_version: 4, label: null }
     },
   },
+  UploadService: {
+    async createTickets({ paths }) {
+      return {
+        uploads: paths.map(path => ({ path, ticket: 'olu_smoke' })),
+        upload_url: 'https://example.test/mcp/uploads',
+        expires_at: new Date().toISOString(),
+        max_bytes: 100,
+      }
+    },
+  },
   WriteService: {
     async writeFiles() {
       return { version: 4, label: null }
@@ -224,6 +234,9 @@ const services = {
     },
   },
   SnapshotService: {
+    async getFileTree() {
+      return []
+    },
     async readDoc(_id, path, { startLine = 1, endLine } = {}) {
       const lines = [
         '\\section{Introduction}',
@@ -486,6 +499,16 @@ const backedUp = await client.callTool(
 )
 if (backedUp.structuredContent.lastSyncedVersion !== 4)
   throw new Error('backup_now did not report the version it pushed')
+
+const upload = await client.callTool(
+  {
+    name: 'create_upload',
+    arguments: { project: projectId, message: 'm', paths: ['figure.pdf'] },
+  },
+  CallToolResultSchema
+)
+if (!upload.structuredContent.uploads?.[0]?.command?.includes('olu_smoke'))
+  throw new Error('create_upload did not return a command')
 
 console.log(`tools/list: ${listed.tools.map(tool => tool.name).join(', ')}`)
 console.log(`edit_file edits schema: ${editTypes.join(', ')}`)

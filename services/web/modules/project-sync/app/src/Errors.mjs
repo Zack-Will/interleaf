@@ -96,6 +96,24 @@ class InvalidEditError extends OError {
     this.code = 'invalid_edit'
   }
 }
+class UploadTicketInvalidError extends OError {
+  constructor(message = 'invalid upload ticket', properties = {}) {
+    super(message, properties)
+    this.code = 'upload_ticket_invalid'
+  }
+}
+class UploadInProgressError extends OError {
+  constructor(message = 'upload ticket is in use', properties = {}) {
+    super(message, properties)
+    this.code = 'upload_in_progress'
+  }
+}
+class InvalidUploadPathError extends OError {
+  constructor(message = 'invalid project path', properties = {}) {
+    super(message, properties)
+    this.code = 'invalid_path'
+  }
+}
 export {
   InvalidTokenRequestError,
   TokenInvalidError,
@@ -112,6 +130,9 @@ export {
   NotFoundAtVersionError,
   InvalidEditError,
   BranchNotFoundError,
+  UploadTicketInvalidError,
+  UploadInProgressError,
+  InvalidUploadPathError,
 }
 export default {
   InvalidTokenRequestError,
@@ -129,4 +150,7 @@ export default {
   NotFoundAtVersionError,
   InvalidEditError,
   BranchNotFoundError,
+  UploadTicketInvalidError,
+  UploadInProgressError,
+  InvalidUploadPathError,
 }

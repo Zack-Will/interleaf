@@ -32,6 +32,14 @@ function setup(overrides = {}) {
     WriteService: {
       writeFiles: vi.fn(async () => ({ version: 5, applied: [], failed: [] })),
     },
+    UploadService: {
+      createTickets: vi.fn(async ({ paths }) => ({
+        uploads: paths.map(path => ({ path, ticket: `olu_${path}` })),
+        upload_url: 'https://example.test/mcp/uploads',
+        expires_at: '2026-11-05T10:15:00.000Z',
+        max_bytes: 100,
+      })),
+    },
     RevertService: {
       revertTo: vi.fn(async () => ({ version: 5, applied: [], failed: [] })),
     },
@@ -94,6 +102,7 @@ function everyToolArguments(project) {
     diff: { project, from_version: 1, to_version: 2 },
     create_label: { project, comment: 'done' },
     write_files: { project, message: 'm', files: [] },
+    create_upload: { project, message: 'm', paths: ['a.pdf'] },
     revert_to: { project, version: 1 },
     create_branch: { project, name: 'test' },
     list_branches: { project },
@@ -1874,5 +1883,89 @@ describe('structured errors from internal services', () => {
     })
     expect(result.structuredContent.status).toBe(503)
     expect(result.structuredContent.next_action).toContain('Overleaf service')
+  })
+  it('create_upload returns a runnable command per path, in the text too', async () => {
+    const { server, services } = setup()
+    const result = await server._registeredTools.create_upload.handler({
+      project: 'a'.repeat(24),
+      message: 'add figures',
+      paths: ['figures/a.pdf', 'figures/b.pdf'],
+      agent: 'claude',
+    })
+    expect(result.isError).not.toBe(true)
+    expect(services.ProjectRef.requireAccess).toHaveBeenCalledWith(
+      'u',
+      'a'.repeat(24),
+      'write'
+    )
+    expect(services.UploadService.createTickets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'a'.repeat(24),
+        userId: 'u',
+        paths: ['figures/a.pdf', 'figures/b.pdf'],
+        overwrite: false,
+        message: 'add figures',
+        agent: 'claude',
+      })
+    )
+    const [first] = result.structuredContent.uploads
+    expect(first.command).toBe(
+      "curl --fail-with-body -sS -T <local-file> -H 'Authorization: Bearer olu_figures/a.pdf' https://example.test/mcp/uploads"
+    )
+    expect(result.content[0].text).toContain(first.command)
+  })
+
+  it('create_upload refuses an existing path before any bytes are sent', async () => {
+    const { server, services } = setup()
+    const result = await server._registeredTools.create_upload.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      paths: ['main.tex'],
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent.code).toBe('file_exists')
+    expect(result.structuredContent.next_action).toBe(
+      'to replace them pass overwrite: true'
+    )
+    expect(services.UploadService.createTickets).not.toHaveBeenCalled()
+  })
+
+  it('create_upload checks write access', async () => {
+    const { server, services } = setup()
+    services.ProjectRef.requireAccess.mockRejectedValueOnce(
+      Object.assign(new Error('forbidden'), { code: 'forbidden' })
+    )
+    const result = await server._registeredTools.create_upload.handler({
+      project: 'a'.repeat(24),
+      message: 'm',
+      paths: ['a.pdf'],
+    })
+    expect(result.structuredContent.code).toBe('forbidden')
+    expect(services.UploadService.createTickets).not.toHaveBeenCalled()
+  })
+
+  it('create_upload takes between 1 and 20 paths', () => {
+    const { server } = setup()
+    const { inputSchema } = server._registeredTools.create_upload
+    const base = { project: 'p', message: 'm' }
+    const paths = count => Array.from({ length: count }, (_, i) => `${i}.pdf`)
+    expect(inputSchema.safeParse({ ...base, paths: [] }).success).toBe(false)
+    expect(inputSchema.safeParse({ ...base, paths: paths(20) }).success).toBe(
+      true
+    )
+    expect(inputSchema.safeParse({ ...base, paths: paths(21) }).success).toBe(
+      false
+    )
+  })
+
+  it('write_files cannot name a server file as content', () => {
+    const { server } = setup()
+    const { inputSchema } = server._registeredTools.write_files
+    const parsed = inputSchema.parse({
+      project: 'p',
+      message: 'm',
+      files: [{ path: 'stolen.txt', contentPath: '/etc/passwd' }],
+    })
+    expect(parsed.files[0]).toEqual({ path: 'stolen.txt' })
   })
 })

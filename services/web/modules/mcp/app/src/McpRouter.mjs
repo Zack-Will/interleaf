@@ -17,8 +17,19 @@ import ReviewService from '../../../review/app/src/ReviewService.mjs'
 import SuggestionService from '../../../review/app/src/SuggestionService.mjs'
 import AgentUser from '../../../review/app/src/AgentUser.mjs'
 import GithubBackupService from '../../../github-backup/app/src/GithubBackupService.mjs'
+import UploadService from '../../../project-sync/app/src/UploadService.mjs'
+import TokenService from '../../../project-sync/app/src/TokenService.mjs'
 import { requireAccessToken } from '../../../project-sync/app/src/TokenAuthMiddleware.mjs'
+import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
+import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
+import { expressify } from '@overleaf/promise-utils'
 import { createMcpServer } from './McpTools.mjs'
+import { createUploadHandler } from './UploadController.mjs'
+
+const uploadRateLimiter = new RateLimiter('mcp-upload', {
+  points: 60,
+  duration: 60,
+})
 
 export function createDefaultServices() {
   return {
@@ -35,6 +46,8 @@ export function createDefaultServices() {
     SuggestionService,
     AgentUser,
     GithubBackupService,
+    UploadService,
+    TokenService,
     fetchJson,
     settings: Settings,
   }
@@ -62,6 +75,11 @@ const McpModule = {
       publicApiRouter.post('/mcp', middleware, handle)
       publicApiRouter.get('/mcp', middleware, handle)
       publicApiRouter.delete('/mcp', middleware, handle)
+      publicApiRouter.put(
+        '/mcp/uploads',
+        RateLimiterMiddleware.rateLimit(uploadRateLimiter, { ipOnly: true }),
+        expressify(createUploadHandler(createDefaultServices()))
+      )
     },
   },
 }
