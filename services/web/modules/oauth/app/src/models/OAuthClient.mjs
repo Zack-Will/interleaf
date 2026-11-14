@@ -15,7 +15,7 @@ export const OAuthClientSchema = new Schema(
     createdAt: { type: Date, default: Date.now },
     lastUsedAt: { type: Date, default: null },
   },
-  { collection: 'oauthClients', minimize: false }
+  { collection: 'mcpOAuthClients', minimize: false }
 )
 
 export const OAuthClient = mongoose.model('OAuthClient', OAuthClientSchema)

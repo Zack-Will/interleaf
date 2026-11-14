@@ -18,7 +18,7 @@ export const OAuthGrantSchema = new Schema(
     createdAt: { type: Date, default: Date.now },
     refreshExpiresAt: { type: Date, required: true },
   },
-  { collection: 'oauthGrants', minimize: false }
+  { collection: 'mcpOAuthGrants', minimize: false }
 )
 
 export const OAuthGrant = mongoose.model('OAuthGrant', OAuthGrantSchema)

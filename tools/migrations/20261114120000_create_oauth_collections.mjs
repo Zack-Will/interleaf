@@ -1,10 +1,12 @@
 import Helpers from "./lib/helpers.mjs";
 import { getCollectionInternal } from "./lib/mongodb.mjs";
 
+// Upstream (Server Pro) already owns oauthApplications, oauthAccessTokens and
+// oauthAuthorizationCodes, so these collections carry an mcp prefix.
 const tags = ["server-ce", "server-pro", "saas"];
 
 const indexes = {
-  oauthClients: [
+  mcpOAuthClients: [
     {
       key: { clientId: 1 },
       name: "clientId_1",
@@ -15,7 +17,7 @@ const indexes = {
       name: "user_id_1",
     },
   ],
-  oauthAuthorizationCodes: [
+  mcpOAuthAuthorizationCodes: [
     {
       key: { hashedCode: 1 },
       name: "hashedCode_1",
@@ -32,7 +34,7 @@ const indexes = {
       expireAfterSeconds: 0,
     },
   ],
-  oauthGrants: [
+  mcpOAuthGrants: [
     {
       key: { hashedRefreshToken: 1 },
       name: "hashedRefreshToken_1",

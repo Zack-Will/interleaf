@@ -17,7 +17,7 @@ export const OAuthAuthorizationCodeSchema = new Schema(
     createdAt: { type: Date, default: Date.now },
     expiresAt: { type: Date, required: true },
   },
-  { collection: 'oauthAuthorizationCodes', minimize: false }
+  { collection: 'mcpOAuthAuthorizationCodes', minimize: false }
 )
 
 export const OAuthAuthorizationCode = mongoose.model(
