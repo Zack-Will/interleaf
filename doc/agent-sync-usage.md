@@ -93,22 +93,28 @@ URL and lists the projects of that name as `candidates`.
 ## Connecting with OAuth
 
 Some web MCP clients cannot send a token header and only sign in with OAuth.
-Claude custom connectors are one: under **Advanced settings** they take an
-**OAuth Client ID** and **OAuth Client Secret**. For these, create an OAuth app.
+Claude custom connectors and Gemini custom MCP connectors are two: they take
+an **OAuth Client ID** and **OAuth Client Secret**. For these, create an OAuth
+app.
 
 1. Go to **Account settings → OAuth apps** (next to Personal access tokens,
    behind the same `GIT_BRIDGE_ENABLED` switch) and choose **Create OAuth app**.
 2. Give it a name — the consent page and the token list show it — and keep or
-   edit the redirect URIs, one per line. They are matched exactly. The defaults
-   are the callback URLs of Claude custom connectors:
+   edit the redirect URIs, one per line. They are matched exactly. The
+   **Claude** preset (also the default) fills in the callback URLs of Claude
+   custom connectors and leaves **Rotate refresh tokens** on:
 
    ```text
    https://claude.ai/api/mcp/auth_callback
    https://claude.com/api/mcp/auth_callback
    ```
 
+   The **Gemini** preset fills in Google's six callback patterns and turns
+   rotation off; see [Gemini](#gemini) below.
+
    Redirect URIs must be `https`, except `http://localhost` and
-   `http://127.0.0.1` for local tools.
+   `http://127.0.0.1` for local tools. A URI may end in `*` only if it is one
+   of Google's patterns; any other `*` is refused.
 
 3. Copy the **MCP server URL** (`<siteUrl>/mcp`), the **client ID** (`olo_…`)
    and the **client secret** (`ols_…`). The secret is shown once; only its hash
@@ -128,11 +134,81 @@ authorize it; anyone else gets an error page. Every user who wants to connect
 creates their own app. There is no dynamic client registration.
 
 Lifetimes: access tokens last one hour and the client refreshes them on its
-own. Refresh tokens last 90 days from their last use and change on every
-refresh; if an old refresh token is ever presented again, the whole connection
-is revoked, on the assumption that it leaked.
+own. Refresh tokens last 90 days from their last use. With **Rotate refresh
+tokens** on (the default), they change on every refresh; if an old refresh
+token is ever presented again, the whole connection is revoked, on the
+assumption that it leaked. With it off, the refresh token stays the same, its
+90 days restart at each refresh, and the token response carries no new
+`refresh_token`. The setting is chosen when the app is created and shown in
+the app list; to change it, create a new app.
 
-For other OAuth clients, the details are standard: discovery at
+If a client is refused with "callback URL that is not registered", the web
+log has an info line `oauth authorize request with an unregistered
+redirect_uri` with the client ID and the URI the client sent.
+
+### Gemini
+
+Gemini's custom MCP connectors (in the Gemini web app) follow Google's guide
+for connected apps (<https://developers.google.com/connected-apps/mcp/oauth>).
+Create the OAuth app with the **Gemini** preset. It registers these patterns,
+since Google does not document the exact callback path:
+
+```text
+https://oauth-redirect.googleusercontent.com/r/*
+https://oauth-redirect.googleusercontent.com/a/*
+https://oauth-redirect-sandbox.googleusercontent.com/r/*
+https://oauth-redirect-sandbox.googleusercontent.com/a/*
+https://oauth-redirect-test.googleusercontent.com/r/*
+https://oauth-redirect-test.googleusercontent.com/a/*
+```
+
+A pattern matches an `https` URL on exactly that host and default port whose
+path continues after `/r/` or `/a/`; dot segments, backslashes, encoded
+separators, fragments and user info are refused. The authorization code stays
+bound to the concrete URL Gemini used.
+
+The preset turns **Rotate refresh tokens** off, because Google requires that
+the refresh token does not rotate on refresh; with rotation on, Gemini would
+be disconnected on its second refresh.
+
+Then add the connector in the Gemini web app with the MCP server URL, client
+ID and client secret. Google currently limits custom MCP connectors to
+personal Google accounts in the US, aged 18 or over, with **Keep Activity**
+on, and they are added from the web app (gemini.google.com), not the mobile
+apps.
+
+### Gemini CLI
+
+Gemini CLI reaches the MCP endpoint from your machine, so it uses a loopback
+callback. Create an OAuth app with the redirect URI
+`http://localhost:7777/oauth/callback` (rotation can stay on), then fix the
+same URI in `~/.gemini/settings.json`, since the CLI otherwise picks a random
+port:
+
+```json
+{
+  "mcpServers": {
+    "overleaf": {
+      "httpUrl": "https://overleaf.example.com/mcp",
+      "oauth": {
+        "enabled": true,
+        "clientId": "olo_…",
+        "clientSecret": "ols_…",
+        "redirectUri": "http://localhost:7777/oauth/callback",
+        "scopes": ["mcp"]
+      }
+    }
+  }
+}
+```
+
+Start `gemini` and run `/mcp auth overleaf`; it opens the consent page in the
+browser. Gemini CLI can also send a personal access token as a header
+(`"headers": { "Authorization": "Bearer olp_…" }`) instead of OAuth.
+
+### Other OAuth clients
+
+The details are standard: discovery at
 `/.well-known/oauth-protected-resource/mcp` (RFC 9728) and
 `/.well-known/oauth-authorization-server` (RFC 8414), the authorization code
 flow with PKCE (`S256` only) at `/oauth/authorize`, `/oauth/token` with

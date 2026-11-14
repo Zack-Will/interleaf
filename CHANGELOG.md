@@ -3,6 +3,29 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `oauth`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
+## 0.3.3 (2026-11-14)
+
+Images: `ghcr.io/<owner>/interleaf:6.3.4`, `ghcr.io/<owner>/git-bridge:6.3.4`,
+on the same `interleaf-base:6.3.1`; also published on Docker Hub. No database
+migrations; existing OAuth apps keep rotating their refresh tokens. Upgrading
+is a change of `config/version` after the usual backup.
+
+### Added
+
+- Gemini custom MCP connectors can connect through an OAuth app: the
+  **Gemini** preset registers Google's six callback patterns
+  (`https://oauth-redirect{,-sandbox,-test}.googleusercontent.com/{r,a}/*`),
+  the only wildcard redirect URIs accepted, and turns refresh token rotation
+  off as Google requires.
+- Per-app **Rotate refresh tokens** setting, chosen at creation. Off, a
+  refresh keeps the refresh token valid for another 90 days and the response
+  carries no new `refresh_token`.
+- The OAuth apps widget has **Claude** and **Gemini** presets and lists each
+  app's redirect URIs and rotation setting.
+- An unregistered `redirect_uri` at `/oauth/authorize` is logged at info level
+  with the client ID.
+- Usage guide: connecting Gemini (web) and Gemini CLI.
+
 ## 0.3.2 (2026-11-14)
 
 Images: `ghcr.io/<owner>/interleaf:6.3.3`, `ghcr.io/<owner>/git-bridge:6.3.3`,
