@@ -10,6 +10,8 @@ export type AccessToken = {
   createdAt: string
   expiresAt?: string | null
   lastUsedAt?: string | null
+  // 'oauth' marks the access token of an OAuth grant (module oauth).
+  source?: 'user' | 'oauth'
 }
 
 export type SAMLError = {

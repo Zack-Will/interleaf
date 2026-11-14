@@ -41,6 +41,7 @@ const MODULE_IMPORTS = {
   rootContextProviders: ['live-preview/frontend/js/live-preview-provider.tsx'],
   integrationLinkingWidgets: [
     'project-sync/frontend/js/components/personal-access-tokens-widget.tsx',
+    'oauth/frontend/js/components/oauth-clients-widget.tsx',
   ],
   integrationPanelComponents: [
     'git-bridge/frontend/js/components/git-and-agents-card.tsx',
