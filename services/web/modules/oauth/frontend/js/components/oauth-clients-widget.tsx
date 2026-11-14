@@ -11,6 +11,7 @@ import { formatDate, fromNowDate } from '@/utils/dates'
 import MaterialIcon from '@/shared/components/material-icon'
 import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 import OLButton from '@/shared/components/ol/ol-button'
+import OLFormCheckbox from '@/shared/components/ol/ol-form-checkbox'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import OLFormLabel from '@/shared/components/ol/ol-form-label'
@@ -25,16 +26,48 @@ import {
   OLModalTitle,
 } from '@/shared/components/ol/ol-modal'
 
-// Claude's custom connectors return to one of these after authorization.
-const DEFAULT_REDIRECT_URIS = [
-  'https://claude.ai/api/mcp/auth_callback',
-  'https://claude.com/api/mcp/auth_callback',
+type Preset = {
+  id: string
+  label: string
+  redirectUris: string[]
+  rotateRefreshTokens: boolean
+}
+
+const PRESETS: Preset[] = [
+  {
+    // Claude's custom connectors return to one of these after authorization.
+    id: 'claude',
+    label: 'Claude',
+    redirectUris: [
+      'https://claude.ai/api/mcp/auth_callback',
+      'https://claude.com/api/mcp/auth_callback',
+    ],
+    rotateRefreshTokens: true,
+  },
+  {
+    // Gemini returns to an undocumented path under these patterns and must
+    // keep its refresh token.
+    id: 'gemini',
+    label: 'Gemini',
+    redirectUris: [
+      'https://oauth-redirect.googleusercontent.com/r/*',
+      'https://oauth-redirect.googleusercontent.com/a/*',
+      'https://oauth-redirect-sandbox.googleusercontent.com/r/*',
+      'https://oauth-redirect-sandbox.googleusercontent.com/a/*',
+      'https://oauth-redirect-test.googleusercontent.com/r/*',
+      'https://oauth-redirect-test.googleusercontent.com/a/*',
+    ],
+    rotateRefreshTokens: false,
+  },
 ]
+
+const DEFAULT_PRESET = PRESETS[0]
 
 type OAuthClient = {
   clientId: string
   name: string
   redirectUris: string[]
+  rotateRefreshTokens: boolean
   createdAt: string
   lastUsedAt: string | null
 }
@@ -140,6 +173,7 @@ function ClientList({
         <tr>
           <th scope="col">{t('name')}</th>
           <th scope="col">{t('oauth_client_id')}</th>
+          <th scope="col">{t('oauth_refresh_tokens')}</th>
           <th scope="col">{t('created')}</th>
           <th scope="col">{t('last_used')}</th>
           <th scope="col">
@@ -150,9 +184,23 @@ function ClientList({
       <tbody>
         {clients.map(client => (
           <tr key={client.clientId}>
-            <td>{client.name}</td>
+            <td>
+              {client.name}
+              <ul className="list-unstyled small mb-0" translate="no">
+                {client.redirectUris.map(uri => (
+                  <li key={uri}>
+                    <code>{uri}</code>
+                  </li>
+                ))}
+              </ul>
+            </td>
             <td translate="no">
               <code>{client.clientId}</code>
+            </td>
+            <td>
+              {client.rotateRefreshTokens
+                ? t('oauth_refresh_tokens_rotated')
+                : t('oauth_refresh_tokens_kept')}
             </td>
             <td>{formatDate(client.createdAt, 'Do MMM YYYY')}</td>
             <td>{client.lastUsedAt ? fromNowDate(client.lastUsedAt) : '—'}</td>
@@ -187,7 +235,10 @@ function CreateClientModal({
 
   const [name, setName] = useState('')
   const [redirectUris, setRedirectUris] = useState(
-    DEFAULT_REDIRECT_URIS.join('\n')
+    DEFAULT_PRESET.redirectUris.join('\n')
+  )
+  const [rotateRefreshTokens, setRotateRefreshTokens] = useState(
+    DEFAULT_PRESET.rotateRefreshTokens
   )
   const [inflight, setInflight] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -195,7 +246,8 @@ function CreateClientModal({
 
   const reset = useCallback(() => {
     setName('')
-    setRedirectUris(DEFAULT_REDIRECT_URIS.join('\n'))
+    setRedirectUris(DEFAULT_PRESET.redirectUris.join('\n'))
+    setRotateRefreshTokens(DEFAULT_PRESET.rotateRefreshTokens)
     setInflight(false)
     setErrorMessage('')
     setCreated(null)
@@ -206,13 +258,23 @@ function CreateClientModal({
     reset()
   }, [onHide, reset])
 
+  const applyPreset = useCallback((preset: Preset) => {
+    setName(previous => previous || preset.label)
+    setRedirectUris(preset.redirectUris.join('\n'))
+    setRotateRefreshTokens(preset.rotateRefreshTokens)
+  }, [])
+
   const handleSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault()
       setInflight(true)
       setErrorMessage('')
       postJSON<CreatedOAuthClient>('/user/oauth-clients', {
-        body: { name, redirectUris: parseRedirectUris(redirectUris) },
+        body: {
+          name,
+          redirectUris: parseRedirectUris(redirectUris),
+          rotateRefreshTokens,
+        },
       })
         .then(response => {
           setCreated(response)
@@ -225,7 +287,7 @@ function CreateClientModal({
           setInflight(false)
         })
     },
-    [name, onCreated, redirectUris]
+    [name, onCreated, redirectUris, rotateRefreshTokens]
   )
 
   return (
@@ -252,6 +314,24 @@ function CreateClientModal({
                 <Notification type="error" content={errorMessage} />
               </div>
             ) : null}
+            <OLFormGroup>
+              <OLFormLabel id="oauth-app-presets">
+                {t('oauth_presets')}
+              </OLFormLabel>
+              <div role="group" aria-labelledby="oauth-app-presets">
+                {PRESETS.map(preset => (
+                  <OLButton
+                    key={preset.id}
+                    variant="secondary"
+                    size="sm"
+                    className="me-2"
+                    onClick={() => applyPreset(preset)}
+                  >
+                    {preset.label}
+                  </OLButton>
+                ))}
+              </div>
+            </OLFormGroup>
             <OLFormGroup controlId="oauth-app-name">
               <OLFormLabel>{t('name')}</OLFormLabel>
               <OLFormControl
@@ -274,6 +354,15 @@ function CreateClientModal({
                 onChange={event => setRedirectUris(event.target.value)}
               />
               <OLFormText>{t('oauth_redirect_uris_help')}</OLFormText>
+            </OLFormGroup>
+            <OLFormGroup>
+              <OLFormCheckbox
+                id="oauth-app-rotate-refresh-tokens"
+                checked={rotateRefreshTokens}
+                onChange={event => setRotateRefreshTokens(event.target.checked)}
+                label={t('oauth_rotate_refresh_tokens')}
+              />
+              <OLFormText>{t('oauth_rotate_refresh_tokens_help')}</OLFormText>
             </OLFormGroup>
           </OLModalBody>
           <OLModalFooter>

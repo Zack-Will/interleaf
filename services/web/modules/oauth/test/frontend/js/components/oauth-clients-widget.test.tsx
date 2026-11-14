@@ -13,6 +13,7 @@ const existingClient = {
   clientId: 'olo_0123456789abcdef01234567',
   name: 'Claude',
   redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
+  rotateRefreshTokens: true,
   createdAt: '2026-11-01T00:00:00.000Z',
   lastUsedAt: null,
 }
@@ -32,6 +33,8 @@ describe('<OAuthClientsWidget />', function () {
 
     await screen.findByText('olo_0123456789abcdef01234567')
     screen.getByText('Claude')
+    screen.getByText('https://claude.ai/api/mcp/auth_callback')
+    screen.getByText('Rotated')
     screen.getByRole('button', { name: 'Delete' })
   })
 
@@ -71,6 +74,7 @@ describe('<OAuthClientsWidget />', function () {
         'https://claude.ai/api/mcp/auth_callback',
         'https://claude.com/api/mcp/auth_callback',
       ],
+      rotateRefreshTokens: true,
     })
 
     const secret = (await screen.findByLabelText(
@@ -86,6 +90,64 @@ describe('<OAuthClientsWidget />', function () {
       () => expect(screen.queryByDisplayValue('ols_SECRET')).to.be.null
     )
     screen.getByText('olo_0123456789abcdef01234567')
+  })
+
+  it('creates a Gemini app from its preset without rotation', async function () {
+    const googlePatterns = [
+      'https://oauth-redirect.googleusercontent.com/r/*',
+      'https://oauth-redirect.googleusercontent.com/a/*',
+      'https://oauth-redirect-sandbox.googleusercontent.com/r/*',
+      'https://oauth-redirect-sandbox.googleusercontent.com/a/*',
+      'https://oauth-redirect-test.googleusercontent.com/r/*',
+      'https://oauth-redirect-test.googleusercontent.com/a/*',
+    ]
+    fetchMock.get('/user/oauth-clients', [])
+    const createMock = fetchMock.post('/user/oauth-clients', {
+      status: 200,
+      body: {
+        ...existingClient,
+        name: 'Gemini',
+        redirectUris: googlePatterns,
+        rotateRefreshTokens: false,
+        clientSecret: 'ols_SECRET',
+      },
+    })
+
+    render(<OAuthClientsWidget />)
+    await screen.findByText('You have no OAuth apps.')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'OAuth apps Create OAuth app' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    const rotate = within(dialog).getByLabelText(
+      'Rotate refresh tokens'
+    ) as HTMLInputElement
+    expect(rotate.checked).to.be.true
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gemini' }))
+    expect(rotate.checked).to.be.false
+    expect(
+      (within(dialog).getByLabelText('Name') as HTMLInputElement).value
+    ).to.equal('Gemini')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
+
+    await waitFor(
+      () =>
+        expect(createMock.callHistory.called(true, { method: 'post' })).to.be
+          .true
+    )
+    const [{ options }] = createMock.callHistory.calls(true, {
+      method: 'post',
+    })
+    expect(JSON.parse(String(options.body))).to.deep.equal({
+      name: 'Gemini',
+      redirectUris: googlePatterns,
+      rotateRefreshTokens: false,
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
+    await screen.findByText('Kept')
+    screen.getByText('https://oauth-redirect.googleusercontent.com/r/*')
   })
 
   it('deletes an app after confirmation', async function () {
