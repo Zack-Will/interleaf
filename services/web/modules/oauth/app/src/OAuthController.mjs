@@ -70,6 +70,7 @@ const createClientSchema = z.object({
   body: z.object({
     name: z.string().trim().min(1).max(100),
     redirectUris: z.array(z.string().max(2048)).min(1).max(10),
+    rotateRefreshTokens: z.boolean().optional(),
   }),
 })
 

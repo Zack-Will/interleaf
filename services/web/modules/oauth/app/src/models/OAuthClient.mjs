@@ -12,6 +12,9 @@ export const OAuthClientSchema = new Schema(
     user_id: { type: ObjectId, ref: 'User', required: true },
     name: { type: String, required: true },
     redirectUris: { type: [String], required: true },
+    // false keeps a refresh token valid across refreshes (Gemini requires
+    // it). Missing on older documents, which means true.
+    rotateRefreshTokens: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now },
     lastUsedAt: { type: Date, default: null },
   },

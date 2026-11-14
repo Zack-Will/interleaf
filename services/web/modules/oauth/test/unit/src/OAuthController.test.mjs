@@ -371,6 +371,28 @@ describe('oauth OAuthController', () => {
       })
     })
 
+    it('passes the refresh token rotation choice on', async ctx => {
+      ctx.OAuthService.createClient.resolves({
+        clientSecret: 'ols_secret',
+        client: { clientId: CLIENT_ID, name: 'Gemini' },
+      })
+      await ctx.Controller.createClient(
+        makeReq({
+          body: {
+            name: 'Gemini',
+            redirectUris: [CALLBACK],
+            rotateRefreshTokens: false,
+          },
+        }),
+        ctx.res
+      )
+      sinon.assert.calledWith(ctx.OAuthService.createClient, 'user-1', {
+        name: 'Gemini',
+        redirectUris: [CALLBACK],
+        rotateRefreshTokens: false,
+      })
+    })
+
     it('answers invalid redirect URIs with a 400 message', async ctx => {
       ctx.OAuthService.createClient.rejects(
         new ctx.Errors.InvalidRequestError('redirect URI must be https')

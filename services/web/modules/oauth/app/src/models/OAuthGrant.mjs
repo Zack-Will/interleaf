@@ -5,8 +5,9 @@ const { ObjectId } = Schema
 
 // One connection of a client to a user: the current refresh token and the
 // personal access token row (source 'oauth') that holds its access token.
-// Refresh tokens are rotated on every use; the recent rotated hashes are kept
-// so that replaying one can be detected and the grant revoked.
+// Refresh tokens are rotated on every use unless the client opted out; the
+// recent rotated hashes are kept so that replaying one can be detected and
+// the grant revoked.
 export const OAuthGrantSchema = new Schema(
   {
     hashedRefreshToken: { type: String, required: true, unique: true },

@@ -74,9 +74,15 @@ function serializeClient(record) {
     clientId: record.clientId,
     name: record.name,
     redirectUris: record.redirectUris || [],
+    rotateRefreshTokens: rotatesRefreshTokens(record),
     createdAt: record.createdAt,
     lastUsedAt: record.lastUsedAt ?? null,
   }
+}
+
+// Clients created before the option existed rotate their refresh tokens.
+function rotatesRefreshTokens(client) {
+  return client.rotateRefreshTokens !== false
 }
 
 function accessTokenLabel(client) {
@@ -133,7 +139,10 @@ function sameResource(value, siteUrl) {
   return value.replace(/\/+$/, '') === resourceUrl(siteUrl)
 }
 
-async function createClient(userId, { name, redirectUris }) {
+async function createClient(
+  userId,
+  { name, redirectUris, rotateRefreshTokens = true }
+) {
   const uris = [...new Set(redirectUris.map(uri => uri.trim()))].filter(Boolean)
   if (uris.length === 0) {
     throw new InvalidRequestError('at least one redirect URI is required')
@@ -156,6 +165,7 @@ async function createClient(userId, { name, redirectUris }) {
     user_id: userId,
     name: name.trim(),
     redirectUris: uris,
+    rotateRefreshTokens: rotateRefreshTokens !== false,
     createdAt: new Date(),
     lastUsedAt: null,
   })
@@ -314,14 +324,18 @@ async function createAuthorizationCode({
   return code
 }
 
+// Without a refresh token the client keeps the one it has (RFC 6749 6).
 function tokenResponse({ accessToken, refreshToken, scope }) {
-  return {
+  const response = {
     access_token: accessToken,
     token_type: 'Bearer',
     expires_in: ACCESS_TOKEN_LIFETIME_MS / SECOND,
-    refresh_token: refreshToken,
-    scope,
   }
+  if (refreshToken != null) {
+    response.refresh_token = refreshToken
+  }
+  response.scope = scope
+  return response
 }
 
 async function createGrant(client, { userId, scope }) {
@@ -390,22 +404,21 @@ async function revokeGrant(grant) {
   await TokenService.promises.revokeOAuthAccessTokenById(grant.tokenId)
 }
 
+function findLiveGrant(client, hashed) {
+  return {
+    hashedRefreshToken: hashed,
+    clientId: client.clientId,
+    refreshExpiresAt: { $gt: new Date() },
+  }
+}
+
 // Every refresh issues a new refresh token and invalidates the old one. A
 // rotated token that comes back means it leaked: the whole grant is revoked.
-async function refreshAccessToken(client, { refreshToken, scope }) {
-  if (typeof refreshToken !== 'string' || refreshToken === '') {
-    throw new InvalidRequestError('refresh_token is required')
-  }
-  const grantedScope = parseScope(scope)
-  const hashed = hashSecret(refreshToken)
+async function rotateRefreshToken(client, hashed) {
   const nextRefreshToken = randomSecret('olr_', 36)
   const grant = await maybeExec(
     OAuthGrant.findOneAndUpdate(
-      {
-        hashedRefreshToken: hashed,
-        clientId: client.clientId,
-        refreshExpiresAt: { $gt: new Date() },
-      },
+      findLiveGrant(client, hashed),
       {
         $set: {
           hashedRefreshToken: hashSecret(nextRefreshToken),
@@ -433,6 +446,35 @@ async function refreshAccessToken(client, { refreshToken, scope }) {
     }
     throw new InvalidGrantError('refresh token is invalid or expired')
   }
+  return { grant, refreshToken: nextRefreshToken }
+}
+
+// Some clients (Gemini) must keep their refresh token: it stays valid and its
+// expiry slides with each use.
+async function keepRefreshToken(client, hashed) {
+  const grant = await maybeExec(
+    OAuthGrant.findOneAndUpdate(
+      findLiveGrant(client, hashed),
+      { $set: { refreshExpiresAt: fromNow(REFRESH_TOKEN_LIFETIME_MS) } },
+      { new: true }
+    )
+  )
+  if (!grant) {
+    throw new InvalidGrantError('refresh token is invalid or expired')
+  }
+  return { grant, refreshToken: undefined }
+}
+
+async function refreshAccessToken(client, { refreshToken, scope }) {
+  if (typeof refreshToken !== 'string' || refreshToken === '') {
+    throw new InvalidRequestError('refresh_token is required')
+  }
+  const grantedScope = parseScope(scope)
+  const hashed = hashSecret(refreshToken)
+  const renew = rotatesRefreshTokens(client)
+    ? rotateRefreshToken
+    : keepRefreshToken
+  const { grant, refreshToken: nextRefreshToken } = await renew(client, hashed)
 
   const rotated = await TokenService.promises.rotateOAuthAccessToken(
     grant.tokenId,

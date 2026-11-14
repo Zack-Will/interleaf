@@ -86,16 +86,29 @@ describe('oauth OAuthService', () => {
       return { request, verifier }
     }
 
-    ctx.issueTokens = async () => {
-      const { request, verifier } = await ctx.authorize()
+    ctx.issueTokens = async (client = ctx.client) => {
+      const { request, verifier } = await ctx.authorize({
+        client_id: client.clientId,
+      })
       const code = await ctx.OAuthService.createAuthorizationCode({
         ...request,
         userId: OWNER_ID,
       })
-      return ctx.OAuthService.exchangeAuthorizationCode(ctx.client, {
+      return ctx.OAuthService.exchangeAuthorizationCode(client, {
         code,
         redirectUri: CALLBACK,
         codeVerifier: verifier,
+      })
+    }
+
+    ctx.createAuthenticatedClient = async options => {
+      const { clientSecret, client } = await ctx.OAuthService.createClient(
+        OWNER_ID,
+        { name: 'Other', redirectUris: [CALLBACK], ...options }
+      )
+      return ctx.OAuthService.authenticateClient({
+        clientId: client.clientId,
+        clientSecret,
       })
     }
   })
@@ -159,6 +172,7 @@ describe('oauth OAuthService', () => {
         clientId: ctx.clientId,
         name: 'Claude',
         redirectUris: [CALLBACK],
+        rotateRefreshTokens: true,
         createdAt: expect.any(Date),
         lastUsedAt: null,
       })
@@ -388,6 +402,97 @@ describe('oauth OAuthService', () => {
       await expectRejection(
         ctx.OAuthService.refreshAccessToken(ctx.client, {
           refreshToken: second.refresh_token,
+        }),
+        { code: 'invalid_grant' }
+      )
+    })
+
+    it('treats clients stored without the option as rotating', async ctx => {
+      delete ctx.clients.docs[0].rotateRefreshTokens
+      const client = await ctx.OAuthService.authenticateClient({
+        clientId: ctx.clientId,
+        clientSecret: ctx.clientSecret,
+      })
+      const first = await ctx.issueTokens(client)
+      const second = await ctx.OAuthService.refreshAccessToken(client, {
+        refreshToken: first.refresh_token,
+      })
+      expect(second.refresh_token).toMatch(/^olr_/)
+      expect(second.refresh_token).not.toBe(first.refresh_token)
+      const [listed] = await ctx.OAuthService.listClients(OWNER_ID)
+      expect(listed.rotateRefreshTokens).toBe(true)
+    })
+
+    it('keeps the refresh token of a client that does not rotate', async ctx => {
+      const client = await ctx.createAuthenticatedClient({
+        name: 'Gemini',
+        rotateRefreshTokens: false,
+      })
+      const [stored] = ctx.clients.docs.filter(
+        doc => doc.clientId === client.clientId
+      )
+      expect(stored.rotateRefreshTokens).toBe(false)
+
+      const first = await ctx.issueTokens(client)
+      expect(first.refresh_token).toMatch(/^olr_/)
+      const start = Date.now()
+      let previousAccessToken = first.access_token
+      for (const days of [30, 60, 120]) {
+        vi.useFakeTimers({ now: start + days * 24 * HOUR })
+        const next = await ctx.OAuthService.refreshAccessToken(client, {
+          refreshToken: first.refresh_token,
+        })
+        expect(next).toEqual({
+          access_token: expect.stringMatching(/^olp_/),
+          token_type: 'Bearer',
+          expires_in: 3600,
+          scope: 'mcp',
+        })
+        expect(next).not.toHaveProperty('refresh_token')
+        expect(next.access_token).not.toBe(previousAccessToken)
+        await expectRejection(
+          ctx.TokenService.verifyToken(previousAccessToken, 'mcp'),
+          { code: 'token_invalid' }
+        )
+        previousAccessToken = next.access_token
+        const [grant] = ctx.grants.docs
+        expect(grant.refreshExpiresAt.getTime()).toBe(
+          Date.now() + 90 * 24 * HOUR
+        )
+        expect(grant.rotatedRefreshTokenHashes).toEqual([])
+      }
+      expect(ctx.grants.docs).toHaveLength(1)
+      expect(ctx.tokens.docs).toHaveLength(1)
+
+      vi.useFakeTimers({ now: start + 211 * 24 * HOUR })
+      await expectRejection(
+        ctx.OAuthService.refreshAccessToken(client, {
+          refreshToken: first.refresh_token,
+        }),
+        { code: 'invalid_grant' }
+      )
+    })
+
+    it('still revokes a non-rotating grant and its refresh token', async ctx => {
+      const client = await ctx.createAuthenticatedClient({
+        rotateRefreshTokens: false,
+      })
+      const first = await ctx.issueTokens(client)
+      await ctx.OAuthService.refreshAccessToken(client, {
+        refreshToken: first.refresh_token,
+      })
+      await ctx.OAuthService.revokeToken(client, first.refresh_token)
+      expect(ctx.grants.docs).toHaveLength(0)
+      expect(ctx.tokens.docs).toHaveLength(0)
+      await expectRejection(
+        ctx.OAuthService.refreshAccessToken(client, {
+          refreshToken: first.refresh_token,
+        }),
+        { code: 'invalid_grant' }
+      )
+      await expectRejection(
+        ctx.OAuthService.refreshAccessToken(ctx.client, {
+          refreshToken: first.refresh_token,
         }),
         { code: 'invalid_grant' }
       )
