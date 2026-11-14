@@ -18,6 +18,10 @@ export const PersonalAccessTokenSchema = new Schema(
     createdAt: { type: Date, default: Date.now },
     expiresAt: { type: Date, default: null },
     lastUsedAt: { type: Date, default: null },
+    // 'oauth' rows are the access tokens of an OAuth grant (module oauth): the
+    // grant rotates the secret in place, so one row stands for one connection.
+    source: { type: String, enum: ['user', 'oauth'], default: 'user' },
+    clientId: { type: String, default: null },
   },
   {
     collection: 'personalAccessTokens',

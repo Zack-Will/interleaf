@@ -35,6 +35,7 @@ function serializeToken(record) {
     createdAt: record.createdAt,
     expiresAt: record.expiresAt ?? null,
     lastUsedAt: record.lastUsedAt ?? null,
+    source: record.source ?? 'user',
   }
 }
 

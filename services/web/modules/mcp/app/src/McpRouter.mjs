@@ -53,6 +53,13 @@ export function createDefaultServices() {
   }
 }
 
+// Served by module oauth. Advertising it in the 401 challenge is how MCP
+// clients that only speak OAuth find the authorization server.
+function resourceMetadataUrl(siteUrl) {
+  const base = String(siteUrl).replace(/\/+$/, '')
+  return `${base}/.well-known/oauth-protected-resource/mcp`
+}
+
 async function handle(request, response) {
   const clientName = request.body?.params?.clientInfo?.name
   const server = createMcpServer({
@@ -71,7 +78,9 @@ const McpModule = {
   dependencies: ['project-sync', 'review', 'github-backup'],
   nonCsrfRouter: {
     apply(webRouter, privateApiRouter, publicApiRouter) {
-      const middleware = requireAccessToken('mcp')
+      const middleware = requireAccessToken('mcp', {
+        resourceMetadataUrl: resourceMetadataUrl(Settings.siteUrl),
+      })
       publicApiRouter.post('/mcp', middleware, handle)
       publicApiRouter.get('/mcp', middleware, handle)
       publicApiRouter.delete('/mcp', middleware, handle)
@@ -84,5 +93,5 @@ const McpModule = {
   },
 }
 
-export { handle }
+export { handle, resourceMetadataUrl }
 export default McpModule

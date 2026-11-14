@@ -23,6 +23,8 @@ describe('project-sync TokenService', () => {
       updateOne: sinon.stub().resolves(),
       deleteOne: sinon.stub().resolves(),
       deleteMany: sinon.stub().resolves(),
+      findOneAndUpdate: sinon.stub(),
+      findOneAndDelete: sinon.stub(),
     }
     vi.doMock('../../../app/src/models/PersonalAccessToken.mjs', () => ({
       PersonalAccessToken: ctx.PersonalAccessToken,
@@ -147,6 +149,7 @@ describe('project-sync TokenService', () => {
         createdAt: rec.createdAt,
         expiresAt: null,
         lastUsedAt: null,
+        source: 'user',
       },
     ])
     expect(listed[0]).not.toHaveProperty('hashedToken')
@@ -158,6 +161,72 @@ describe('project-sync TokenService', () => {
     await ctx.TokenService.promises.revokeAllForUser('u')
     sinon.assert.calledWith(ctx.PersonalAccessToken.deleteMany, {
       user_id: 'u',
+    })
+  })
+
+  it('creates OAuth access tokens as expiring mcp tokens', async ctx => {
+    const expiresAt = new Date(Date.now() + 3600 * 1000)
+    ctx.PersonalAccessToken.create.callsFake(async doc => ({
+      _id: 't',
+      ...doc,
+    }))
+    const { token, record } =
+      await ctx.TokenService.promises.createOAuthAccessToken('user-1', {
+        label: 'Claude (OAuth)',
+        clientId: 'olo_client',
+        expiresAt,
+      })
+    expect(token).toMatch(/^olp_[a-zA-Z0-9]{16}$/)
+    expect(record).toMatchObject({
+      user_id: 'user-1',
+      scopes: ['mcp'],
+      source: 'oauth',
+      clientId: 'olo_client',
+      expiresAt,
+      hashedToken: ctx.TokenService.hashToken(token),
+    })
+  })
+
+  it('rotates an OAuth access token in place', async ctx => {
+    const expiresAt = new Date(Date.now() + 3600 * 1000)
+    ctx.PersonalAccessToken.findOneAndUpdate.resolves({ _id: 't' })
+    const rotated = await ctx.TokenService.promises.rotateOAuthAccessToken(
+      't',
+      expiresAt
+    )
+    expect(rotated.token).toMatch(/^olp_/)
+    const [query, update] =
+      ctx.PersonalAccessToken.findOneAndUpdate.firstCall.args
+    expect(query).toEqual({ _id: 't', source: 'oauth' })
+    expect(update.$set).toEqual({
+      tokenPrefix: rotated.token.slice(0, 8),
+      hashedToken: ctx.TokenService.hashToken(rotated.token),
+      expiresAt,
+    })
+
+    ctx.PersonalAccessToken.findOneAndUpdate.resolves(null)
+    expect(
+      await ctx.TokenService.promises.rotateOAuthAccessToken('t', expiresAt)
+    ).toBeNull()
+  })
+
+  it('revokes OAuth access tokens only for their client', async ctx => {
+    ctx.PersonalAccessToken.findOneAndDelete.resolves({ _id: 't' })
+    await ctx.TokenService.promises.revokeOAuthAccessToken(
+      'olp_1234567890abcdef',
+      'olo_client'
+    )
+    sinon.assert.calledWith(ctx.PersonalAccessToken.findOneAndDelete, {
+      hashedToken: ctx.TokenService.hashToken('olp_1234567890abcdef'),
+      source: 'oauth',
+      clientId: 'olo_client',
+    })
+    await ctx.TokenService.promises.revokeOAuthAccessTokensForClient(
+      'olo_client'
+    )
+    sinon.assert.calledWith(ctx.PersonalAccessToken.deleteMany, {
+      clientId: 'olo_client',
+      source: 'oauth',
     })
   })
 })

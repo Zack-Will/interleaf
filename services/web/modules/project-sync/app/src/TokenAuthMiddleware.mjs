@@ -7,8 +7,15 @@ import {
   TokenInvalidError,
 } from './Errors.mjs'
 
-function respond(res, status, error, errorCode) {
-  res.setHeader('WWW-Authenticate', 'Bearer realm="Overleaf"')
+// With a resource metadata URL (RFC 9728) the challenge tells OAuth clients
+// where to discover the authorization server.
+function challenge(resourceMetadataUrl) {
+  if (!resourceMetadataUrl) return 'Bearer realm="Overleaf"'
+  return `Bearer realm="Overleaf", resource_metadata="${resourceMetadataUrl}"`
+}
+
+function respond(res, status, error, errorCode, options) {
+  res.setHeader('WWW-Authenticate', challenge(options.resourceMetadataUrl))
   return res.status(status).json({ error, error_code: errorCode })
 }
 
@@ -37,13 +44,14 @@ function getToken(req) {
 /**
  * Require a project-sync personal access token with the given scope.
  * @param {string} scope
+ * @param {{ resourceMetadataUrl?: string }} [options]
  * @returns {import('express').RequestHandler}
  */
-export function requireAccessToken(scope) {
+export function requireAccessToken(scope, options = {}) {
   return async function requireAccessTokenMiddleware(req, res, next) {
     const parsed = getToken(req)
     if (parsed.errorCode) {
-      return respond(res, 401, 'invalid_token', parsed.errorCode)
+      return respond(res, 401, 'invalid_token', parsed.errorCode, options)
     }
 
     try {
@@ -58,19 +66,25 @@ export function requireAccessToken(scope) {
         error instanceof InsufficientScopeError ||
         error?.code === 'insufficient_scope'
       ) {
-        return respond(res, 403, 'insufficient_scope', 'insufficient_scope')
+        return respond(
+          res,
+          403,
+          'insufficient_scope',
+          'insufficient_scope',
+          options
+        )
       }
       if (
         error instanceof TokenExpiredError ||
         error?.code === 'token_expired'
       ) {
-        return respond(res, 401, 'invalid_token', 'token_expired')
+        return respond(res, 401, 'invalid_token', 'token_expired', options)
       }
       if (
         error instanceof TokenInvalidError ||
         error?.code === 'token_invalid'
       ) {
-        return respond(res, 401, 'invalid_token', 'token_invalid')
+        return respond(res, 401, 'invalid_token', 'token_invalid', options)
       }
       return next(error)
     }

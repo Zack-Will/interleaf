@@ -121,4 +121,41 @@ describe('project-sync token authentication middleware', () => {
       ctx.verifyToken.resetBehavior()
     }
   })
+
+  it('sends a plain Bearer challenge by default', async ctx => {
+    await ctx.requireAccessToken('git_bridge')(
+      reqWithAuthorization(undefined),
+      ctx.res,
+      ctx.next
+    )
+    sinon.assert.calledWith(
+      ctx.res.setHeader,
+      'WWW-Authenticate',
+      'Bearer realm="Overleaf"'
+    )
+  })
+
+  it('points OAuth clients at the resource metadata when configured', async ctx => {
+    const resourceMetadataUrl =
+      'https://overleaf.example/.well-known/oauth-protected-resource/mcp'
+    const middleware = ctx.requireAccessToken('mcp', { resourceMetadataUrl })
+    await middleware(reqWithAuthorization(undefined), ctx.res, ctx.next)
+    ctx.verifyToken.rejects(
+      new (await import('../../../app/src/Errors.mjs')).TokenExpiredError()
+    )
+    await middleware(
+      reqWithAuthorization('Bearer olp_1234567890abcdef'),
+      ctx.res,
+      ctx.next
+    )
+    const expected = `Bearer realm="Overleaf", resource_metadata="${resourceMetadataUrl}"`
+    expect(ctx.res.setHeader.args).toEqual([
+      ['WWW-Authenticate', expected],
+      ['WWW-Authenticate', expected],
+    ])
+    sinon.assert.calledWith(ctx.res.json, {
+      error: 'invalid_token',
+      error_code: 'token_expired',
+    })
+  })
 })

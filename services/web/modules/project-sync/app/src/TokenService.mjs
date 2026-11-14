@@ -85,6 +85,71 @@ async function createToken(userId, options = {}) {
   return { token, record }
 }
 
+// The access token of an OAuth grant is an ordinary `mcp` token, so the MCP
+// endpoint and the settings page treat it like any other.
+async function createOAuthAccessToken(userId, { label, clientId, expiresAt }) {
+  const token = makeToken()
+  const record = await PersonalAccessToken.create({
+    user_id: userId,
+    tokenPrefix: token.slice(0, 8),
+    hashedToken: hashToken(token),
+    scopes: ['mcp'],
+    label: label || '',
+    createdAt: new Date(),
+    expiresAt,
+    lastUsedAt: null,
+    source: 'oauth',
+    clientId,
+  })
+  return { token, record }
+}
+
+// A refresh replaces the secret but keeps the row, so the grant keeps the id
+// the settings page lists. Returns null once that row has been revoked.
+async function rotateOAuthAccessToken(tokenId, expiresAt) {
+  const token = makeToken()
+  const record = await maybeExec(
+    PersonalAccessToken.findOneAndUpdate(
+      { _id: tokenId, source: 'oauth' },
+      {
+        $set: {
+          tokenPrefix: token.slice(0, 8),
+          hashedToken: hashToken(token),
+          expiresAt,
+        },
+      },
+      { new: true }
+    )
+  )
+  if (!record) return null
+  return { token, record }
+}
+
+// Deletes the OAuth access token with this secret if the client owns it, and
+// returns the deleted row so that the caller can end its grant.
+async function revokeOAuthAccessToken(token, clientId) {
+  if (typeof token !== 'string') return null
+  return maybeExec(
+    PersonalAccessToken.findOneAndDelete({
+      hashedToken: hashToken(token),
+      source: 'oauth',
+      clientId,
+    })
+  )
+}
+
+async function revokeOAuthAccessTokenById(tokenId) {
+  return maybeExec(
+    PersonalAccessToken.deleteOne({ _id: tokenId, source: 'oauth' })
+  )
+}
+
+async function revokeOAuthAccessTokensForClient(clientId) {
+  return maybeExec(
+    PersonalAccessToken.deleteMany({ clientId, source: 'oauth' })
+  )
+}
+
 async function verifyToken(token, requiredScope) {
   if (typeof token !== 'string' || !/^olp_[A-Za-z0-9]{16}$/.test(token)) {
     throw new TokenInvalidError()
@@ -149,6 +214,7 @@ async function listTokens(userId) {
     createdAt: record.createdAt,
     expiresAt: record.expiresAt ?? null,
     lastUsedAt: record.lastUsedAt ?? null,
+    source: record.source ?? 'user',
   }))
 }
 
@@ -164,6 +230,11 @@ async function revokeAllForUser(userId) {
 
 const methods = {
   createToken,
+  createOAuthAccessToken,
+  rotateOAuthAccessToken,
+  revokeOAuthAccessToken,
+  revokeOAuthAccessTokenById,
+  revokeOAuthAccessTokensForClient,
   verifyToken,
   isTokenActive,
   listTokens,
