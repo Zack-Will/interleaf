@@ -29,6 +29,19 @@ const ROTATED_HASHES_KEPT = 20
 const MAX_REDIRECT_URIS = 10
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
+// Gemini's custom MCP connectors return to an undocumented path under these
+// hosts, so these six patterns are the only wildcards a client may register.
+const GOOGLE_REDIRECT_HOSTS = [
+  'oauth-redirect.googleusercontent.com',
+  'oauth-redirect-sandbox.googleusercontent.com',
+  'oauth-redirect-test.googleusercontent.com',
+]
+const GOOGLE_REDIRECT_PATH_PREFIXES = ['/r/', '/a/']
+export const WILDCARD_REDIRECT_URIS = GOOGLE_REDIRECT_HOSTS.flatMap(host =>
+  GOOGLE_REDIRECT_PATH_PREFIXES.map(prefix => `https://${host}${prefix}*`)
+)
+const ENCODED_PATH_SEPARATOR_PATTERN = /%(2e|2f|5c)/i
+
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
 
@@ -89,12 +102,18 @@ function accessTokenLabel(client) {
   return `${client.name} (OAuth)`
 }
 
+function isWildcardRedirectUri(value) {
+  return value.endsWith('*')
+}
+
 /**
  * Redirect URIs are matched exactly at authorization time, so they are
- * checked once here: absolute, no fragment, https unless loopback.
+ * checked once here: absolute, no fragment, https unless loopback. The only
+ * wildcards are the Google patterns in WILDCARD_REDIRECT_URIS.
  */
 export function isAllowedRedirectUri(value) {
   if (typeof value !== 'string' || value.length > 2048) return false
+  if (value.includes('*')) return WILDCARD_REDIRECT_URIS.includes(value)
   let url
   try {
     url = new URL(value)
@@ -105,6 +124,47 @@ export function isAllowedRedirectUri(value) {
   if (url.username || url.password) return false
   if (url.protocol === 'https:') return true
   return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
+}
+
+// A requested URI matches a wildcard pattern when it is the pattern's prefix
+// followed by a non-empty remainder, and is already in canonical form: no
+// dot segments, backslashes, tabs or other characters URL parsing rewrites,
+// no fragment, userinfo or port. Encoded dots and separators, and a literal
+// `*`, are refused.
+function matchesWildcardRedirectUri(pattern, value) {
+  const prefix = pattern.slice(0, -1)
+  if (typeof value !== 'string' || value.length > 2048) return false
+  if (!value.startsWith(prefix) || value.length === prefix.length) return false
+  const remainder = value.slice(prefix.length)
+  if (remainder.includes('..') || remainder.includes('\\')) return false
+  if (remainder.includes('*')) return false
+  if (ENCODED_PATH_SEPARATOR_PATTERN.test(remainder)) return false
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  const expected = new URL(prefix)
+  return (
+    url.href === value &&
+    url.protocol === 'https:' &&
+    url.host === expected.host &&
+    url.port === '' &&
+    !url.username &&
+    !url.password &&
+    !url.hash &&
+    !value.includes('#') &&
+    url.pathname.startsWith(expected.pathname) &&
+    url.pathname.length > expected.pathname.length
+  )
+}
+
+export function redirectUriMatches(registered, value) {
+  if (isWildcardRedirectUri(registered)) {
+    return matchesWildcardRedirectUri(registered, value)
+  }
+  return registered === value
 }
 
 export function verifyPkce(codeVerifier, codeChallenge) {
@@ -150,6 +210,14 @@ async function createClient(
   if (uris.length > MAX_REDIRECT_URIS) {
     throw new InvalidRequestError(
       `at most ${MAX_REDIRECT_URIS} redirect URIs are allowed`
+    )
+  }
+  const invalidWildcard = uris.find(
+    uri => uri.includes('*') && !isAllowedRedirectUri(uri)
+  )
+  if (invalidWildcard) {
+    throw new InvalidRequestError(
+      `a redirect URI may contain * only as one of Google's patterns (${WILDCARD_REDIRECT_URIS.join(', ')}): ${invalidWildcard}`
     )
   }
   const invalid = uris.find(uri => !isAllowedRedirectUri(uri))
@@ -242,12 +310,20 @@ function touchClient(client) {
     .catch(() => {})
 }
 
+// The redirect URI may be omitted only when exactly one, non-wildcard URI is
+// registered.
 function resolveRedirectUri(client, redirectUri) {
   if (redirectUri == null) {
-    if (client.redirectUris.length === 1) return client.redirectUris[0]
+    const [only] = client.redirectUris
+    if (client.redirectUris.length === 1 && !isWildcardRedirectUri(only)) {
+      return only
+    }
     throw new AuthorizePageError('oauth_error_redirect_uri_mismatch')
   }
-  if (!client.redirectUris.includes(redirectUri)) {
+  const registered = client.redirectUris.some(uri =>
+    redirectUriMatches(uri, redirectUri)
+  )
+  if (!registered) {
     throw new AuthorizePageError('oauth_error_redirect_uri_mismatch')
   }
   return redirectUri

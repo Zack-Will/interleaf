@@ -7,6 +7,16 @@ const OWNER_ID = 'aaaaaaaaaaaaaaaaaaaaaaaa'
 const OTHER_USER_ID = 'bbbbbbbbbbbbbbbbbbbbbbbb'
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback'
 const HOUR = 60 * 60 * 1000
+const GOOGLE_PATTERNS = [
+  'https://oauth-redirect.googleusercontent.com/r/*',
+  'https://oauth-redirect.googleusercontent.com/a/*',
+  'https://oauth-redirect-sandbox.googleusercontent.com/r/*',
+  'https://oauth-redirect-sandbox.googleusercontent.com/a/*',
+  'https://oauth-redirect-test.googleusercontent.com/r/*',
+  'https://oauth-redirect-test.googleusercontent.com/a/*',
+]
+const GOOGLE_CALLBACK =
+  'https://oauth-redirect.googleusercontent.com/r/some-project'
 
 function pkcePair() {
   const verifier = crypto.randomBytes(32).toString('base64url')
@@ -247,6 +257,138 @@ describe('oauth OAuthService', () => {
         })
         expect(request.redirectUri).toBe(CALLBACK)
       }
+    })
+  })
+
+  describe('Google wildcard redirect URIs', () => {
+    beforeEach(async ctx => {
+      ctx.gemini = await ctx.createAuthenticatedClient({
+        name: 'Gemini',
+        redirectUris: GOOGLE_PATTERNS,
+        rotateRefreshTokens: false,
+      })
+      ctx.authorizeGemini = redirectUri =>
+        ctx.authorize({
+          client_id: ctx.gemini.clientId,
+          redirect_uri: redirectUri,
+        })
+    })
+
+    it('accepts exactly the six Google patterns', async ctx => {
+      const [listed] = (await ctx.OAuthService.listClients(OWNER_ID)).filter(
+        client => client.clientId === ctx.gemini.clientId
+      )
+      expect(listed.redirectUris).toEqual(GOOGLE_PATTERNS)
+      expect(listed.rotateRefreshTokens).toBe(false)
+    })
+
+    it('rejects every other wildcard at creation', async ctx => {
+      for (const uri of [
+        'https://claude.ai/*',
+        'https://oauth-redirect.googleusercontent.com/*',
+        'https://oauth-redirect.googleusercontent.com/r*',
+        'https://oauth-redirect.googleusercontent.com/x/*',
+        'https://oauth-redirect.googleusercontent.com/r/*/x',
+        'https://oauth-redirect.googleusercontent.com/r/**',
+        'http://oauth-redirect.googleusercontent.com/r/*',
+        'https://evil.googleusercontent.com/r/*',
+        'https://oauth-redirect.googleusercontent.com:8443/r/*',
+        'http://localhost:7777/*',
+      ]) {
+        const error = await expectRejection(
+          ctx.OAuthService.createClient(OWNER_ID, {
+            name: 'x',
+            redirectUris: [uri],
+          }),
+          { code: 'invalid_request' }
+        )
+        expect(error.message, uri).toContain("Google's patterns")
+      }
+    })
+
+    it('matches a concrete Google callback', async ctx => {
+      for (const uri of [
+        GOOGLE_CALLBACK,
+        'https://oauth-redirect.googleusercontent.com/a/some-project',
+        'https://oauth-redirect-sandbox.googleusercontent.com/r/p/q',
+        'https://oauth-redirect-test.googleusercontent.com/r/p?x=1',
+      ]) {
+        const { request } = await ctx.authorizeGemini(uri)
+        expect(request.error, uri).toBeNull()
+        expect(request.redirectUri).toBe(uri)
+      }
+    })
+
+    it('rejects URIs the patterns do not cover', async ctx => {
+      for (const uri of [
+        'https://oauth-redirect.googleusercontent.com/r/',
+        'https://oauth-redirect.googleusercontent.com/r',
+        'https://oauth-redirect.googleusercontent.com/x/some-project',
+        'http://oauth-redirect.googleusercontent.com/r/some-project',
+        'https://evil.example/r/some-project',
+        'https://oauth-redirect.googleusercontent.com.evil.example/r/p',
+        'https://evil.googleusercontent.com/r/some-project',
+        'https://oauth-redirect.googleusercontent.com:443/r/some-project',
+        'https://oauth-redirect.googleusercontent.com:8443/r/some-project',
+        'https://user@oauth-redirect.googleusercontent.com/r/some-project',
+        'https://oauth-redirect.googleusercontent.com/r/some-project#frag',
+        'https://oauth-redirect.googleusercontent.com/r/some-project#',
+        'https://oauth-redirect.googleusercontent.com/r/../x',
+        'https://oauth-redirect.googleusercontent.com/r/a/../../x',
+        'https://oauth-redirect.googleusercontent.com/r/%2e%2e/x',
+        'https://oauth-redirect.googleusercontent.com/r/%2E%2E%2Fx',
+        'https://oauth-redirect.googleusercontent.com/r/a%5cb',
+        'https://oauth-redirect.googleusercontent.com/r/..\\x',
+        'https://oauth-redirect.googleusercontent.com/r/a\\b',
+        'https://oauth-redirect.googleusercontent.com/r/a\tb',
+        'https://OAUTH-REDIRECT.googleusercontent.com/r/some-project',
+        'https://oauth-redirect.googleusercontent.com/r/*',
+      ]) {
+        await expectRejection(ctx.authorizeGemini(uri), {
+          messageKey: 'oauth_error_redirect_uri_mismatch',
+        })
+      }
+    })
+
+    it('needs an explicit redirect URI for a wildcard', async ctx => {
+      const client = await ctx.createAuthenticatedClient({
+        redirectUris: [GOOGLE_PATTERNS[0]],
+      })
+      await expectRejection(
+        ctx.authorize({ client_id: client.clientId, redirect_uri: undefined }),
+        { messageKey: 'oauth_error_redirect_uri_mismatch' }
+      )
+    })
+
+    it('binds the code to the concrete redirect URI', async ctx => {
+      const { request, verifier } = await ctx.authorizeGemini(GOOGLE_CALLBACK)
+      const createCode = () =>
+        ctx.OAuthService.createAuthorizationCode({
+          ...request,
+          userId: OWNER_ID,
+        })
+      for (const uri of [
+        'https://oauth-redirect.googleusercontent.com/r/other-project',
+        GOOGLE_PATTERNS[0],
+      ]) {
+        await expectRejection(
+          ctx.OAuthService.exchangeAuthorizationCode(ctx.gemini, {
+            code: await createCode(),
+            redirectUri: uri,
+            codeVerifier: verifier,
+          }),
+          { code: 'invalid_grant' }
+        )
+      }
+      const response = await ctx.OAuthService.exchangeAuthorizationCode(
+        ctx.gemini,
+        {
+          code: await createCode(),
+          redirectUri: GOOGLE_CALLBACK,
+          codeVerifier: verifier,
+        }
+      )
+      expect(response.refresh_token).toMatch(/^olr_/)
     })
   })
 

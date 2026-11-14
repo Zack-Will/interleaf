@@ -151,6 +151,16 @@ async function validateForLoggedInUser(req, params) {
   })
 }
 
+// Clients such as Gemini do not document the exact redirect URI they use;
+// the log shows it to the operator.
+function logRedirectUriMismatch(error, params) {
+  if (error.messageKey !== 'oauth_error_redirect_uri_mismatch') return
+  logger.info(
+    { clientId: params.client_id, redirectUri: params.redirect_uri },
+    'oauth authorize request with an unregistered redirect_uri'
+  )
+}
+
 // Runs the authorize checks and answers the request itself when they fail.
 // Returns the validated request, or null when a response was sent.
 async function checkAuthorizeRequest(req, res, params, redirectStatus) {
@@ -159,6 +169,7 @@ async function checkAuthorizeRequest(req, res, params, redirectStatus) {
     request = await validateForLoggedInUser(req, params)
   } catch (error) {
     if (error instanceof AuthorizePageError) {
+      logRedirectUriMismatch(error, params)
       renderAuthorizeError(res, error)
       return null
     }

@@ -61,6 +61,8 @@ describe('oauth OAuthController', () => {
     vi.doMock('../../../app/src/OAuthService.mjs', () => ({
       default: { promises: ctx.OAuthService },
     }))
+    ctx.logger = { info: sinon.stub(), err: sinon.stub() }
+    vi.doMock('@overleaf/logger', () => ({ default: ctx.logger }))
     vi.doMock('@overleaf/settings', () => ({
       default: { siteUrl: `${SITE_URL}/` },
     }))
@@ -347,6 +349,20 @@ describe('oauth OAuthController', () => {
       )
       sinon.assert.calledWith(ctx.res.status, 400)
       sinon.assert.notCalled(ctx.OAuthService.createAuthorizationCode)
+    })
+
+    it('logs the redirect URI of a mismatched request', async ctx => {
+      ctx.OAuthService.validateAuthorizeRequest.rejects(
+        new ctx.Errors.AuthorizePageError('oauth_error_redirect_uri_mismatch')
+      )
+      const redirectUri = 'https://oauth-redirect.googleusercontent.com/r/p'
+      await ctx.Controller.showAuthorize(
+        makeReq({ query: { ...ctx.query, redirect_uri: redirectUri } }),
+        ctx.res
+      )
+      sinon.assert.calledOnce(ctx.logger.info)
+      const [fields] = ctx.logger.info.firstCall.args
+      expect(fields).toEqual({ clientId: CLIENT_ID, redirectUri })
     })
   })
 
