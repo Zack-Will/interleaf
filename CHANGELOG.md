@@ -1,7 +1,23 @@
 # Changelog
 
-Changes to Interleaf's own modules (`project-sync`, `mcp`, `review`,
+Changes to Interleaf's own modules (`project-sync`, `mcp`, `oauth`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
+
+## Unreleased
+
+Adds the migration `20261114120000_create_oauth_collections` (indexes for the
+new OAuth collections, including TTL indexes), which the image runs at startup.
+
+### Added
+
+- OAuth apps (module `oauth`): web MCP clients that only sign in with OAuth,
+  such as Claude custom connectors, connect with a pre-registered client ID and
+  secret created under **Account settings → OAuth apps**. Authorization code
+  flow with PKCE, discovery metadata (RFC 9728, RFC 8414), one-hour access
+  tokens that are ordinary `mcp` personal access tokens, and 90-day refresh
+  tokens rotated on every use. No dynamic client registration.
+- `/mcp` answers `401` with `resource_metadata` in `WWW-Authenticate`, so OAuth
+  clients can discover the authorization server.
 
 ## 0.3.1 (2026-11-05)
 

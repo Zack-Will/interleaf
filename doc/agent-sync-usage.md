@@ -14,6 +14,8 @@ What the fork adds:
   edits as tracked changes.
 - **Personal access tokens** (`olp_…`), managed on the account settings page,
   used both by the MCP endpoint and by Git.
+- **OAuth apps** for web MCP clients that only sign in with OAuth, such as
+  Claude custom connectors: a client ID and secret instead of a pasted token.
 - **The review panel in CE**, which upstream Community Edition hides.
 - **The web side of the official Java git-bridge**, so `git clone` and
   `git push` work against a project.
@@ -80,13 +82,69 @@ claude mcp add --transport http overleaf https://overleaf.example.com/mcp \
 Any client that speaks Streamable HTTP MCP works the same way: the endpoint is
 `<siteUrl>/mcp` and the token goes in an `Authorization: Bearer` header. The
 endpoint is stateless — no session, no cursor — so a client that reconnects
-loses nothing. Clients that only support OAuth can be bridged with
-`mcp-remote`.
+loses nothing. Clients that only support OAuth connect as described in the
+next section.
 
 Every tool takes `project` as either the 24-character project id or the full
 project URL, so pasting a project link to an agent is enough to point it at the
 right project. A project name is not accepted: the error says to pass an id or
 URL and lists the projects of that name as `candidates`.
+
+## Connecting with OAuth
+
+Some web MCP clients cannot send a token header and only sign in with OAuth.
+Claude custom connectors are one: under **Advanced settings** they take an
+**OAuth Client ID** and **OAuth Client Secret**. For these, create an OAuth app.
+
+1. Go to **Account settings → OAuth apps** (next to Personal access tokens,
+   behind the same `GIT_BRIDGE_ENABLED` switch) and choose **Create OAuth app**.
+2. Give it a name — the consent page and the token list show it — and keep or
+   edit the redirect URIs, one per line. They are matched exactly. The defaults
+   are the callback URLs of Claude custom connectors:
+
+   ```text
+   https://claude.ai/api/mcp/auth_callback
+   https://claude.com/api/mcp/auth_callback
+   ```
+
+   Redirect URIs must be `https`, except `http://localhost` and
+   `http://127.0.0.1` for local tools.
+
+3. Copy the **MCP server URL** (`<siteUrl>/mcp`), the **client ID** (`olo_…`)
+   and the **client secret** (`ols_…`). The secret is shown once; only its hash
+   is stored.
+4. In the client, add a connector with that server URL and paste the client ID
+   and secret into its OAuth settings. Connecting opens Overleaf, asks you to
+   log in if needed, and shows a consent page naming the app and your account.
+   Choose **Authorize**.
+
+What it grants: the same access as an `mcp` token. Each connection appears in
+**Personal access tokens** as `<app name> (OAuth)` with the Agent (MCP) scope;
+revoking it there disconnects the client, which has to authorize again.
+Deleting the OAuth app disconnects every client that used it.
+
+An OAuth app belongs to the account that created it, and only that account can
+authorize it; anyone else gets an error page. Every user who wants to connect
+creates their own app. There is no dynamic client registration.
+
+Lifetimes: access tokens last one hour and the client refreshes them on its
+own. Refresh tokens last 90 days from their last use and change on every
+refresh; if an old refresh token is ever presented again, the whole connection
+is revoked, on the assumption that it leaked.
+
+For other OAuth clients, the details are standard: discovery at
+`/.well-known/oauth-protected-resource/mcp` (RFC 9728) and
+`/.well-known/oauth-authorization-server` (RFC 8414), the authorization code
+flow with PKCE (`S256` only) at `/oauth/authorize`, `/oauth/token` with
+`client_secret_basic` or `client_secret_post`, revocation at `/oauth/revoke`
+(RFC 7009), and scope `mcp`. A `401` from `/mcp` carries
+`WWW-Authenticate: Bearer realm="Overleaf", resource_metadata="<siteUrl>/.well-known/oauth-protected-resource/mcp"`.
+If a `resource` parameter is sent it must be `<siteUrl>/mcp`.
+
+The OAuth collections get their indexes from the web migration
+`20261114120000_create_oauth_collections`, which the Community Edition image
+runs at startup. The `/.well-known/` paths must reach the web service; a
+reverse proxy in front of Overleaf has to pass them through.
 
 ## The tools
 
