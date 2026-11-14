@@ -21,6 +21,7 @@ function moduleFile(relativePath) {
 const MODULES = [
   'project-sync',
   'mcp',
+  'oauth',
   'git-bridge',
   'review',
   'github-backup',

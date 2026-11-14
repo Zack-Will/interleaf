@@ -1,0 +1,39 @@
+extends ../../../../app/views/layout-marketing
+
+block content
+	main#main-content.content.content-alt
+		.container
+			.row
+				.col-lg-6.offset-lg-3
+					.card
+						.card-body
+							h1.h3 #{translate('oauth_authorize_heading')}
+							p
+								| #{translate('oauth_authorize_client')}
+								|
+								strong(translate='no')= clientName
+							p
+								| #{translate('oauth_authorize_account')}
+								|
+								strong(translate='no')= userEmail
+							p #{translate('oauth_authorize_explanation')}
+							p.small
+								| #{translate('oauth_authorize_redirect_notice')}
+								|
+								code(translate='no')= redirectHost
+							form(method='POST' action='/oauth/authorize')
+								input(name='_csrf' type='hidden' value=csrfToken)
+								each value, name in hiddenFields
+									if value != null
+										input(name=name type='hidden' value=value)
+								.d-flex.gap-2.justify-content-end
+									button.btn.btn-secondary(
+										type='submit'
+										name='decision'
+										value='deny'
+									) #{translate('oauth_authorize_deny')}
+									button.btn.btn-primary(
+										type='submit'
+										name='decision'
+										value='approve'
+									) #{translate('oauth_authorize_approve')}

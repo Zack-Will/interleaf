@@ -1,0 +1,13 @@
+extends ../../../../app/views/layout-marketing
+
+block content
+	main#main-content.content.content-alt
+		.container
+			.row
+				.col-lg-6.offset-lg-3
+					.card
+						.card-body
+							h1.h3 #{translate('oauth_error_title')}
+							p #{translate(messageKey)}
+							p
+								a.btn.btn-secondary(href='/user/settings') #{translate('account_settings')}
