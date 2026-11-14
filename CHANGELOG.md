@@ -3,10 +3,14 @@
 Changes to Interleaf's own modules (`project-sync`, `mcp`, `oauth`, `review`,
 `git-bridge`, `github-backup`, `live-preview`). Upstream Overleaf changes are not listed here.
 
-## Unreleased
+## 0.3.2 (2026-11-14)
 
-Adds the migration `20261114120000_create_oauth_collections` (indexes for the
-new OAuth collections, including TTL indexes), which the image runs at startup.
+Images: `ghcr.io/<owner>/interleaf:6.3.3`, `ghcr.io/<owner>/git-bridge:6.3.3`,
+on the same `interleaf-base:6.3.1`; also published on Docker Hub. Adds the
+migration `20261114120000_create_oauth_collections` (indexes for the new
+`mcpOAuth*` collections, including TTL indexes), which the image runs at
+startup; otherwise upgrading is a change of `config/version` after the usual
+backup.
 
 ### Added
 
