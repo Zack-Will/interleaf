@@ -152,6 +152,13 @@ describe('MCP comment tools', () => {
     ])
     // Chat keeps milliseconds; every MCP timestamp is ISO 8601.
     expect(comments[0].created_at).toBe('1970-01-01T00:00:00.100Z')
+    expect(result.content[0].text).toContain('[t-alpha] main.tex:2:1: "Alpha"')
+    expect(result.content[0].text).toContain(
+      'Ada (1970-01-01T00:00:00.100Z): Tighten this'
+    )
+    expect(result.content[0].text).toContain(
+      '[t-detached] main.tex:3:1 (detached)'
+    )
   })
 
   it('places a comment that follows a multi-line insert on the right line', async () => {
@@ -270,6 +277,17 @@ describe('MCP comment tools', () => {
     expect(data.detached_count).toBe(1)
     expect(data.detached[0].thread_id).toBe('t-detached')
     expect(result.content[0].text).toContain('2 open comments in 2 files')
+    expect(result.content[0].text).toContain('[t-alpha] line 2:1: "Alpha"')
+    expect(result.content[0].text).toContain('  > Alpha beta.')
+    expect(result.content[0].text).toContain(
+      'Ada (1970-01-01T00:00:00.100Z): Tighten this'
+    )
+    expect(result.content[0].text).toContain(
+      '[t-detached] main.tex:3:1 (detached)'
+    )
+    expect(result.content[0].text).toContain(
+      'unknown (1970-01-01T00:00:00.400Z): Gone'
+    )
   })
 
   it('clamps the context window at the edges of a document', async () => {

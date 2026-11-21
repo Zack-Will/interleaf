@@ -62,33 +62,86 @@ function writeSummary(data) {
   ]
   if (failed.length)
     parts.push(`${failed.length} file${failed.length === 1 ? '' : 's'} failed`)
+  if (data.reverted_from_version != null)
+    parts.unshift(
+      `reverted from version ${data.reverted_from_version} to ${data.reverted_to_version}`
+    )
   const version = data.project_version ?? data.version
   if (version != null) parts.unshift(`project version ${version}`)
   if (data.label?.comment) parts.push(`label: ${data.label.comment}`)
-  return parts.join('; ')
+  const lines = [parts.join('; ')]
+  for (const entry of failed)
+    lines.push(`failed: ${entry.path} (${entry.error})`)
+  return lines.join('\n')
 }
 
 function plural(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
 
+function authorLabel(user) {
+  if (!user) return 'unknown'
+  return user.name || user.email || user.id || 'unknown'
+}
+
+function commentMessageLines(messages) {
+  return (messages || []).map(message => {
+    const when = isoTime(message.timestamp) ?? message.timestamp
+    const time = when ? ` (${when})` : ''
+    return `  ${authorLabel(message.user)}${time}: ${message.content}`
+  })
+}
+
+// Clients that drop structuredContent still need the thread id, anchor text,
+// surrounding lines and messages to answer or resolve a comment.
+function commentThreadLines(comment, { includePath = true } = {}) {
+  const location = includePath
+    ? `${comment.path}:${comment.line}:${comment.column}`
+    : `line ${comment.line}:${comment.column}`
+  const flags = []
+  if (comment.detached) flags.push('detached')
+  if (comment.resolved) flags.push('resolved')
+  const state = flags.length ? ` (${flags.join(', ')})` : ''
+  const quote = comment.detached
+    ? ''
+    : `: ${JSON.stringify(comment.quoted_text)}`
+  const lines = [`[${comment.thread_id}] ${location}${state}${quote}`]
+  if (comment.context) {
+    for (const before of comment.context.before || [])
+      lines.push(`  | ${before}`)
+    lines.push(`  > ${comment.context.line}`)
+    for (const after of comment.context.after || []) lines.push(`  | ${after}`)
+  }
+  lines.push(...commentMessageLines(comment.messages))
+  return lines
+}
+
 function commentsSummary(data) {
   const hidden = data.resolved_hidden
     ? `; ${data.resolved_hidden} resolved hidden`
     : ''
-  return `${plural(data.count, 'comment')}${hidden}`
+  const lines = [`${plural(data.count, 'comment')}${hidden}`]
+  for (const comment of data.comments || [])
+    lines.push(...commentThreadLines(comment))
+  return lines.join('\n')
 }
 
 function reviewQueueSummary(data) {
   const parts = [
     `${plural(data.count, 'open comment')} in ${plural(data.files.length, 'file')}`,
   ]
-  for (const file of data.files)
+  for (const file of data.files) {
     parts.push(`${file.path}: ${plural(file.count, 'comment')}`)
-  if (data.detached_count)
+    for (const comment of file.comments || [])
+      parts.push(...commentThreadLines(comment, { includePath: false }))
+  }
+  if (data.detached_count) {
     parts.push(
       `${plural(data.detached_count, 'detached comment')}: the commented text is gone, put them back with reanchor_comment`
     )
+    for (const comment of data.detached || [])
+      parts.push(...commentThreadLines(comment))
+  }
   // Suggestions still pending mean the human has not acted on the last edits
   // this agent offered, which is a reason not to offer more of the same.
   if (data.pending_suggestions)
@@ -101,6 +154,101 @@ function reviewQueueSummary(data) {
     'When a review round is complete, call create_label to mark it as a saved version.'
   )
   return parts.join('\n')
+}
+
+function projectsSummary(data) {
+  const lines = [plural(data.count, 'project')]
+  for (const project of data.projects || []) {
+    const parts = [
+      `${project.project_id} ${JSON.stringify(project.name ?? '')}`,
+      `${project.permissions || 'read'} access`,
+    ]
+    if (project.last_updated) parts.push(`updated ${project.last_updated}`)
+    if (project.url) parts.push(project.url)
+    lines.push(parts.join('; '))
+  }
+  return lines.join('\n')
+}
+
+function projectSummary(data) {
+  const files = Array.isArray(data.files) ? data.files : []
+  const header = [
+    `Project ${data.name || data.project_id} (${data.project_id})`,
+    `project_version: ${data.project_version}`,
+    plural(files.length, 'file'),
+    `${data.permissions || 'read'} access`,
+  ]
+  if (data.root_doc_path) header.push(`root: ${data.root_doc_path}`)
+  if (data.url) header.push(data.url)
+  const lines = [header.join('; ')]
+  for (const file of files) lines.push(`${file.kind || 'file'}: ${file.path}`)
+  return lines.join('\n')
+}
+
+function outlineSummary(data) {
+  const lines = [plural(data.count, 'heading')]
+  for (const heading of data.headings || [])
+    lines.push(
+      `${heading.path}:${heading.line}: ${heading.level} ${heading.title}`
+    )
+  return lines.join('\n')
+}
+
+function searchSummary(data) {
+  const heading = `${plural(data.count, 'match').replace(/matchs$/, 'matches')}${data.truncated ? ' (truncated)' : ''}`
+  const lines = (data.matches || []).map(
+    match => `${match.path}:${match.line}: ${match.text}`
+  )
+  return [heading, ...lines].join('\n')
+}
+
+function branchCreatedSummary(data) {
+  const parts = [`Created branch ${JSON.stringify(data.name ?? '')}`]
+  if (data.branch_project_id)
+    parts.push(`branch_project_id: ${data.branch_project_id}`)
+  if (data.base_version != null)
+    parts.push(`base_version: ${data.base_version}`)
+  if (data.url) parts.push(data.url)
+  return parts.join('; ')
+}
+
+function branchesSummary(data) {
+  const branches = Array.isArray(data.branches) ? data.branches : []
+  const count = data.count ?? branches.length
+  const lines = [`${count} ${count === 1 ? 'branch' : 'branches'}`]
+  for (const branch of branches) {
+    const parts = [
+      `${JSON.stringify(branch.name ?? '')} (${branch.branch_project_id})`,
+      branch.status || 'open',
+    ]
+    if (branch.base_version != null)
+      parts.push(`base_version: ${branch.base_version}`)
+    if (branch.branch_version != null)
+      parts.push(`branch_version: ${branch.branch_version}`)
+    if (branch.merged_version != null)
+      parts.push(`merged_version: ${branch.merged_version}`)
+    if (branch.url) parts.push(branch.url)
+    lines.push(parts.join('; '))
+  }
+  return lines.join('\n')
+}
+
+function branchArchivedSummary(data) {
+  if (!data?.branch_project_id) return 'Archived branch'
+  return `Archived branch ${data.branch_project_id}`
+}
+
+function suggestionLine(suggestion) {
+  const place =
+    suggestion.column != null
+      ? `line ${suggestion.line}:${suggestion.column}`
+      : `line ${suggestion.line}`
+  const extras = []
+  if (suggestion.author) extras.push(`by ${authorLabel(suggestion.author)}`)
+  const created = isoTime(suggestion.created_at) ?? suggestion.created_at
+  if (created) extras.push(`at ${created}`)
+  const meta = extras.length ? ` (${extras.join(' ')})` : ''
+  return `pending ${suggestion.type} ${suggestion.change_id} at ${place}${meta}: ${JSON.stringify(suggestion.text)}`
 }
 
 // One line per edit, so a client that only shows the text still learns what
@@ -133,6 +281,14 @@ function editFileSummary(data) {
     lines.push(
       `comments affected: ${affected.map(entry => `${entry.thread_id} ${entry.state}`).join(', ')}`
     )
+  if (data.reanchored?.length)
+    lines.push(
+      `re-anchored: ${data.reanchored.map(entry => `${entry.thread_id} to line ${entry.line}`).join(', ')}`
+    )
+  if (data.reanchor_failed?.length)
+    lines.push(
+      `re-anchor failed: ${data.reanchor_failed.map(entry => `${entry.thread_id} (${entry.code})`).join(', ')}`
+    )
   if (data.label?.comment) lines.push(`label: ${data.label.comment}`)
   return lines.join('\n')
 }
@@ -149,7 +305,17 @@ function suggestEditsSummary(data) {
       ? 'nothing is applied until a human accepts them in the review panel'
       : 'the document already said this, so nothing was suggested'
   )
-  return [parts.join('; '), ...editReportLines(data)].join('\n')
+  const suggestionLines = (data.suggestions || []).map(suggestionLine)
+  const fallbackIds =
+    !suggestionLines.length && data.change_ids.length
+      ? [`change_ids: ${data.change_ids.join(', ')}`]
+      : []
+  return [
+    parts.join('; '),
+    ...editReportLines(data),
+    ...suggestionLines,
+    ...fallbackIds,
+  ].join('\n')
 }
 
 // Unified diffs everywhere use the same 3 lines of context, so the output of
@@ -227,6 +393,8 @@ function mergeSummary(data) {
         : `${plural(data.conflict_count, 'file')} in conflict (nothing written)`,
     `${plural(data.files_to_write, 'file')} to write, ${plural(data.files_to_delete, 'file')} to delete`,
   ]
+  for (const file of data.files || [])
+    lines.push(`${file.action}: ${file.path}`)
   for (const conflict of data.conflicts || []) {
     const reasons = (conflict.conflicts || [])
       .map(entry => entry.reason)
@@ -238,9 +406,15 @@ function mergeSummary(data) {
 }
 
 function branchDiffSummary(data) {
-  const lines = [
-    `${plural(data.files.length, 'file')} changed since the branch was made at version ${data.base_version}; ${data.unchanged_count} unchanged`,
+  const header = [
+    `${plural(data.files.length, 'file')} changed since the branch was made at version ${data.base_version}`,
+    `${data.unchanged_count} unchanged`,
   ]
+  if (data.branch_version != null)
+    header.push(`branch_version: ${data.branch_version}`)
+  if (data.parent_version != null)
+    header.push(`parent_version: ${data.parent_version}`)
+  const lines = [header.join('; ')]
   for (const file of data.files) {
     lines.push(`${file.state}: ${file.path}`)
     if (file.diff) lines.push(file.diff)
@@ -270,8 +444,11 @@ function suggestionListSummary(data) {
   const parts = [
     `${plural(data.count, 'pending suggestion')} in ${plural(data.files.length, 'file')}`,
   ]
-  for (const file of data.files)
+  for (const file of data.files) {
     parts.push(`${file.path}: ${plural(file.suggestions.length, 'suggestion')}`)
+    for (const suggestion of file.suggestions || [])
+      parts.push(`  ${suggestionLine(suggestion)}`)
+  }
   return parts.join('\n')
 }
 
@@ -319,38 +496,27 @@ function summaryText(data) {
   if (Array.isArray(data)) return `${data.length} items`
   if (!data || typeof data !== 'object')
     return String(data ?? 'Operation completed')
-  if (Array.isArray(data.projects)) return `${data.count} projects`
-  if (Array.isArray(data.entries)) return `${data.count} history entries`
-  if (Array.isArray(data.headings)) return `${data.count} headings`
+  if (Array.isArray(data.projects)) return projectsSummary(data)
+  if (Array.isArray(data.entries)) return historySummary(data)
+  if (Array.isArray(data.headings)) return outlineSummary(data)
   if (Array.isArray(data.comments)) return commentsSummary(data)
   if (Array.isArray(data.detached) && Array.isArray(data.files))
     return reviewQueueSummary(data)
   if (data.thread_id && data.quoted_text != null)
     return commentPlacementSummary(data)
   if (data.thread_id) return commentActionSummary(data)
-  if (Array.isArray(data.matches)) {
-    const lines = data.matches
-      .slice(0, 39)
-      .map(match => `${match.path}:${match.line}: ${match.text}`)
-    const heading = `${data.count} matches${data.truncated ? ' (truncated)' : ''}`
-    return [heading, ...lines].join('\n')
-  }
+  if (Array.isArray(data.matches)) return searchSummary(data)
   if (Array.isArray(data.applied) || Array.isArray(data.failed))
     return writeSummary(data)
-  if (Array.isArray(data.branches))
-    return `${data.count ?? data.branches.length} branches`
+  if (Array.isArray(data.branches)) return branchesSummary(data)
   if (Array.isArray(data.conflicts))
     return data.mergeable
       ? 'Branch merge is clean'
       : `${data.conflicts.length} merge conflicts`
   if (data.path && data.project_version != null)
     return `${data.path}; project version ${data.project_version}; document version ${data.doc_version ?? 'unknown'}`
-  if (data.project_id && data.project_version != null) {
-    const fileCount = Array.isArray(data.files)
-      ? `; ${data.files.length} files`
-      : ''
-    return `Project ${data.name || data.project_id} at version ${data.project_version}${fileCount}; ${data.permissions || 'read'} access`
-  }
+  if (data.project_id && data.project_version != null)
+    return projectSummary(data)
   if (data.reverted_from_version != null)
     return `Reverted from version ${data.reverted_from_version} to ${data.reverted_to_version}`
   if (data.project_version != null) {
@@ -1382,7 +1548,7 @@ export function registerTools(
     'List the projects this token can reach, newest first, with project_id, url, name, permissions (read or write) and last_updated (ISO 8601). Use it to find the id every other tool takes; several projects can share a name, so tell them apart by last_updated.',
     {},
     async () =>
-      run(async () => {
+      runSummarised(projectsSummary, async () => {
         const all = await services.ProjectGetter.promises.findAllUsersProjects(
           userId,
           'name lastUpdated'
@@ -1418,7 +1584,7 @@ export function registerTools(
     'Get one project: its name, root document, file tree, your permissions and the current project_version, which edit_file, suggest_edits and write_files take as base_version.',
     { project: z.string() },
     async ({ project }) =>
-      run(async () => {
+      runSummarised(projectSummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
         const projectData = await services.ProjectGetter.promises.getProject(
@@ -1508,7 +1674,7 @@ export function registerTools(
     'List the LaTeX headings (part to subsubsection) with their level, title, file and line, following \\input and \\include from the root document when no path is given. Use it to find the title and level for a replace_section edit.',
     { project: z.string(), path: z.string().optional() },
     async ({ project, path }) =>
-      run(async () => {
+      runSummarised(outlineSummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
         const tree = await services.SnapshotService.getFileTree(id)
@@ -1567,7 +1733,7 @@ export function registerTools(
       max_results: z.number().optional(),
     },
     async ({ project, query, regex, max_results = 50 }) =>
-      run(async () => {
+      runSummarised(searchSummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
         const tree = await services.SnapshotService.getFileTree(id)
@@ -1881,7 +2047,7 @@ export function registerTools(
     'Create a branch: a copy of the project, recorded against the version it started from, that can later be compared with diff_branch and merged back with merge_branch. Returns branch_project_id, the id the branch tools and every other tool take for the branch.',
     { project: z.string(), name: z.string() },
     async ({ project, name }) =>
-      run(async () => {
+      runSummarised(branchCreatedSummary, async () => {
         const id = await projectIdOf(project)
         return services.BranchService.createBranch(id, userId, { name })
       })
@@ -1892,7 +2058,7 @@ export function registerTools(
     'List the open and merged branches of a project with their name, branch_project_id, base_version and status.',
     { project: z.string() },
     async ({ project }) =>
-      run(async () => {
+      runSummarised(branchesSummary, async () => {
         const id = await projectIdOf(project)
         return services.BranchService.listBranches(id, userId)
       })
@@ -1947,7 +2113,7 @@ export function registerTools(
     'Archive a branch: hide its project and take it out of list_branches. Needs write access to the parent project.',
     { branch: branchRefSchema, project: branchParentSchema },
     async ({ branch, project }) =>
-      run(async () => {
+      runSummarised(branchArchivedSummary, async () => {
         const id = await branchProjectIdOf(branch, project)
         return services.BranchService.archiveBranch(id, userId)
       })
@@ -1962,7 +2128,7 @@ export function registerTools(
       include_resolved: z.boolean().optional(),
     },
     async ({ project, path, include_resolved = false }) =>
-      run(async () => {
+      runSummarised(commentsSummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
         const { comments } = await loadProjectComments(services, id, path)
@@ -1982,7 +2148,7 @@ export function registerTools(
     'The work list of a review round: the unresolved comments grouped by file, each with context_lines (default 3) of the surrounding text, the comments whose text is gone (detached), and how many suggestions are still pending.',
     { project: z.string(), context_lines: z.number().int().optional() },
     async ({ project, context_lines = 3 }) =>
-      run(async () => {
+      runSummarised(reviewQueueSummary, async () => {
         const id = await projectIdOf(project)
         await access(services, req, id)
         const { comments, linesByPath, suggestionCount } =

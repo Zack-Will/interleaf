@@ -131,6 +131,9 @@ describe('suggest_edits', () => {
       { change_id: 'change-1', type: 'insert', line: 2, text: 'Hi ' },
     ])
     expect(result.content[0].text).toContain('1 suggestion pending in main.tex')
+    expect(result.content[0].text).toContain(
+      'pending insert change-1 at line 2: "Hi "'
+    )
   })
 
   it('leaves out suggestions this call did not create', async () => {
@@ -206,6 +209,9 @@ describe('list_suggestions', () => {
     expect(result.structuredContent.count).toBe(1)
     expect(result.structuredContent.files[0].path).toBe('main.tex')
     expect(result.content[0].text).toContain('1 pending suggestion in 1 file')
+    expect(result.content[0].text).toContain(
+      'pending insert change-1 at line 2:1 (by Agent MCP at 2026-01-01T00:00:00.000Z): "Hi "'
+    )
   })
 
   it('limits the listing to one document when given a path', async () => {

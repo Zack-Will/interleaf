@@ -335,6 +335,8 @@ if (
   projects.structuredContent.count !== 1
 )
   throw new Error('list_projects returned an invalid structuredContent shape')
+if (!projects.content[0].text.includes(projectId))
+  throw new Error('list_projects did not put project_id in its text')
 const queue = await client.callTool(
   { name: 'get_review_queue', arguments: { project: projectId } },
   CallToolResultSchema
@@ -344,6 +346,11 @@ if (!queued || queued.line !== 2 || queued.column !== 1)
   throw new Error('get_review_queue did not place the comment on line 2')
 if (!queue.content[0].text.includes('call create_label'))
   throw new Error('get_review_queue did not say when to mark a milestone')
+if (
+  !queue.content[0].text.includes('[thread-1]') ||
+  !queue.content[0].text.includes('Please tighten this sentence.')
+)
+  throw new Error('get_review_queue did not put thread details in its text')
 const reply = await client.callTool(
   {
     name: 'reply_comment',

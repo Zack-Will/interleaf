@@ -219,6 +219,41 @@ describe('MCP tools', () => {
         permissions: 'write',
       }),
     ])
+    expect(result.content[0].text).toContain('owned "Owned"; write access')
+    expect(result.content[0].text).toContain('review "Review"; read access')
+  })
+
+  it('puts the file tree and root document in get_project text', async () => {
+    const project = 'a'.repeat(24)
+    const { server } = setup({
+      SnapshotService: {
+        getFileTree: vi.fn(async () => [
+          { path: 'main.tex', kind: 'doc' },
+          { path: 'figures/fig1.pdf', kind: 'file' },
+        ]),
+      },
+      ProjectGetter: {
+        promises: {
+          findAllUsersProjects: vi.fn(async () => ({})),
+          getProject: vi.fn(async () => ({ name: 'Thesis', rootDoc_id: 'd1' })),
+        },
+      },
+      ProjectEntityHandler: {
+        promises: {
+          getAllDocPathsFromProjectById: vi.fn(async () => ({
+            d1: '/main.tex',
+          })),
+        },
+      },
+    })
+    const result = await server._registeredTools.get_project.handler({
+      project,
+    })
+    const text = result.content[0].text
+    expect(text).toContain(`Project Thesis (${project}); project_version: 4`)
+    expect(text).toContain('root: /main.tex')
+    expect(text).toContain('doc: main.tex')
+    expect(text).toContain('file: figures/fig1.pdf')
   })
 
   it('returns the outline from the root document and one input', async () => {
@@ -249,6 +284,10 @@ describe('MCP tools', () => {
         title: 'Introduction',
       },
     ])
+    expect(result.content[0].text).toContain('main.tex:1: section Root')
+    expect(result.content[0].text).toContain(
+      'parts/intro.tex:1: subsection Introduction'
+    )
   })
 
   it('searches plain text and regular expressions', async () => {
@@ -837,9 +876,62 @@ describe('branch output size', () => {
     expect(result.structuredContent.files_to_delete).toBe(1)
     expect(result.structuredContent.conflict_count).toBe(1)
     expect(JSON.stringify(result)).not.toContain('the whole merged file')
+    expect(result.content[0].text).toContain('write: main.tex')
+    expect(result.content[0].text).toContain('delete: old.tex')
     expect(result.content[0].text).toContain(
       'conflict: fig.png (binary_both_changed)'
     )
+  })
+
+  it('puts branch ids and versions in create_branch, list_branches and archive_branch text', async () => {
+    const parent = 'a'.repeat(24)
+    const { server } = setup({
+      BranchService: {
+        createBranch: vi.fn(async () => ({
+          branch_project_id: branch,
+          parent_project_id: parent,
+          url: `/project/${branch}`,
+          name: 'draft-02a',
+          base_version: 18,
+        })),
+        listBranches: vi.fn(async () => ({
+          branches: [
+            {
+              branch_project_id: branch,
+              parent_project_id: parent,
+              url: `/project/${branch}`,
+              name: 'draft-02a',
+              base_version: 18,
+              branch_version: 66,
+              status: 'open',
+            },
+          ],
+          count: 1,
+        })),
+        archiveBranch: vi.fn(async () => ({
+          branch_project_id: branch,
+          status: 'archived',
+        })),
+      },
+    })
+    const created = await server._registeredTools.create_branch.handler({
+      project: parent,
+      name: 'draft-02a',
+    })
+    expect(created.content[0].text).toContain(`branch_project_id: ${branch}`)
+    expect(created.content[0].text).toContain('base_version: 18')
+
+    const listed = await server._registeredTools.list_branches.handler({
+      project: parent,
+    })
+    expect(listed.content[0].text).toContain('1 branch')
+    expect(listed.content[0].text).toContain(`"draft-02a" (${branch})`)
+    expect(listed.content[0].text).toContain('branch_version: 66')
+
+    const archived = await server._registeredTools.archive_branch.handler({
+      branch,
+    })
+    expect(archived.content[0].text).toBe(`Archived branch ${branch}`)
   })
 })
 
